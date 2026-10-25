@@ -1,0 +1,17 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../oet_matlab"
+		},
+		{
+			"path": "../HYDROLIB-core"
+		},
+		{
+			"path": "../dfm_tools"
+		}
+	],
+	"settings": {}
+}

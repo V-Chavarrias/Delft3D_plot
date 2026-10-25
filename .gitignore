@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pixi/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Docs
+site/
+
+# Tool outputs (when running examples locally)
+/cache/
+/figures/
+/logs/
+/tables/
+/config/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
