@@ -16,21 +16,23 @@ uv pip install --python .venv/Scripts/python.exe -r tools/synthetic_smt/requirem
 Options: `--out <folder>`, `--no-variants`, `--no-verify`. The generator refuses to write to the P-drive, and it refuses to replace a folder that it did not create (marker file `.synthetic_smt`).
 
 After generating, the generator runs a self-check (`verify.py`) with the libraries the tool will use:
-* HYDROLIB-core reads the MDU and `dimr_config.xml`;
+* HYDROLIB-core reads the MDU, `dimr_config.xml` and the `.ldb`;
 * dfm_tools merges the partitions and reproduces the analytic bed level;
 * rasterio reads the VRT and GeoTIFFs;
 * geopandas reads the shapefiles;
 * scipy reads the `.mat` files.
+
+It also checks that every map variable has all its time steps.
 
 ## What is generated
 
 | Path | Content |
 |------|---------|
 | `simulations/r001`, `r002` | SMT runs: `smt.yml`, `sed/`, `output/0..3/` with `dflowfm.mdu`, `dflowfm_000p.mdu`, `mor.mor`, `dimr_config.xml`, `synthetic_net.nc`, `results/dflowfm_000p_map.nc`, `.dia`. r002 erodes faster. r001 has NaN/Inf bed levels in a few cells (sub-run 2, last time) |
-| `simulations/variants/` | `running` (has `output/work`; last sub-run truncated), `crashed` (stopped before `TStop`), `non_partitioned`, `gap` (sub-run 2 missing) |
+| `simulations/variants/` | `running` (has `output/work`; last sub-run truncated), `crashed` (stopped before `TStop`), `non_partitioned`, `gap` (sub-run 2 missing), `corrupt_partition` (sub-run 0, partition 1: garbage `time`/`morft` and ±1e308 values at map times 1–2, as `r209` sub-run 0 partition 0021) |
 | `inputs/rkm/` | river-km files in the fixed format `x, y, <km>_<TAG>, km`: Maas (`MA`), generic (`SY`), Rijntakken (`WA`); 100 m, 1 km and 3 km spacing |
 | `inputs/regions/` | `L1R1` (summer bed), `L1L3`/`R1R3` (halves), `WIDE` (whole width) |
-| `inputs/ldb/` | land boundary as `.mat` (N×2, NaN-separated) and `.ldb` |
+| `inputs/ldb/` | land boundary as `.ldb` (Tekal), the only accepted input format (a `.mat` is only ever a cache) |
 | `inputs/measurements/smb/` | `<region>_measured.mat`: `data.<var>.val_mean.{rkm, s, unit, tim_dnum, val}` + `source`, with unsorted times |
 | `inputs/measurements/2d/` | VRT mosaic of 2 GeoTIFF tiles; a half-pixel-shifted GeoTIFF in cm (factor 0.01); a GeoTIFF outside the time tolerance; polygon shapefiles ("vakken", fields `MEAN`, `COUNT`, `A`, `locatie`, `code_uniek`, with failing coverage/location filters and shuffled order); catalogues `catalogue_raster.csv`, `catalogue_vakken.csv` |
 | `expected/` | merged SMT time axis; cells per 250 m segment; SMB statistics per simulation and region (Matlab definitions) |

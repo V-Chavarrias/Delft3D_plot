@@ -15,10 +15,12 @@ def _ok(msg: str):
 
 def verify(case: Path):
     import geopandas as gpd
+    import netCDF4
     import rasterio
     import scipy.io
     from dfm_tools import open_partitioned_dataset
     from hydrolib.core.dflowfm.mdu.models import FMModel
+    from hydrolib.core.dflowfm.polyfile.models import PolyFile
     from hydrolib.core.dimr.models import DIMR
 
     from fields import bed_level, map_fields, subrun_times
@@ -54,6 +56,8 @@ def verify(case: Path):
         # morft has time units (as in r209), so xarray decodes it to datetimes
         expected_morft = np.datetime64("2021-02-07T23:00:00", "ns") + (run.morft * 1e9).astype("timedelta64[ns]")
         np.testing.assert_array_equal(uds["morft"].values, expected_morft)
+        for name in ("mesh2d_s1", "mesh2d_waterdepth", "mesh2d_ucmag", "mesh2d_taus"):
+            assert np.isfinite(uds[name].values).all(), f"{name}: missing time steps or non-finite values"
     _ok(f"dfm_tools merges {p.n_partitions} partitions -> {mesh.n_faces} faces; mor_bl equals the analytic field")
 
     variants = case / "simulations" / "variants"
@@ -62,7 +66,15 @@ def verify(case: Path):
         assert uds.sizes["mesh2d_nFaces"] == mesh.n_faces
         assert (variants / "running" / "output" / "work").is_dir()
         assert not (variants / "gap" / "output" / "2").exists()
-        _ok("variants: non-partitioned readable; running has output/work; gap misses sub-run 2")
+        bad = variants / "corrupt_partition" / "output" / "0" / "results"
+        with netCDF4.Dataset(bad / "dflowfm_0001_map.nc") as ds1, netCDF4.Dataset(bad / "dflowfm_0000_map.nc") as ds0:
+            assert ds1["time"][1] != ds0["time"][1] and abs(ds1["mesh2d_mor_bl"][1, :]).max() > 1e300
+        _ok("variants: non-partitioned readable; running has output/work; gap misses sub-run 2; corrupt partition present")
+
+    # land boundary: .ldb only, readable by HYDROLIB-core
+    ldb = PolyFile(case / "inputs" / "ldb" / "synthetic.ldb")
+    assert len(ldb.objects) == 3 and not list((case / "inputs" / "ldb").glob("*.mat"))
+    _ok("land boundary .ldb readable by HYDROLIB-core PolyFile (3 polylines)")
 
     # finished marker only in partition .dia files
     res0 = sim_dir / "output" / "0" / "results"

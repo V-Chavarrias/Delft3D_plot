@@ -134,25 +134,34 @@ def _global_attrs(ds, run: SubRunTimes | None):
 
 
 def write_map(path: Path, p: Params, mesh: Mesh, sub: Subset, run: SubRunTimes, fields: dict[str, np.ndarray],
-              initial_bl: np.ndarray, partitioned: bool):
+              initial_bl: np.ndarray, partitioned: bool, corrupt_times: tuple[int, ...] = ()):
+    """`corrupt_times` reproduces r209 sub-run 0 partition 0021: garbage time/morft and +-1e308 values."""
     path.parent.mkdir(parents=True, exist_ok=True)
+    time, morft = run.time.copy(), run.morft.copy()
+    fields = {k: v[:, sub.faces].copy() for k, v in fields.items()}
+    if corrupt_times:
+        idx = list(corrupt_times)
+        time[idx] = -5.423497149537879e-179
+        morft[idx] = -5.182097385888104e225
+        for k, v in fields.items():
+            v[idx] = np.where(np.arange(v[idx].size).reshape(v[idx].shape) % 2 == 0, -1.2e308, 1.4e308)
     with netCDF4.Dataset(path, "w", format="NETCDF4") as ds:
         _global_attrs(ds, run)
         _write_grid(ds, mesh, sub, p.n_partitions, with_domain=partitioned)
         ds.createDimension("time", None)
         ds.createDimension("nSedTot", p.n_fractions)
         ds.createDimension("nBedLayers", p.n_bed_layers)
-        _var(ds, "time", "f8", ("time",), {"standard_name": "time", "units": TIME_UNITS}, data=run.time)
-        _var(ds, "morft", "f8", ("time",), {"long_name": "Current morphological time", "units": TIME_UNITS}, data=run.morft)
+        _var(ds, "time", "f8", ("time",), {"standard_name": "time", "units": TIME_UNITS}, data=time)
+        _var(ds, "morft", "f8", ("time",), {"long_name": "Current morphological time", "units": TIME_UNITS}, data=morft)
         _var(ds, "mesh2d_flowelem_bl", "f8", ("mesh2d_nFaces",),
              {**_FACE_ATTRS, "standard_name": "altitude", "long_name": "flow element center bedlevel (bl)", "units": "m"},
              fill=FILL_DBL, data=initial_bl[sub.faces])
         for name, attrs in _DATA_VARS.items():
             _var(ds, name, "f8", ("time", "mesh2d_nFaces"), {**_FACE_ATTRS, **attrs}, fill=FILL_DBL,
-                 data=fields[name][:, sub.faces], zlib=True)
+                 data=fields[name], zlib=True)
         _var(ds, "mesh2d_lyrfrac", "f8", ("time", "mesh2d_nFaces", "nBedLayers", "nSedTot"),
              {**_FACE_ATTRS, "long_name": "Volume fraction in a layer of the bed in flow cell center", "units": "-"},
-             fill=FILL_DBL, data=fields["mesh2d_lyrfrac"][:, sub.faces], zlib=True)
+             fill=FILL_DBL, data=fields["mesh2d_lyrfrac"], zlib=True)
 
 
 def write_net(path: Path, p: Params, mesh: Mesh, sub: Subset, initial_bl: np.ndarray):

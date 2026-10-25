@@ -47,7 +47,7 @@ def bed_level(p: Params, s, n, t_mor_s, erosion_rate_m_per_day: float):
 
 
 def hydro_fields(p: Params, s, bl, stage: float):
-    s1 = p.z0 - p.slope * np.asarray(s, float) + p.base_depth + stage
+    s1 = np.broadcast_to(p.z0 - p.slope * np.asarray(s, float) + p.base_depth + stage, np.shape(bl)).copy()
     h = np.maximum(s1 - bl, 0.0)
     q = 2.0 * (1.0 + stage)
     u = np.where(h > 0.05, q / np.maximum(h, 0.05), 0.0)

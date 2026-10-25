@@ -7,7 +7,6 @@ from pathlib import Path
 
 import geopandas as gpd
 import numpy as np
-import scipy.io
 from shapely.geometry import Polygon
 
 from mesh import Centreline
@@ -86,15 +85,9 @@ def land_boundary_lines(p: Params, cl: Centreline) -> list[np.ndarray]:
 
 
 def write_land_boundaries(folder: Path, p: Params, cl: Centreline) -> dict[str, Path]:
+    """Land boundaries are input as .ldb (Tekal) only. Matlab's .mat versions were caches of .ldb files."""
     folder.mkdir(parents=True, exist_ok=True)
     lines = land_boundary_lines(p, cl)
-    # .mat as in the Maas project (j21_ldb.mat): one N x 2 array, polylines separated by NaN rows
-    parts = []
-    for ln in lines:
-        parts += [ln, np.full((1, 2), np.nan)]
-    mat = folder / "synthetic_ldb.mat"
-    scipy.io.savemat(mat, {"ldb": np.vstack(parts[:-1])})
-    # .ldb (Tekal) text format
     txt = []
     for k, ln in enumerate(lines, start=1):
         txt.append(f"L{k:03d}")
@@ -102,4 +95,4 @@ def write_land_boundaries(folder: Path, p: Params, cl: Centreline) -> dict[str, 
         txt += [f"{x:15.3f} {y:15.3f}" for x, y in ln]
     ldb = folder / "synthetic.ldb"
     ldb.write_text("\n".join(txt) + "\n", encoding="utf-8")
-    return {"mat": mat, "ldb": ldb}
+    return {"ldb": ldb}

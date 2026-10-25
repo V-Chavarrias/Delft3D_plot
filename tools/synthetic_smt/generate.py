@@ -48,7 +48,9 @@ def _check_output_folder(out: Path, force: bool):
 
 def write_simulation(root: Path, p: Params, mesh: Mesh, sim: SimulationParams, runs: list[SubRunTimes], *,
                      partitioned: bool = True, skip_subruns: tuple[int, ...] = (), truncate_last: bool = False,
-                     finished_last: bool = True, work_folder: bool = False):
+                     finished_last: bool = True, work_folder: bool = False,
+                     corrupt: tuple[int, int, tuple[int, ...]] | None = None):
+    """`corrupt` = (sub-run, partition, map-time indices) with garbage time/values (as r209 sub-run 0, partition 0021)."""
     root.mkdir(parents=True, exist_ok=True)
     write_smt_yml(root / "smt.yml", p, len(runs))
     write_sed(root / "sed" / "synthetic.sed", p)
@@ -77,8 +79,10 @@ def write_simulation(root: Path, p: Params, mesh: Mesh, sim: SimulationParams, r
         if partitioned:
             for sub in subsets:
                 k = sub.partition
+                bad = corrupt[2] if corrupt and corrupt[0] == run.index and corrupt[1] == k else ()
                 write_mdu(d / f"dflowfm_{k:04d}.mdu", p, run, "synthetic_net.nc", map_interval)
-                write_map(res / f"dflowfm_{k:04d}_map.nc", p, mesh, sub, run, fields, initial_bl, partitioned=True)
+                write_map(res / f"dflowfm_{k:04d}_map.nc", p, mesh, sub, run, fields, initial_bl, partitioned=True,
+                          corrupt_times=bad)
                 write_dia(res / f"dflowfm_{k:04d}.dia", run, k, p.n_partitions, finished, f"dflowfm_{k:04d}.mdu")
             write_dia(res / "dflowfm.dia", run, 0, p.n_partitions, False, "dflowfm.mdu")
         else:
@@ -97,6 +101,8 @@ VARIANTS = {
     "non_partitioned": ("same as r001 but one map file per sub-run (no partitions, no domain numbers)",
                         {"partitioned": False}),
     "gap": ("sub-run 2 is missing: validation must report an error", {"skip_subruns": (2,)}),
+    "corrupt_partition": ("sub-run 0, partition 1: garbage time/morft and +-1e308 values at map times 1-2 "
+                          "(as r209 sub-run 0, partition 0021)", {"corrupt": (0, 1, (1, 2))}),
 }
 
 
@@ -116,10 +122,10 @@ def write_readme(out: Path, p: Params, runs: list[SubRunTimes], mesh: Mesh, vari
         "| Path | Content |",
         "|------|---------|",
         "| `simulations/r001`, `r002` | SMT runs (4 sub-runs × 3 partitions); r002 erodes faster (for differences between simulations); r001 has NaN/Inf faces |",
-        "| `simulations/variants/*` | running, crashed, non-partitioned, missing sub-run |" if variants else "",
+        "| `simulations/variants/*` | running, crashed, non-partitioned, missing sub-run, corrupt partition |" if variants else "",
         "| `inputs/rkm` | river-km files, fixed format (`MA` = Maas, `SY` = generic, `WA` = Rijntakken) |",
         "| `inputs/regions` | region shapefiles: `L1R1` summer bed, `L1L3`/`R1R3` halves, `WIDE` whole width |",
-        "| `inputs/ldb` | land boundary as `.mat` (N×2, NaN-separated) and `.ldb` |",
+        "| `inputs/ldb` | land boundary (`.ldb`, Tekal) |",
         "| `inputs/measurements/smb` | `<region>_measured.mat` (Matlab structure, unsorted times) |",
         "| `inputs/measurements/2d` | GeoTIFF/VRT rasters, polygon shapefiles (\"vakken\"), catalogues (`time, file, factor`) |",
         "| `expected` | merged time axis, cells per segment, SMB statistics per simulation and region |",
