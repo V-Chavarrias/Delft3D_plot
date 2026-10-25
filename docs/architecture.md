@@ -1,16 +1,13 @@
 # Delft3D_plot (Python): Architecture Proposal
 
-Status: **draft v4 for discussion** · Scope: requirements and architecture only. Nothing is implemented yet.
+Status: **draft v5 for discussion** · Scope: requirements and architecture only. Nothing is implemented yet.
 
-Changes since v3:
-* **measurements** for M2D (GeoTIFF/VRT rasters, polygon shapefiles) and SMB (`.mat` converted to NetCDF), as a general measurement layer (§2.6, §4.12)
-* **inputs are read-only**: the tool never modifies or deletes input files; outputs go to a dedicated `d3dplot/` sub-folder (§4.9, §4.14)
-* plot hooks for user functions (Matlab `function_handles`) (§4.13)
-* region groups (several regions in one SMB figure) (§2.4)
-* SLURM is a **stub** in v1 (§4.8)
-* river-km tracks and bend cutoffs: general architecture; one track per km set is enough (§2.5)
-* acceptance case from the Maas project (§9.3)
+Changes since v4:
+* answers on measurements (colour limits from the measurements, raster resampling, time zone) and the `d3dplot/` sub-folder
+* findings from the real SMT run `r209`: time reference of map files vs. MDU, duplicate times between sub-runs, status from partition `.dia` files (§4.3, §4.7)
+* **synthetic SMT test case**: generated input and output with known answers (§9.4)
 
+Changes in v4: measurements; read-only inputs; plot hooks; region groups; SLURM stub; acceptance case.
 Changes in v3: SMB geometry specification; one file per time step; process pool on Windows; efficient zoomed plotting; labels dictionary; GPL-3.0.
 Changes in v2: decisions on the first open questions; v1 scope; reprocessing policy; simulation status; replotting; naming conventions; agent skills; upstream contributions.
 
@@ -246,7 +243,7 @@ Example: the Maas project script `p:\11211565-002-maas-mor-2026\E_Software_Scrip
   * `value` shows the measurements at *t*;
   * `difference_time` shows measurement(*t*) − measurement(*t₀*). Rasters are subtracted on the intersection of their grids. Shapefiles are subtracted polygon by polygon *by order*, which requires the same number of polygons;
   * differences between simulations show no measurements.
-* **Display**: a second panel to the right of the model panel, with the same colormap and colour limits. Its title is the mean time of the measurements used. The option `do_clims_measurements=1` is used in the example script but was not found in the OET version checked, so its meaning is still to be confirmed (§12).
+* **Display**: a second panel to the right of the model panel, with the same colormap and colour limits. Its title is the mean time of the measurements used. With `do_clims_measurements=1`, the colour limits are taken from the **range of the measurements** (confirmed).
 * **Cost**: measurements are re-read for every colour-limit set × window × simulation.
 
 **SMB**: [gdm_load_measurements_match_time.m](https://github.com/openearth/matlab-tools/blob/main/applications/vtools/D3D/plot/gdm_load_measurements_match_time.m), [gdm_load_measurements.m](https://github.com/openearth/matlab-tools/blob/main/applications/vtools/D3D/plot/gdm_load_measurements.m)
@@ -405,6 +402,9 @@ class Simulation:                 # one per input folder
   * Validation checks that all sub-runs have the same grid (number of faces and node coordinates of the first sub-run vs. the others). This is a one-off check, not something stored in the cache.
   * Relative paths are resolved against the layout MDU, as in Matlab `adapt_paths_smt`.
   * Proposed upstream as a generic dfm_tools helper (§10).
+  * **Duplicate boundary times.** Sub-run *k+1* starts at the `TStop` of sub-run *k* from its restart file, so the boundary time appears in both map files (e.g. `r209`: 95 040 s is the last map time of sub-run 0 and the first of sub-run 1). The merged time axis keeps **one** entry, the one from sub-run *k* (the state at the end of the run). Validation can optionally check that both entries are equal.
+  * Sub-runs are numbered `0 … N−1` without gaps. A gap is a validation error.
+* **Time reference.** The time units of the **map files** are authoritative (e.g. `seconds since 2021-02-08 00:00:00 +01:00`). In `r209` the MDU still says `RefDate = 20121231`, because the map files were updated afterwards. A mismatch between the MDU `RefDate` and the map time units is reported as a **warning**, not an error. The time zone also comes from the map time units. The morphological time comes from `morft` in the map file.
 
 ### 4.4 Analysis plugin contract
 
@@ -532,7 +532,7 @@ Notes:
 3. **Reporting**: a table of runtime, model version and number of processes for the project.
 
 Detection (FM): in order,
-1. the `.dia` file contains `Computation finished` / `Simulation finished` → `finished`;
+1. a `.dia` file contains `Computation finished` / `Simulation finished` → `finished`. For partitioned runs, the partition files (`dflowfm_0000.dia`, …) are checked: in `r209` the main `dflowfm.dia` of a sub-run does not contain the final lines;
 2. there is a controlled-exit message → `interrupted`;
 3. the last map time < `TStop` and the files have not been modified for a configurable time → `crashed_or_stopped`;
 4. otherwise → `running`;
@@ -716,7 +716,7 @@ New dependency: `rioxarray`/`rasterio` (GDAL wheels for Windows and Linux) for G
 * **Rasters**:
   * only the window is read (`rioxarray`/`rasterio` windowed reads; VRTs are handled by GDAL) and multiplied by `factor`;
   * the tiles are mosaicked on the grid of the first tile. Cells are filled in catalogue order (Matlab rule, `mosaic: first`; alternatives `last`, `mean`);
-  * *Change from Matlab:* tiles whose grid is not aligned are resampled (nearest) onto the common grid, instead of the 0.5-cell shift. This is covered by the acceptance test.
+  * *Change from Matlab (agreed):* tiles whose grid is not aligned are resampled (nearest) onto the common grid, instead of the 0.5-cell shift. Values can differ slightly at tile edges. This is covered by the synthetic test case (§9.4).
 * **Polygons**:
   * read with a bounding-box filter (`geopandas.read_file(..., bbox=…)`);
   * the polygon filters are applied and the value is multiplied by `factor`.
@@ -735,7 +735,7 @@ New dependency: `rioxarray`/`rasterio` (GDAL wheels for Windows and Linux) for G
 
 * **Layout** `side_by_side` (Matlab default): a model panel and a measurement panel, with the same colormap, colour limits and colour bar. The titles show the model time and the measurement time.
   * The layout is a parameter of the figure template, so `overlay` or `model_minus_measurement` (which needs the measurements interpolated to the faces) can be added later.
-* `color_limits_include_measurements`: automatic colour limits computed from model and measurement values. This is the presumed meaning of Matlab `do_clims_measurements`, to be confirmed (§12).
+* `color_limits_from_measurements` (Matlab `do_clims_measurements`): the automatic colour limits are taken from the range of the measurement values in the window. Explicit `color_limits` still take precedence.
 * Draw once, save many (§4.10): the measurement image is created once per extent, and only its data changes per time.
 * No measurements are shown in the `difference_simulation*` comparisons.
 
@@ -760,7 +760,7 @@ Variable names are the canonical names (§7.6). Aliases such as `bl`, `mesh2d_mo
 **`.mat` input is accepted.** In the prepare stage it is converted automatically to `cache/measurements/profiles/<region>_<hash>.nc`, where the hash covers the source path, size and modification time. Every later step uses the NetCDF; the `.mat` file is only read. The converter:
 * reads MAT v5/v7 with `scipy.io.loadmat`, and v7.3 (HDF5) with `h5py`;
 * maps `val_<statistic>` to the SMB statistic names (`val_mean` → `mean`, `val_mean_weighted` → `mean_area_weighted`, …) and variable aliases to canonical names (`bl` → `bed_level`, `detab_ds` → `bed_slope_streamwise`);
-* converts Matlab datenums to datetimes. Datenums have no time zone, so they are interpreted in `measurements.time_zone` (default: the model's time zone);
+* converts Matlab datenums to datetimes. Datenums have no time zone, so they are interpreted in `measurements.time_zone` if given, and otherwise in the model's time zone (agreed);
 * **sorts the times**. The example file is not in chronological order;
 * parses the unit string (`'bed elevation [m+NAP]'` → units `m`, datum `NAP`) and copies `source` to `source_files`;
 * checks that `val` is `[n_location, n_time]` and consistent with `rkm`, `s` and `tim_dnum`. If variables have different axes, it writes one dataset per variable.
@@ -869,7 +869,7 @@ project = Project(
             measurements={"bed_level": Measurements(
                 catalogue=data / "12_2D_measurements" / "2D_measurements_02.csv",
                 time_tolerance=timedelta(days=60),
-                color_limits_include_measurements=True)},
+                color_limits_from_measurements=True)},
             figure=Figure(
                 color_limits={"bed_level": {"difference_time": [None, (-1, 1)]}},   # None = automatic
                 extents_along_river_km={"file": data / "01_rkm" / "rkm_3km_lr.csv", "window_x_m": 1500, "window_y_m": 1500},
@@ -1052,7 +1052,7 @@ df = project.results("river_km_statistics", simulation="dredging", variable="bed
 | `tol_x_measurements`, `tol_y_measurements` | `measurements.<variable>.spatial_margin_m` (default 1000) |
 | `measurements_edgecolor` | `measurements.<variable>.edge_color` |
 | `measurements_tag_variable`, `_tag_count`, `_tag_area`, `_tag_location`, `measurements_coverage`, `measurements_pol_location` | `measurements.<variable>.polygon_filters: {preset: "rws_vakken", value_field, count_field, area_field, min_coverage, location_field, allowed_locations, id_field}` |
-| `do_clims_measurements` | `measurements.<variable>.color_limits_include_measurements` (meaning to confirm) |
+| `do_clims_measurements` | `measurements.<variable>.color_limits_from_measurements` (colour limits from the measurement range) |
 | *(new)* | `measurements.<variable>.layout: "side_by_side"`, `mosaic: "first" \| "last" \| "mean"` |
 
 ### 7.5 `river_km_statistics` (SMB)
@@ -1183,12 +1183,93 @@ This matches dfm_tools (GPL-3.0), which the tool imports. HYDROLIB-core (MIT) is
 * Simulation: SMT run `r209` (`computations_smt`), morphological time.
 * M2D: `bed_level` (value, difference in time), measurements from `2D_measurements_02.csv` (VRT/GeoTIFF), windows along `rkm_3km_lr.csv` (±1500 m), river-km labels, land boundary `j21_ldb.mat`.
 * SMB: `bed_level`, river-km file `rkm.csv` (Maas tags), 250 m segments from km 2 to 85, regions L1R1, L3R3, L1L3, R1R3, L2L3, R2R3 with `.mat` measurements, two region groups, time series at km 15–18, 23–30, 35–41.
-* Comparison targets: the existing Matlab output of this case (cache values and figures), with tolerances. The Matlab cache is read, never rewritten.
+* Comparison targets: the existing Matlab output of this case in the `r209` simulation folder, read-only:
+  * `mat/`: 47 files, among them `M2D_<time>_var_bl.mat`, `SMB_<time>_pol_250m_var_bl_sb_<region>.mat`, `SMB_pol_250m.mat`, region membership `<region>.mat`, `M2D_tim.mat`/`tim.mat` and `status.mat`;
+  * `fig/`: 3 819 PNGs in `M2D/<series>/bl/{val,diff_t}` and `SMB/03/<region>`.
+  
+  Note: the Matlab cache file names use the *hydrodynamic* time even when the analysis uses morphological time (`M2D_20210222074325` = morphological 2021-08-12). According to `M2D_tim.mat`, the 4 requested times come from sub-runs 0, 18, 48 and 177.
 * **Rules**:
   * the test only reads from the P-drive;
   * `output.root` points to a local temporary folder;
   * `output.forbidden_roots` contains the project folder;
   * the input-snapshot check (above) runs as part of the test.
+
+### 9.4 Synthetic SMT test case
+
+The real case (`r209`: 195 sub-runs × 44 partitions, ≈ 8 GB per sub-run) is too large and too project-specific for everyday testing. A **synthetic SMT simulation** is therefore generated, input *and* output. It has the same structure and file formats as `r209`, but it is small, can be shared publicly, and its fields are analytic, so the expected results are known exactly.
+
+**Generator.**
+* `tools/synthetic_smt/` (committed) builds the case deterministically (fixed seed, versioned parameters).
+* Default output: `data_local/synthetic_smt_01/`, git-ignored, for local experiments. Tests generate it into a temporary folder.
+* A frozen copy of the generated case plus its **Matlab reference results** is committed under `tests/data/synthetic_smt_01/` (target < 10 MB). It is used to compare with Matlab `D3D_plot` in CI.
+* Dependencies: `numpy`, `netCDF4`, `shapely`, `rasterio` (GeoTIFF), `scipy`/`h5py` (`.mat`). The VRT is written as XML text.
+
+**River and grid.**
+* A meandering channel about 10 km long, generated from a sine-generated curve, in projected coordinates (EPSG:28992-like range).
+* A main channel (summer bed) of about 100 m with 20 m quadrilateral cells, and floodplains of about 300 m on each side with coarser cells. A few triangles at transitions test mixed face types.
+* UGRID `mesh2d`, with face areas consistent with the geometry.
+* **3 partitions** along the river, with ghost cells, `mesh2d_flowelem_domain` and `mesh2d_flowelem_globalnr` as written by D-Flow FM. One partition is a long strip along the whole floodplain, like partitions 12 and 31 in `r209`. This tests partition merging with dfm_tools.
+
+**SMT layout** (as `r209`, reduced):
+
+```
+synthetic_smt_01/
+├─ smt.yml                       minimal, same structure as r209
+├─ sed/synthetic.sed
+└─ output/
+   ├─ 0/  dflowfm.mdu  mor.mor  dimr_config.xml
+   │      results/dflowfm_000{0,1,2}_map.nc  dflowfm_000{0,1,2}.dia  dflowfm.dia
+   ├─ 1/ …
+   ├─ 2/ …
+   └─ 3/ …                       4 sub-runs; TStart(k+1) = TStop(k); restart file names chained
+```
+
+* 3 map times per sub-run (start, after spin-up, end), with the **duplicate boundary time** between sub-runs.
+* `MorFac = 10`, `MorStt = 86400 s`, and `morft` in the map files.
+* Map time units `seconds since 2021-02-08 00:00:00 +01:00`, while the MDU keeps `RefDate = 20121231`. This reproduces the mismatch of §4.3.
+* The partition `.dia` files end with `Computation finished`; the main `dflowfm.dia` does not (as `r209`).
+* Variants generated with a flag:
+  * *running*: an `output/work` folder exists and the last sub-run is truncated;
+  * *crashed*: the last map time is before `TStop` and there is no finish line;
+  * *non-partitioned*;
+  * *gap in sub-run numbering*: must produce a validation error.
+
+**Analytic fields** (the expected results follow in closed form):
+* `mesh2d_mor_bl(x, y, t) = z₀ − i·s + A·sin(2π s/L_b)·cos(π n/B) + e·t_mor`. Here `s` and `n` are the along- and across-channel coordinates. The bar wavelength `L_b` divides the 250 m segment length, so the bars average out per segment, and the bed degrades linearly in morphological time.
+* `mesh2d_flowelem_ba` is the exact cell area.
+* `mesh2d_s1`, `mesh2d_waterdepth`, `mesh2d_ucmag` and `mesh2d_taus` are simple smooth functions.
+* `mesh2d_lyrfrac` has 3 fractions, to test the fraction selection.
+* Some cells are NaN, and one is Inf, to test the SMB exclusion rule.
+
+Expected results stored with the case:
+* SMB area-weighted mean, mean, count and sum per segment;
+* the cells per segment;
+* M2D values at given faces and times;
+* differences in time;
+* the merged time axis.
+
+**Project inputs** (same formats as the Maas project):
+* River-km files in the fixed format (`x, y, label, km`):
+  * `rkm.csv` with `_MA` tags (Maas rules);
+  * `rkm_generic.csv` with an unknown tag (generic river);
+  * `rkm_rijn.csv` with Rijntakken tags (track required);
+  * `rkm_1km.csv` / `rkm_3km.csv` for labels and extents.
+* Region shapefiles:
+  * `L1R1` (the summer bed);
+  * `L1L3` and `R1R3` (left and right halves), for region groups;
+  * one region wider than `half_width`, to trigger the coverage warning.
+* SMB measurements:
+  * `<region>_measured.mat` with the real structure (`data.bl.val_mean.{rkm, s, unit, tim_dnum, val}`, `source`) and **unsorted times**. There is also a v7.3 (HDF5) variant;
+  * the expected NetCDF after conversion.
+* 2D measurements:
+  * two GeoTIFF tiles (one shifted by half a cell, to test resampling) and a `.vrt` that mosaics them;
+  * a polygon shapefile ("vakken") with the fields `MEAN`, `COUNT`, `A`, `locatie`, `code_uniek`, some of them failing the coverage and location filters;
+  * a catalogue CSV with time-zone offsets, one entry with `factor = 0.01` (cm → m) and times within and outside the tolerance.
+* Land boundary as `.mat` (an N×2 NaN-separated array) and as `.ldb`.
+
+**Scripts.**
+* `main_plot_synthetic.m`: the Matlab `D3D_plot` input equivalent to the Maas case (M2D + SMB with measurements, region groups, windows along km). **You run it once** with Matlab to produce the Matlab reference (`mat/`, `fig/`), which is then frozen in `tests/data/`.
+* `main_plot_synthetic.py` / `.yaml`: the same case for the Python tool. It is the first end-to-end example and the input of the main regression tests.
 
 ---
 
@@ -1215,7 +1296,7 @@ Approach: develop first behind an internal adapter in `d3dplot` (with tests). Op
 
 | Phase | Deliverable |
 |-------|-------------|
-| 0 | Repository skeleton, GPL-3.0 licence, tooling, CI (Win/Linux), docs site, small FM + SMT test data |
+| 0 | Repository skeleton, GPL-3.0 licence, tooling, CI (Win/Linux), docs site, **synthetic SMT generator** (§9.4) and Matlab reference run on it |
 | 1 | Config models + JSON schema, simulation discovery (FM/DIMR/SMT), status, variable registry, label dictionaries (en/nl/es), write guard + read-only input checks, `info`/`variables`/`init`/`validate` |
 | 2 | Core engine: grid file + per-time-step data files, fingerprints, planner, `serial` and `processes` executors |
 | 3 | **`map2d`** end to end (comparisons, extents with visible-face subsets, figure reuse, colour-limit sets, tiles, land boundaries incl. `.mat`, movies), **raster/polygon measurements**, replotting, hooks |
@@ -1227,15 +1308,13 @@ Approach: develop first behind an internal adapter in `d3dplot` (with tests). Op
 
 ## 12. Remaining open questions
 
-Resolved in v4:
-* one track per km set is enough, and the architecture stays general (§2.5);
-* bend cutoffs: only the IJssel for now, as provider data (§2.5);
-* acceptance case: the Maas Lixhe–Roermond script (§9.3);
-* SLURM: stub in v1 (§4.8).
+Resolved in v5:
+* `do_clims_measurements`: the colour limits are taken from the measurement range;
+* `d3dplot/` output sub-folder: agreed;
+* raster resampling instead of the 0.5-cell shift: agreed;
+* time zone of `.mat` datenums: `measurements.time_zone` if given, otherwise the model's;
+* Matlab reference of the acceptance case: `r209/mat` and `r209/fig`.
 
 Still open:
-1. **`do_clims_measurements`**: used in the example script but not found in the OET version checked. Does it mean "automatic colour limits computed over model and measurements" (assumed in §4.12), or something else?
-2. **`d3dplot/` sub-folder** (§4.9): OK to group all Python output in one sub-folder of the simulation folder, instead of Matlab's `mat/`, `figures/`, … directly in it?
-3. **Raster alignment** (§4.12): OK to resample misaligned tiles onto a common grid (nearest), instead of Matlab's 0.5-cell shift? The results can differ slightly at tile edges.
-4. **Time zone of `.mat` datenums**: is the model time zone (from the MDU) the right default for the measurement times in the `.mat` files?
-5. **Matlab output of the acceptance case**: where is the existing Matlab output of `main_plot_01.m` (the `mat/` and `figures/` folders of `r209`)? It is needed as the comparison target. It will only be read.
+1. **Synthetic case, frozen copy**: OK to commit the generated synthetic case and its Matlab reference results to the repository (`tests/data/`, target < 10 MB, public)? The alternative is to keep them only in `data_local/` and regenerate them.
+2. **Matlab reference run**: once the generator exists, can you run `main_plot_synthetic.m` with your Matlab `D3D_plot` to produce the reference results?

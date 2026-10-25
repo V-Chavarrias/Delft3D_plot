@@ -30,3 +30,6 @@ site/
 Thumbs.db
 .idea/
 .vscode/
+
+# Local data (never committed)
+/data_local/
