@@ -1,6 +1,6 @@
 # Delft3D_plot (Python): Architecture and Implementation Plan
 
-Status: **v6.1, plan for review.** Only the synthetic test-case generator is implemented ([tools/synthetic_smt](../tools/synthetic_smt/README.md)). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
+Status: **v6.2, plan for review.** Only the synthetic test-case generator is implemented ([tools/synthetic_smt](../tools/synthetic_smt/README.md)). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
 
 Document map:
 * §0 Session handover
@@ -37,7 +37,10 @@ Document map:
 | Plan (this file) | `docs/architecture.md` | v6 |
 | Licence | `LICENSE` | GPL-3.0 |
 | Synthetic SMT test case generator | `tools/synthetic_smt/` | Implemented and verified (§13.3) |
+| Land-boundary converter (`.mat` cache → `.ldb`) | `tools/mat_to_ldb.py` | Implemented. Used to recreate the Maas land boundary (D45) |
 | Generated synthetic case | `data_local/synthetic_smt_01/` | Git-ignored; regenerate with the generator |
+| Recreated Maas land boundary | `data_local/maas/j21_ldb.ldb` (55.7 MB) | Git-ignored. 174 220 polylines, 2 343 057 points; read by HYDROLIB-core in 22 s, identical to the `.mat` |
+| HYDROLIB-core modification | plan in §14.1 | **Planned, not started** |
 | Python environment | `.venv/` (uv, Python 3.12) | Git-ignored. dfm_tools and HYDROLIB-core are installed editable from the local checkouts |
 | Package `d3dplot` | — | **Not started** (Phase 1, §15) |
 | Matlab reference results of the synthetic case | `data_local/synthetic_smt_01/simulations/r00*/mat`, `fig` | **Pending**: the user runs `scripts/main_plot_synthetic.m` |
@@ -99,8 +102,9 @@ APIs the design relies on (check them first when upgrading):
 ### 0.4 Where to continue
 
 1. **Review this plan** with the user. Resolve §17 where possible.
-2. Start **Phase 1** (§15.2): repository skeleton (`pyproject.toml`, `src/d3dplot`, CI, docs), then the work packages in order.
-3. When the user has run the Matlab script on the synthetic case, add the Matlab comparison tests (WP-T3).
+2. **WP 0.1** (§15.1a, §14.1): the HYDROLIB-core MDU keyword contribution. It is a prerequisite of WP 1.5 and can run in parallel with WP 1.1–1.4.
+3. Start **Phase 1** (§15.2): repository skeleton (`pyproject.toml`, `src/d3dplot`, CI, docs), then the work packages in order.
+4. When the user has run the Matlab script on the synthetic case, add the Matlab comparison tests (WP-T3).
 
 ---
 
@@ -164,7 +168,7 @@ Status: **A** = agreed with the user; **P** = proposed in this plan and awaiting
 | D19 | Synthetic SMT case generated locally; no frozen copy committed | User | A |
 | D20 | **Land boundaries are input as `.ldb` only**. Parsed results are cached | User | A |
 | D21 | **Model output is read through a per-simulation merge plan**. dfm_tools/xugrid build the merged grid once (§7.6) | Measured: 75 s vs 1 s per `r209` sub-run (§5.3) | P |
-| D22 | **MDU/`.mor`/`.sed` are read with HYDROLIB-core's tolerant INI parser** plus a typed adapter. `FMModel`/`ResearchFMModel` are not used for reading; once upstream accepts the missing keywords (§14) they can be used as an optional strict check | `FMModel` rejects the real `r209` MDU (§5.4); a read-only postprocessor must read every MDU the kernel accepted, of any version | P |
+| D22 | **The MDU is read with HYDROLIB-core `ResearchFMModel(path, recurse=False)`**, after HYDROLIB-core is modified to accept the missing keywords (§14.1). `.mor`/`.sed` are read with HYDROLIB-core's INI parser until HYDROLIB-core has typed models for them | User: "read the mdu with the right file in hydrolibcore and modify the file to accept morphopol and the other flags"; reuse (R3) | A (v6.2; replaces "tolerant parser") |
 | D23 | **Corrupt or inconsistent partitions are detected**. `time`/`morft` come from the partition majority. Affected faces are **masked** (NaN) and every masking is written to the diagnostic file (D41) | `r209` sub-run 0, partition 0021 is corrupt (§5.2); user | A |
 | D24 | Times are stored internally as time-zone-aware UTC and shown in the model time zone. Cache file names use the hydrodynamic time | xarray drops the offset; morphological time is not unique (§7.8) | P |
 | D25 | When several outputs share a morphological time, select the **last** one, and write the choice to the diagnostic file (D41) | Morphological time repeats during spin-up (§7.8); user | A |
@@ -186,6 +190,8 @@ Status: **A** = agreed with the user; **P** = proposed in this plan and awaiting
 | D41 | **Every run writes a diagnostic file** `logs/d3dplot_<timestamp>.dia` recording what was done: inputs, choices (selected times, duplicates resolved), masked corrupt outputs, reused/rebuilt cache, files written, warnings, errors (§7.19) | User: "make sure a dia file is created with what is being done" | A |
 | D42 | **Background tiles with contextily** (as recommended by dfm_tools, which deprecated its own `plot_background`) and contextily's persistent on-disk cache (`tiles_cache_dir`). This replaces Matlab's `earth_tiles` cache (`plotMapTiles`) | User; dfm_tools | A |
 | D43 | Land boundaries `.ldb` have the `.pli`/`.pol` (Tekal) format and are read with HYDROLIB-core `PolyFile` | User; verified (§3 F6) | A |
+| D44 | **Distribution on PyPI** as `delft3d-plot` (import name `d3dplot`), published from GitHub Actions with PyPI Trusted Publishing on version tags. The names `delft3d-plot`, `d3dplot` and `delft3dplot` were free on PyPI on 2026-10-25 | User | A |
+| D45 | The Maas land boundary is recreated from the Matlab cache `j21_ldb.mat` as `.ldb` with `tools/mat_to_ldb.py`, into `data_local/maas/j21_ldb.ldb`. The original polyline names are not in the `.mat`, so blocks are named `L000001…` | User: "recreate it from the mat file"; the source `.ldb` is unknown | A |
 
 ## 3. Review of the plan (v6)
 
@@ -194,7 +200,7 @@ This round re-checked every earlier decision against real data (`r209`, read-onl
 | # | Finding (verified) | Impact | Change |
 |---|--------------------|--------|--------|
 | F1 | `dfm_tools.open_partitioned_dataset` on one `r209` sub-run (44 partitions, 501 230 faces): **75 s to open + 10 s to load one field**. Direct reading of the same field with a precomputed merge plan: **1.4 s once + 1.0 s per field**. Values identical | With 195 sub-runs: hours instead of minutes | D21, §7.6 |
-| F2 | HYDROLIB-core `FMModel(..., recurse=False)` **rejects the real MDU**: unknown keywords `morphopol`, `tstarttlfsmo`, `rstignorebl`, `nccompression`, … There is no switch to relax this. `hydrolib.core.dflowfm.ini.parser.Parser.parse_as_dict` reads the MDU, `.mor` and `.sed` in < 0.2 s | The strict model cannot be the main reader | D22, §7.5, upstream §14 |
+| F2 | HYDROLIB-core `FMModel(..., recurse=False)` **rejects the real MDU**: 13 unknown keywords. `ResearchFMModel` rejects only 7 (5 standard `[sediment]` keywords missing upstream, 2 deprecated `[geometry]` keywords). There is no switch to relax the check | The strict model cannot read real morphological MDUs today | D22 (v6.2): read with `ResearchFMModel` after modifying HYDROLIB-core (§14.1); §5.4 |
 | F3 | `r209` **sub-run 0, partition 0021**: map times 2–3 have `time` ≈ −5·10⁻¹⁷⁹, `morft` ≈ −5·10²²⁵ and bed levels ≈ ±10³⁰⁸. The other 43 partitions are correct. dfm_tools fails to merge the sub-run ("duplicate time values") | Real output can be corrupt. Matlab results were not affected (they used time 1 only) | D23, §7.6, checks V-OUT-*, synthetic variant `corrupt_partition` |
 | F4 | xarray decodes `seconds since 2021-02-08 00:00:00 +01:00` to time-zone-naive UTC (`2021-02-07T23:00`) | Off-by-one-hour errors in names and matching | D24, §7.8 |
 | F5 | Morphological time is constant during spin-up: synthetic case exactly; `r209` 0 → 11.5 s while the hydrodynamic time advances 86 400 s | Selecting by morphological time is ambiguous | D25, §7.8 |
@@ -224,7 +230,7 @@ Alternatives considered and **not** chosen:
 | datashader for large maps | An extra heavy dependency. xugrid's rasterisation plus matplotlib `imshow` covers the "raster" render mode |
 | pixi environment | uv is already in use, faster to set up, and the package must also install with plain `pip`. A `pixi.toml` can be added for users who prefer it |
 | click/argparse CLI | typer gives typed commands with little code, built on click |
-| `FMModel` strict parsing | Fails on real MDUs (F2) |
+| `FMModel` (standard model) for reading the MDU | Does not know the research keywords used in real MDUs; `ResearchFMModel` is used instead, after the upstream fix (D22, §14.1) |
 | Reading partitions with `xu.open_mfdataset` each time | Too slow (F1) |
 
 ---
@@ -414,7 +420,7 @@ Tags: `GRD`, `M2D`, `M1D`, `PRF`, `SMB`, `HIS`, `HFM`, `CRS`, `STO`, plus legacy
 | Region shapefiles | `…\C_Work\00_data\02_sb\` (`L1R1.shp`, …) |
 | SMB measurements | `…\C_Work\00_data\11_bl_DM_pol_measurements\Lixhe-Roermond-2021-2026\<region>_measured.mat` |
 | 2D measurement catalogues | `…\C_Work\00_data\12_2D_measurements\2D_measurements_02.csv` |
-| Land boundary | `…\C_Work\00_data\05_landuse\` (`j21_ldb.mat` is a Matlab cache of an `.ldb`) |
+| Land boundary | `…\C_Work\00_data\05_landuse\j21_ldb.mat` (Matlab cache; the source `.ldb` is unknown). Recreated as `data_local\maas\j21_ldb.ldb` (D45), in the format of `…\maas-j21_6-v1_20m_km002_085_cc\geometry\maas-j21_6-v1_20m_km002_085_cc_thd.pli` |
 
 ### 5.2 Structure and peculiarities of `r209`
 
@@ -460,7 +466,29 @@ Tags: `GRD`, `M2D`, `M1D`, `PRF`, `SMB`, `HIS`, `HFM`, `CRS`, `STO`, plus legacy
 Related upstream issues:
 * [#931](https://github.com/Deltares/HYDROLIB-core/issues/931) (obsolete/deprecated keywords; its to-do list includes "unknown keywords → warning, later error, once all keywords are in `mdu.json`");
 * [#643](https://github.com/Deltares/HYDROLIB-core/issues/643) (strict unknown-keyword checks for other files);
-* [#788](https://github.com/Deltares/HYDROLIB-core/issues/788) (precedent: a missing MDU keyword added).
+* [#788](https://github.com/Deltares/HYDROLIB-core/issues/788), [#648](https://github.com/Deltares/HYDROLIB-core/issues/648) (precedents: missing MDU keywords added).
+
+No issue existed (2026-10-25) for the missing `[sediment]` keywords.
+
+**Cross-check with the official MDU specification** (`Deltares/Delft3DFM.File.Specifications`, `specifications/dflowfm/mdu.json`, commit `a4d5827`) of all 13 keywords rejected by `FMModel` in the `r209` MDU:
+
+| Section | Keyword (spec spelling) | Spec type, default | Spec status | HYDROLIB-core today | Needed change |
+|---------|-------------------------|--------------------|-------------|---------------------|---------------|
+| sediment | `dredgeFile` | path, `''` | standard | missing | add to `Sediment` |
+| sediment | `morCFL` | intbool, `1` | standard | missing | add to `Sediment` |
+| sediment | `DzbDtMax` | float, `0.1` (m) | standard | missing | add to `Sediment` |
+| sediment | `morphoPol` | path (`*.pol`), `''` | standard | missing | add to `Sediment` |
+| sediment | `inMorphoPol` | intenum {0, 1}, `1` | standard | missing | add to `Sediment` |
+| geometry | `circumcenterMethod` | enum {`internalNetlinksEdge`, `internalNetlinksLoop`, `allNetlinksLoop`}, `allNetlinksLoop` | **deprecated** (2026-03-01) | missing | accept, warn as deprecated |
+| geometry | `circumcenterTolerance` | float, `1e-15` (m) | **deprecated** (2026-03-01) | missing | accept, warn as deprecated |
+| output | `ncCompression` | intbool, `0` | standard | research only | move to `Output` (optional, 2nd PR) |
+| output | `wriMap_trachytopes` | intbool, `0` | standard | research only | move to `Output` (optional, 2nd PR) |
+| time | `tStartTlfsmo` | float, `0.0` (tUnit) | standard | research only | move to `Time` (optional, 2nd PR) |
+| output | `wrirst_bnd` | intbool, `1` | research | research | none |
+| output | `writedfminterpretedvalues` | intbool, `0` | research | research | none |
+| restart | `rstignorebl` | intbool, `0` | research | research | none |
+
+With the first 7 changes, `ResearchFMModel` reads the `r209` MDU. The last 6 keywords are already covered by `ResearchFMModel`, which is why D22 uses it rather than `FMModel`.
 
 ## 6. Libraries and tools
 
@@ -468,7 +496,8 @@ Related upstream issues:
 
 | Need | Library and API | Notes |
 |------|-----------------|-------|
-| MDU, `.mor`, `.sed` (tolerant) | HYDROLIB-core `hydrolib.core.dflowfm.ini.parser.Parser.parse_as_dict` | D22. `.mor` values arrive as `"10   [-]   comment"`: take the first token |
+| MDU | HYDROLIB-core `hydrolib.core.dflowfm.research.models.ResearchFMModel(path, recurse=False)` | D22. Requires the HYDROLIB-core change of §14.1 for real morphological MDUs |
+| `.mor`, `.sed` | HYDROLIB-core `hydrolib.core.dflowfm.ini.parser.Parser.parse_as_dict` | Until typed models exist upstream (§14). `.mor` values arrive as `"10   [-]   comment"`: take the first token |
 | `dimr_config.xml` | HYDROLIB-core `hydrolib.core.dimr.models.DIMR` (`component[i].inputFile`, `.filepath`) | Verified on the synthetic case |
 | `.ldb`, `.pli`, `.pol` | HYDROLIB-core `hydrolib.core.dflowfm.polyfile.models.PolyFile` | 7.7 s/10⁶ points; cached (§7.16) |
 | Windows/Linux paths in model files | HYDROLIB-core `FilePathStyleConverter`, `PathStyle` | |
@@ -551,7 +580,7 @@ src/d3dplot/
 │  ├─ measurements.py       MapMeasurementsConfig, PolygonFilters, ProfileMeasurementsConfig
 │  └─ io.py                 load/save YAML/JSON, resolved config, JSON schema export, --set overrides
 ├─ model_input/
-│  ├─ ini.py                tolerant INI reading (HYDROLIB-core Parser) + value-token parsing
+│  ├─ ini.py                INI reading for .mor/.sed (HYDROLIB-core Parser) + value-token parsing
 │  ├─ mdu.py                MduInfo (typed adapter: times, output, files, morphology)
 │  ├─ mor.py, sed.py        MorphologyInfo, SedimentInfo (fractions, diameters)
 │  └─ dimr.py               find the MDU from dimr_config.xml
@@ -662,18 +691,18 @@ src/d3dplot/
 
 Inside an SMT sub-run, relative paths in the MDU are resolved against the sub-run folder (e.g. `SedFile = ../../sed/…`).
 
-**MDU adapter** (`MduInfo`), from `Parser.parse_as_dict`. Keys are case-insensitive; values keep the first token for numbers:
+**MDU adapter** (`MduInfo`): a thin, read-only view on HYDROLIB-core's `ResearchFMModel(path, recurse=False)` (D22). With `recurse=False`, referenced files are not loaded; file references are `DiskOnlyFileModel` objects whose `.filepath` is resolved relative to the MDU folder. If HYDROLIB-core rejects an MDU (for example a keyword from a newer kernel), validation reports V-MDU-001 with the unknown keywords and section, and the hint to update HYDROLIB-core or report the keyword upstream.
 
-| Field | MDU key | Notes |
-|-------|---------|-------|
-| `refdate` | `[time] RefDate` | `yyyymmdd` |
-| `tunit` | `[time] Tunit` | `S`, `M`, `H`, `D` |
-| `tstart`, `tstop` | `[time] TStart`, `TStop` | in `tunit` from `refdate` |
-| `tzone` | `[time] Tzone` | hours |
-| `output_dir` | `[output] OutputDir` | default `DFM_OUTPUT_<stem>` |
-| `map_file` | `[output] MapFile` | default `<stem>_map.nc`; partitions `<stem>_<pppp>_map.nc` |
-| `net_file` | `[geometry] NetFile` | |
-| `mor_file`, `sed_file` | `[sediment] MorFile`, `SedFile` | `.mor` → `MorFac`, `MorStt`; `.sed` → fractions (`Name`, `SedTyp`, `SedDia` or `SedMinDia`/`SedMaxDia`) |
+| Field | HYDROLIB-core attribute | Notes |
+|-------|-------------------------|-------|
+| `refdate` | `model.time.refdate` | `yyyymmdd` (int) |
+| `tunit` | `model.time.tunit` | `S`, `M`, `H`, `D` |
+| `tstart`, `tstop` | `model.time.tstart`, `model.time.tstop` | in `tunit` from `refdate` |
+| `tzone` | `model.time.tzone` | hours |
+| `output_dir` | `model.output.outputdir` | default `DFM_OUTPUT_<stem>` |
+| `map_file` | `model.output.mapfile` | default `<stem>_map.nc`; partitions `<stem>_<pppp>_map.nc` |
+| `net_file` | `model.geometry.netfile` | |
+| `mor_file`, `sed_file` | `model.sediment.morfile`, `model.sediment.sedfile` | then `.mor` → `MorFac`, `MorStt`; `.sed` → fractions (`Name`, `SedTyp`, `SedDia` or `SedMinDia`/`SedMaxDia`) with the INI parser |
 
 **Output files**:
 * partitioned: `<output_dir>/<stem>_<pppp>_map.nc` with consecutive `pppp`;
@@ -682,6 +711,12 @@ Inside an SMT sub-run, relative paths in the MDU are resolved against the sub-ru
 The partition count must be equal in all sub-runs (V-OUT-003).
 
 ### 7.6 Reading model output: merge plan (D21, D23)
+
+**In plain words.** A partitioned D-Flow FM run writes one map file per processor (44 for `r209`). Each file holds its own piece of the grid plus a strip of neighbouring cells that belong to other files ("ghost cells"). To get one value per cell of the whole model, the pieces must be glued together: drop the ghost cells, then put every remaining cell at its place in the full grid.
+
+dfm_tools does this gluing, but it rebuilds the whole grid every time a sub-run is opened: 75 s for one `r209` sub-run, 195 times. Yet the grid is the same in every sub-run and at every time; only the values change. So the tool does the expensive part **once per simulation** and stores the result. That stored result is the *merge plan*: for each map file, the list "local cell number → position in the full grid". Afterwards, getting the bed level of any sub-run and time means reading that variable from the 44 files and placing the values with the plan: about 1 s instead of 85 s. dfm_tools is still used to build the full grid once, and the result is checked against it.
+
+The rest of this section specifies how the plan is built, validated and used.
 
 **Partition identity** (checked for every partition file during inspect, V-OUT-022):
 * the partition number `p` comes from the file name (`<stem>_<pppp>_map.nc`), and the set of numbers must be `0 … N−1` without gaps;
@@ -1295,7 +1330,7 @@ analyses:
       color_limits: {bed_level: {difference_time: [null, [-1, 1]]}}
       extents_along_river_km: {file: 'p:\…\01_rkm\rkm_3km_lr.csv', window_x_m: 1500, window_y_m: 1500}
       river_km_labels: {file: 'p:\…\01_rkm\rkm_1km_lr.csv'}
-      land_boundaries: ['p:\…\05_landuse\j21.ldb']
+      land_boundaries: ['c:\checkouts\Delft3D_plot\data_local\maas\j21_ldb.ldb']   # recreated from j21_ldb.mat (D45)
       aspect: equal
   - analysis: river_km_statistics
     variables: [bed_level]
@@ -1314,7 +1349,7 @@ analyses:
     hooks: ["maas_project.plotting:add_structures_rkm", "d3dplot.hooks:legend_horizontal"]
 ```
 
-The `.ldb` name is a placeholder: only `j21_ldb.mat` (a cache) was seen (§17).
+The land boundary is the `.ldb` recreated from `j21_ldb.mat` (D45).
 
 ### 10.3 Python example
 
@@ -1372,7 +1407,7 @@ Codes are stable, documented, and tested one by one. **E** = error, **W** = warn
 | V-SIM-002 | E | Several candidate MDUs |
 | V-SIM-010 | E | SMT sub-run numbering has gaps |
 | V-SIM-011 | W | SMT running (`output/work`) |
-| V-MDU-001 | E | MDU, `.mor` or `.sed` cannot be parsed |
+| V-MDU-001 | E | MDU cannot be read by HYDROLIB-core (lists unknown keywords per section), or `.mor`/`.sed` cannot be parsed |
 | V-MDU-002 | W | MDU `RefDate` differs from the map time units |
 | V-OUT-001 | E | Map files missing |
 | V-OUT-002 | E | Map file unreadable (not NetCDF, truncated) |
@@ -1527,17 +1562,13 @@ Nightly: benchmarks and slow tests.
 
 ## 14. Upstream contributions
 
-Develop each item first behind an adapter in `d3dplot`, with tests. Propose it upstream when stable, then switch to the upstream version and pin the minimum version. Track the status in `docs/upstream.md`.
-
-**Should HYDROLIB-core be modified to accept the missing keywords? Yes, but the tool should not depend on it.**
-* *Modify upstream*: adding the 5 missing `[sediment]` keywords is a small, clearly correct pull request with precedent (#788). Handling the deprecated `circumcenter*` keywords as warnings fits #931. Together they would make `ResearchFMModel` read the real `r209` MDU, which benefits every HYDROLIB-core user.
-* *Do not depend on it*: a read-only postprocessor must read every MDU that the kernel ran, including those from older or newer kernel versions with keywords HYDROLIB-core does not know yet. Strict models will always lag behind the kernel. The tool therefore keeps the tolerant INI parser for reading (D22) and can use the strict models as an optional check (`validate --strict-mdu`) once upstream accepts the changes.
+Develop each item first behind an adapter in `d3dplot`, with tests. Propose it upstream when stable, then switch to the upstream version and pin the minimum version. Track the status in `docs/upstream.md`. The HYDROLIB-core MDU change is the exception: the tool reads the MDU with HYDROLIB-core directly (D22), so that change comes first (§14.1).
 
 | Repository | Contribution | Why | Priority |
 |------------|--------------|-----|----------|
-| HYDROLIB-core | **Add the missing `[sediment]` keywords** `dredgefile`, `morcfl`, `dzbdtmax`, `morphopol`, `inmorphopol` (all valid D-Flow FM keywords; precedent #788). With these, `ResearchFMModel` would parse the real `r209` MDU apart from the deprecated `circumcenter*` keywords | Small, uncontroversial; makes HYDROLIB-core usable on real morphological MDUs | **High, first** |
-| HYDROLIB-core | Handle **deprecated** keywords (`circumcentermethod`, `circumcentertolerance`) as warnings, as the D-Flow FM kernel does (contribute to #931) | Aligns with the kernel | High |
-| HYDROLIB-core | Opt-in **lenient loading** (unknown keywords → warnings) for read-only consumers, e.g. a load setting (contribute to the #931 to-do "unknown → warning") | Postprocessing tools must read MDUs of any kernel version | Medium (needs maintainer agreement) |
+| HYDROLIB-core | **MDU keywords**: add the 5 missing `[sediment]` keywords and accept the 2 deprecated `[geometry]` keywords (detailed plan §14.1) | `ResearchFMModel` must read real morphological MDUs (D22) | **High, first** (prerequisite of WP 1.5) |
+| HYDROLIB-core | Move the standard keywords `ncCompression`, `wriMap_trachytopes`, `tStartTlfsmo` from the research model to the standard model (§14.1, PR 2) | Spec conformity | Medium |
+| HYDROLIB-core | Opt-in lenient loading (unknown keywords → warnings), contributing to #931 | Future kernel keywords | Low (discuss with maintainers) |
 | HYDROLIB-core | `MorphologyModel` (`.mor`) and `SedimentModel` (`.sed`) | Typed access to MorFac, MorStt, fractions | High |
 | HYDROLIB-core | Faster `PolyFile` path for large `.ldb`/`.pol` (NumPy block reader) | 7.7 s vs 0.7 s per 10⁶ points (F6) | Medium |
 | HYDROLIB-core | Typed `RefDate`/`TStart`/`TStop` → datetime helpers | Time handling | Low |
@@ -1549,6 +1580,75 @@ Develop each item first behind an adapter in `d3dplot`, with tests. Propose it u
 | dfm_tools | River-km utilities (fixed-format file, km ↔ xy, perpendicular cut lines, segment polygons; generic part of §4.5) | SMB | Medium |
 | D-Flow FM (report) | Corrupt `time`/values in partition 0021 of `r209` sub-run 0 | Data quality | To decide with the user (§17) |
 
+
+### 14.1 Plan: HYDROLIB-core MDU keywords (not started)
+
+**Goal**: `ResearchFMModel(path, recurse=False)` loads the real `r209` MDU, and every MDU using the standard morphology keywords, without errors. Each keyword keeps the official spelling, type, default and description of `mdu.json` (§5.4).
+
+**Working setup**:
+* repository `c:\checkouts\HYDROLIB-core` (remote `Deltares/HYDROLIB-core`), from an up-to-date `main`;
+* HYDROLIB-core uses poetry, black, isort, pytest and commitizen (`docs/guides/contributing.md`);
+* contributions go through a fork of `Deltares/HYDROLIB-core` under the user's GitHub account, unless the user has write access.
+
+**Step 1: issue** (on `Deltares/HYDROLIB-core`):
+* title: *"MDU: add missing [sediment] morphology keywords and accept deprecated [geometry] circumcenter keywords"*;
+* content: the table of §5.4 (keywords, spec type/default/status, link to `mdu.json` at commit `a4d5827`); the error message seen; references #648/#788 (precedents) and #931 (deprecated keywords);
+* scope: PR 1 below. PR 2 (moving three standard keywords out of the research model) is mentioned as a follow-up, because it touches the public API.
+
+**Step 2: branch** `feat/<issue>_mdu_sediment_morphology_keywords`, draft pull request with `Closes #<issue>`.
+
+**Step 3: code changes (PR 1)**, in `hydrolib/core/dflowfm/mdu/models.py`:
+
+1. Class `Sediment` (standard section), new fields. Each field also gets a `Comments` entry with the spec description, following the existing `morfile`/`sedfile` pattern:
+
+   | Attribute | Alias | Type | Default |
+   |-----------|-------|------|---------|
+   | `dredgefile` | `DredgeFile` | `DiskOnlyFileModel` (with `set_default_disk_only_file_model`, as `morfile`) | empty |
+   | `morcfl` | `MorCFL` | `Optional[bool]` | `True` |
+   | `dzbdtmax` | `DzbDtMax` | `Optional[float]` | `0.1` |
+   | `morphopol` | `MorphoPol` | `DiskOnlyFileModel` (a `.pol`; disk-only, not parsed, so `recurse=True` behaviour does not change) | empty |
+   | `inmorphopol` | `InMorphoPol` | `Optional[int]`, validated to {0, 1} | `1` |
+
+   Aliases follow HYDROLIB-core's existing MDU casing convention (keys are matched case-insensitively on reading). On writing, defaults equal to the kernel defaults keep the semantics unchanged.
+2. Class `Geometry` (standard section), deprecated keywords:
+
+   | Attribute | Alias | Type | Default |
+   |-----------|-------|------|---------|
+   | `circumcentermethod` | `circumcenterMethod` | `Optional[Literal["internalNetlinksEdge", "internalNetlinksLoop", "allNetlinksLoop"]]` | `None` |
+   | `circumcentertolerance` | `circumcenterTolerance` | `Optional[float]` | `None` |
+
+   * Default `None` and excluded from serialisation when `None`, so newly written MDUs do not contain deprecated keywords (the concern of #931).
+   * When present on reading, a `DeprecationWarning` (or the project's warning mechanism, as agreed in #931) says: *"MDU keyword [geometry] circumcenterMethod is deprecated; the allNetlinksLoop method will be used once it is removed."* This mirrors the D-Flow FM kernel message seen in the `r209` `.dia`.
+   * Fallback if maintainers prefer it: put both keywords in `ResearchGeometry` with the existing `DEPRECATED_KEYWORD` comment pattern (`research/models.py`).
+3. No change to `ResearchFMModel`: it inherits the new `Sediment`/`Geometry` fields.
+
+**Step 4: tests** (`tests/dflowfm/test_mdu.py`, `tests/dflowfm/test_research.py`):
+* a new minimal test MDU `tests/data/input/dflowfm_individual_files/mdu_sediment_morphology_keywords.mdu`, written by hand. **No project data**: only the keywords, with non-default values and both casings;
+* load with `FMModel` and `ResearchFMModel` → values, types and file references are correct;
+* defaults when the keywords are absent;
+* `inMorphoPol = 2` → validation error;
+* round trip save/load preserves values; deprecated keywords are not written when absent and give the warning when present;
+* `ResearchFMModel` loads a test MDU containing all 13 keywords of §5.4 (each in its own section, synthetic values).
+
+**Step 5: quality and docs**:
+* `poetry run black . && poetry run isort . && poetry run pytest`;
+* CI runs on Windows, Ubuntu and macOS, plus SonarCloud;
+* the changelog is generated by commitizen. Docs: only if keyword lists are documented (`docs/`); otherwise none.
+
+**Step 6: commits and merge**:
+* conventional commits, e.g. `feat(mdu): add morphology keywords dredgeFile, morCFL, DzbDtMax, morphoPol, inMorphoPol to [sediment]` and `feat(mdu): accept deprecated circumcenter keywords in [geometry] with a warning`;
+* footer `Refs: #<issue>`;
+* the PR is marked ready for review, and the maintainers squash-merge.
+
+**Step 7: local verification (outside HYDROLIB-core's CI)**: with the branch installed editable in `c:\checkouts\Delft3D_plot\.venv`, `ResearchFMModel(<r209>\output\1\dflowfm.mdu, recurse=False)` loads, and `time.tstart`, `sediment.morfile` and `sediment.morphopol` have the expected values (read-only on the P-drive).
+
+**PR 2 (follow-up, separate issue)**: move `ncCompression`, `wriMap_trachytopes` (to `Output`) and `tStartTlfsmo` (to `Time`) from the research classes to the standard ones, as the spec classifies them as standard. Keep the old attribute names (`research_nccompression`, …) as `DeprecatedAttributeAlias` (`hydrolib/core/base/_deprecation.py`) and document it in `docs/migration.md`. This needs maintainer agreement, because it changes the public API and what `FMModel` writes.
+
+**Later**: typed `MorphologyModel` (`.mor`) and `SedimentModel` (`.sed`), from the corresponding specification files, if present in `Delft3DFM.File.Specifications`.
+
+**Dependency for d3dplot**:
+* during development, d3dplot uses the HYDROLIB-core branch (editable install from the local checkout);
+* d3dplot's first PyPI release needs a HYDROLIB-core **release** containing PR 1 (PyPI packages cannot depend on git branches). `pyproject.toml` then pins `hydrolib-core >= <that version>`.
 ---
 
 ## 15. Implementation plan
@@ -1558,6 +1658,14 @@ Develop each item first behind an adapter in `d3dplot`, with tests. Propose it u
 * Plan (this document), licence, repository.
 * Synthetic SMT generator with self-check and variants.
 * Exploration of the real case (§5).
+* Maas land boundary recreated as `.ldb` (D45).
+
+### 15.1a HYDROLIB-core contribution (prerequisite of WP 1.5)
+
+| WP | Content | Done when |
+|----|---------|-----------|
+| 0.1 | HYDROLIB-core PR 1: `[sediment]` morphology keywords + deprecated `[geometry]` keywords (§14.1, steps 1–7) | PR merged upstream; `ResearchFMModel` loads the `r209` MDU locally |
+| 0.2 | Follow-up HYDROLIB-core release that contains PR 1 | `hydrolib-core >= <version>` in d3dplot's `pyproject.toml` (needed before the first PyPI release, WP 5.5) |
 
 ### 15.2 Phase 1: foundations
 
@@ -1567,7 +1675,7 @@ Develop each item first behind an adapter in `d3dplot`, with tests. Propose it u
 | 1.2 | Synthetic case as a test fixture | `tests/conftest.py`: session fixture adding `tools/synthetic_smt` to `sys.path` and generating into `tmp_path_factory`; marker `requireslocaldata` | Integration tests can use `synthetic_case` |
 | 1.3 | Configuration | `config/*` models, YAML IO, `--set` overrides, resolved-config writer, JSON schema | Round trip YAML ↔ models; unknown keys rejected; schema exported |
 | 1.4 | Validation framework | `validate/report.py`, codes, text/JSON output, static checks V-CFG-* | Each code has a test |
-| 1.5 | Model input | `model_input/*` (tolerant INI, `MduInfo`, `.mor`, `.sed`, DIMR) | Synthetic MDU/`.mor`/`.sed` parsed. (local) real `r209` files parsed |
+| 1.5 | Model input | `model_input/*` (`MduInfo` on `ResearchFMModel(recurse=False)`; `.mor`, `.sed` with the INI parser; DIMR) | Synthetic MDU/`.mor`/`.sed` parsed; V-MDU-001 lists unknown keywords. (local) real `r209` files parsed with the HYDROLIB-core branch of WP 0.1 |
 | 1.6 | Discovery | `simulation/discover.py`, `subrun.py`, partition file discovery, V-SIM-*, V-OUT-001..003 | All synthetic variants classified correctly |
 | 1.7 | Status | `simulation/status.py` (`.dia` tails), json/csv writers | States of all synthetic variants correct. (local) `r209` finished |
 | 1.8 | Store | `store/layout.py`, `guard.py`, `atomic.py`, `fingerprint.py`; input-snapshot test helper | Guard refuses unmarked or forbidden roots; atomic writes tested |
@@ -1611,7 +1719,7 @@ Develop each item first behind an adapter in `d3dplot`, with tests. Propose it u
 | 5.2 | Matlab comparison on the synthetic case (needs the user's Matlab run) |
 | 5.3 | SLURM stub (`slurm write`), `--shard` documentation |
 | 5.4 | Documentation (user guide, references, "from Matlab", gallery), agent skills |
-| 5.5 | Release v1.0 (GitHub release; PyPI name `delft3d-plot` to be checked) |
+| 5.5 | Release v1.0 on **PyPI** as `delft3d-plot` (D44): GitHub Actions workflow on tags (`v*`) building sdist + wheel with hatchling, publishing with PyPI Trusted Publishing (no tokens); TestPyPI dry run first; GitHub release with the changelog. Requires WP 0.2 |
 
 ### 15.7 Later
 
@@ -1635,6 +1743,8 @@ HIS, PRF, M1D, HFM and GRD analyses; 3D (layers, depth average with dfm_tools); 
 | More kinds of corrupt or odd real output | Wrong results or crashes | Quality checks (§7.6), policies, synthetic variants for every new case found |
 | Differences from Matlab (face centres, time selection, mosaics) | Acceptance disputes | Document every intended difference (§4, D17, D25); coordinate-based comparison |
 | Upstream API changes (dfm_tools, HYDROLIB-core, xugrid) | Breakage | Pin minimum versions; adapters; CI against latest |
+| HYDROLIB-core rejects MDUs with keywords from newer kernels (D22) | Validation stops | Clear V-MDU-001 message with the keywords; contribute them upstream (same route as §14.1); pin a HYDROLIB-core version that knows the kernel versions in use |
+| HYDROLIB-core release with PR 1 not available when d3dplot is ready | PyPI release blocked | Start WP 0.1 early; the release does not depend on it before WP 5.5 |
 | Large grids are slow to plot | Slow plots | Visible-face subsets, raster mode |
 | Windows path length, permissions on shared drives | Failed writes | V-OUT-040/041; short names; `output.root` |
 | Offline machines (tiles) | Missing backgrounds | Tiles optional; persistent contextily cache, shareable (D42); V-ENV-002 |
@@ -1644,22 +1754,23 @@ HIS, PRF, M1D, HFM and GRD analyses; 3D (layers, depth average with dfm_tools); 
 
 ## 17. Open questions
 
-Resolved with the user (v6.1):
+Resolved with the user (v6.1–v6.2):
 * duplicate morphological times → last, logged (D25);
 * corrupt output → mask, logged (D23);
 * a diagnostic file for every run (D41);
 * `.ldb` = Tekal `.pli`/`.pol` format, read with HYDROLIB-core (D43);
-* background tiles with contextily and its cache instead of `earth_tiles` (D42);
+* the Maas `.ldb` recreated from `j21_ldb.mat` (D45);
+* background tiles with contextily and its cache (D42);
 * uv (D28) and the float64 cache (D26);
-* HYDROLIB-core: contribute the missing keywords upstream, but keep reading tolerant (§14).
+* the MDU is read with HYDROLIB-core `ResearchFMModel` after modifying HYDROLIB-core (D22, §14.1);
+* the corrupt `r209` partition has been reported by the user;
+* distribution on PyPI as `delft3d-plot` (D44).
 
 Still open:
 1. **Matlab reference run of the synthetic case**: pending. Run `data_local/synthetic_smt_01/scripts/main_plot_synthetic.m` with Matlab `D3D_plot` and report errors, if any.
-2. **Source `.ldb` of `j21_ldb.mat`**: where is the original `.ldb` of the Maas project (needed for acceptance case 1)?
-3. **Reporting the corrupt partition** of `r209` sub-run 0 (partition 0021, map times 2–3) to the model team or the D-Flow FM developers: yes or no?
-4. **Remaining proposals to confirm**: the merge-plan reader (D21) and tolerant MDU reading (D22), plus the other "P" decisions in §2 (D24, D27, D29–D32, D34–D40). Silence means agreement, but an explicit check is better before Phase 2.
-5. **Upstream work**: should the HYDROLIB-core pull request with the 5 missing `[sediment]` keywords (§14) be prepared now (independent of this tool), or later?
-6. **Distribution**: publish on PyPI as `delft3d-plot` (name availability to check), or GitHub releases only for now?
+2. **Merge plan** (D21): explained in plain words at the start of §7.6. Agreement needed before Phase 2.
+3. **Other proposals** to confirm before implementation: D24, D27, D29–D32, D34–D40 (§2).
+4. **HYDROLIB-core contribution** (§14.1): who opens the issue and PR (the user's account, through a fork)? When should WP 0.1 start?
 ## 18. Glossary
 
 | Term | Meaning |
@@ -1819,3 +1930,4 @@ Principles:
 | v5 | Answers on measurements, `r209` findings, synthetic SMT case specification and generator |
 | v6 | Thorough review against real data (merge plan, tolerant MDU parsing, corrupt partitions, time zones, duplicate morphological times, float64, task granularity, path lengths); `.ldb`-only land boundaries; independent review (14 issues fixed: inspect phase, recursive fingerprints, topology signatures, deterministic sharding and geometry, derived-statistic definitions, verified versions); consolidated, self-contained plan with handover, file formats, validation catalogue and work packages |
 | v6.1 | User answers: last duplicate and masking of corrupt output, both written to a new per-run diagnostic file (`.dia`); `.ldb` read with HYDROLIB-core; contextily cache replaces `earth_tiles`; uv and float64 agreed; HYDROLIB-core keyword contribution analysed (`ResearchFMModel` fails only on 7 keywords) |
+| v6.2 | MDU read with HYDROLIB-core `ResearchFMModel` after modifying HYDROLIB-core (detailed plan §14.1, cross-checked with the official `mdu.json`); Maas `.ldb` recreated from the `.mat` (`tools/mat_to_ldb.py`); PyPI distribution as `delft3d-plot`; plain-language explanation of the merge plan |
