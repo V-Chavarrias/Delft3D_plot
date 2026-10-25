@@ -1,18 +1,17 @@
 # Delft3D_plot (Python): Architecture Proposal
 
-Status: **draft v3 for discussion** · Scope: requirements and architecture only. Nothing is implemented yet.
+Status: **draft v4 for discussion** · Scope: requirements and architecture only. Nothing is implemented yet.
 
-Changes since v2:
-* SMB geometry specified in detail, including the river-km file format (unchanged input) and the Rijn/Maas rules (§2.5)
-* cache: **one file per time step**, one grid file per simulation, no grid reference in data files, geometry written to files (§4.5)
-* fingerprints stored in each cache file instead of a central manifest (§4.6)
-* parallel execution: how the Windows process pool works; SLURM defaults (§4.8)
-* output written to the simulation folder by default, with an override (§4.9)
-* efficient plotting of zoomed views: "draw once, save many" (§4.10)
-* labels and translations through a separate dictionary, as `labels4all` (§4.11)
-* figure formats: PNG only for now, extensible (§4.10)
-* licence decided: **GPL-3.0** (§9.2)
+Changes since v3:
+* **measurements** for M2D (GeoTIFF/VRT rasters, polygon shapefiles) and SMB (`.mat` converted to NetCDF), as a general measurement layer (§2.6, §4.12)
+* **inputs are read-only**: the tool never modifies or deletes input files; outputs go to a dedicated `d3dplot/` sub-folder (§4.9, §4.14)
+* plot hooks for user functions (Matlab `function_handles`) (§4.13)
+* region groups (several regions in one SMB figure) (§2.4)
+* SLURM is a **stub** in v1 (§4.8)
+* river-km tracks and bend cutoffs: general architecture; one track per km set is enough (§2.5)
+* acceptance case from the Maas project (§9.3)
 
+Changes in v3: SMB geometry specification; one file per time step; process pool on Windows; efficient zoomed plotting; labels dictionary; GPL-3.0.
 Changes in v2: decisions on the first open questions; v1 scope; reprocessing policy; simulation status; replotting; naming conventions; agent skills; upstream contributions.
 
 ---
@@ -32,6 +31,8 @@ Changes in v2: decisions on the first open questions; v1 scope; reprocessing pol
 | R7 | Parallelism in processing and plotting | Task graph on a pluggable executor (serial, local processes, SLURM) |
 | R8 | **Process first, plot later** | Two separate stages with a persistent cache. Plotting never reads raw output |
 | R9 | **Validate all input up front** | A validation stage that fails fast and reports all problems at once |
+| R10 | **Inputs are never modified or deleted** (model files, measurements, GIS files, typically on the P-drive) | All writes go through one guarded store that only writes inside the tool's own output folders (§4.14) |
+| R11 | **Measurements** can be plotted with model results (M2D, SMB, later others) | A general measurement layer with readers per format and conversion to NetCDF (§4.12) |
 
 ### 1.2 Decisions taken
 
@@ -42,12 +43,15 @@ Changes in v2: decisions on the first open questions; v1 scope; reprocessing pol
 | D3 | Cache format | **NetCDF**. One grid file per simulation, **one data file per time step** (§4.5) |
 | D4 | Hosting and licence | Public GitHub repository [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), **GPL-3.0** |
 | D5 | Upstream | Gaps are implemented as branches/PRs in HYDROLIB-core and dfm_tools when needed (§10) |
-| D6 | Parallel execution | Linux: local process pool and SLURM job arrays (defaults in §4.8). Windows: local process pool on one machine only |
+| D6 | Parallel execution | Local process pool (Windows and Linux). SLURM job arrays on Linux: **stub in v1**, detailed later (§4.8) |
 | D7 | Matlab JSON | Reading `D3D_plot` JSON is **not** required |
 | D9 | SMB geometry | Matlab behaviour is kept: region (summer bed) polygon cut by lines perpendicular to the river axis. The river-km file format is **fixed input**. Rijn and Maas rules apply automatically when the file contains their branch tags; otherwise the river is generic (§2.5) |
 | D10 | Output location | Default: inside each simulation folder. Can be overridden per simulation or with a common root (§4.9) |
 | D11 | Figure formats | PNG only in v1. Architecture allows more formats later (§4.10) |
 | D12 | Labels | Separate translation dictionary as in `labels4all`. Languages: English, Dutch, Spanish (§4.11) |
+| D13 | Measurements | M2D: GeoTIFF/VRT and polygon shapefiles through a time catalogue (existing CSV format accepted). SMB: `.mat` accepted and converted automatically to NetCDF, which is the recommended format for new data (§4.12) |
+| D14 | Read-only inputs | The tool never modifies or deletes any input file (§4.14) |
+| D15 | Generality | River tracks, bend cutoffs, measurement formats and polygon filters are data/plugins, not code branches (§2.5, §4.12) |
 | D8 | Naming | Descriptive names, not Matlab abbreviations (§7) |
 
 ---
@@ -100,7 +104,7 @@ in_plot (struct or JSON)
   * difference with the reference simulation of the differences with the initial time;
   * percentage difference.
   
-  Per figure, one image is made for every colour-limit set and every zoom window. Optional overlays: tiles, land boundary, fixed weirs, velocity vectors, river-km labels, measurements. Optional 3D view and movies.
+  Per figure, one image is made for every colour-limit set and every zoom window. Optional overlays: tiles, land boundary, fixed weirs, velocity vectors, river-km labels. Measurements (GeoTIFF/VRT rasters or polygon shapefiles) are shown in a second panel next to the model (§2.6). Optional 3D view and movies.
 
 **SMB (statistics per river-km polygon)**: [gdm_create_mat_SMB.m](https://github.com/openearth/matlab-tools/blob/main/applications/vtools/D3D/plot/gdm_create_mat_SMB.m), [gdm_create_mat_SMB_postprocess.m](https://github.com/openearth/matlab-tools/blob/main/applications/vtools/D3D/plot/gdm_create_mat_SMB_postprocess.m), [gdm_plot_SMB.m](https://github.com/openearth/matlab-tools/blob/main/applications/vtools/D3D/plot/gdm_plot_SMB.m)
 * Geometry (cached per grid):
@@ -122,7 +126,8 @@ in_plot (struct or JSON)
   * stacked areas for fractions;
   * each with the difference variants.
   
-  Optional overlays: measurements per region, structures. A diagnostic plot shows the cells in each polygon.
+  Optional overlays: measurements per region (§2.6), structures. A diagnostic plot shows the cells in each polygon.
+* **Region groups**: several regions can be drawn in one figure, e.g. the left and right bank (`sb_pol{kp,1}`, `sb_pol{kp,2}` in Matlab), each with its own measurement file. A group with several regions is not processed again: it reuses the results of its single regions.
 
 ### 2.5 SMB geometry: specification (must be preserved)
 
@@ -168,15 +173,20 @@ Rijntakken branch per km, by track:
 
 *Change from Matlab:* Matlab decided the river from the *track* string. Here it is decided from the *file tags*, as requested. The track is still required for Rijntakken (to choose the branch after a bifurcation). Validation reports an error if a Rijntakken file is given without a track.
 
+**Generality.** The rules above are *data of river providers*, not special cases in the algorithm:
+* A provider (`rijntakken`, `maas`, `generic`, or a user plugin) declares the tags it recognises, how to derive the branch of a km from a track, and its bend cutoffs.
+* The branch thresholds and the cutoff table are stored in data files (one per provider: tag list, thresholds per track, cutoff intervals per branch). A new river, a new branch threshold or a cutoff on another branch is a data change, not a code change.
+* One track per km set is enough for now (confirmed). The provider interface returns a branch per km, so a future "track that changes along the set" needs no change in the algorithm.
+
 **Algorithm** (per region × km set; all distances in m, km values in km):
 1. **Centres** `c_1..c_n`: the km values requested by the user (e.g. `145, 146, …, 175`). They do not need to be equidistant or to coincide with file points.
 2. **Segment edges and lengths**: `e` = midpoints between centres, extrapolated at both ends (`cen2cor`). `Δs_i = e_{i+1} − e_i` (km), computed from the *original* centres.
-3. **Bend cutoffs** (Rijntakken, currently IJssel only: 891.9–896.0, 902.5–903.0, 905.3–910.0 km):
+3. **Bend cutoffs** (from the provider's cutoff table; today only the IJssel has entries: 891.9–896.0, 902.5–903.0, 905.3–910.0 km):
    * centres inside a cutoff are removed;
    * edges are recomputed as `c_i − Δs_i/2` (and the last as `c_n + Δs_n/2`);
    * an edge falling inside a cutoff is shifted across it, keeping its distance to its centre (with a 0.1 km polygon-size correction).
    
-   The cutoff table is stored as package data, not in the code.
+   The cutoff table is provider data, not code.
 4. **Edge coordinates**: for each edge, take the file points of its branch and interpolate `x, y` linearly in km between the two bracketing points.
 5. **Local direction** at each edge: `θ_k = atan2(y_{k+1} − y_{k−1}, x_{k+1} − x_{k−1})` (central difference over neighbouring edges). The first and last edges copy the angle of their neighbour. With only two edges, both use the direction between them.
 6. **Cut lines**: `L_k = e_k + W·(cos(θ_k+π/2), sin(θ_k+π/2))`, `R_k = e_k − W·(…)`, with `W` = `half_width` (Matlab default 1000 m). The segment `L_k–R_k` is the perpendicular cut line.
@@ -203,6 +213,72 @@ Implementation:
 * `geometry/regions.py`: region polygons, membership.
 * Point-in-polygon is vectorised with `shapely.contains_xy`, and shapefiles are read with `geopandas`.
 * The result is **written to a NetCDF file** in `cache/geometry/` (§4.5) and reused by all variables, times and later runs.
+
+### 2.6 Measurements in Matlab (reference)
+
+Example: the Maas project script `p:\11211565-002-maas-mor-2026\E_Software_Scripts\co\57_plot_Lixhe_Roermond\main_plot_01.m` (read-only; used as the acceptance case, §9.3).
+
+**M2D**: [gdm_ini_2D_mea.m](https://github.com/openearth/matlab-tools/blob/main/applications/vtools/D3D/plot/gdm_ini_2D_mea.m), [gdm_load_2D_measurements.m](https://github.com/openearth/matlab-tools/blob/main/applications/vtools/D3D/plot/gdm_load_2D_measurements.m), [fig_M2D.m](https://github.com/openearth/matlab-tools/blob/main/applications/vtools/D3D/plot/fig_M2D.m), [SHP_read_and_filter.m](https://github.com/openearth/matlab-tools/blob/main/applications/vtools/general/SHP_read_and_filter.m)
+
+* **Input**: a *catalogue* CSV (`measurements`) with columns `time, file, factor`. Example (`2D_measurements_02.csv`):
+  ```
+  time, file, factor
+  2021-02-08T00:00:00+01:00, p:\…\GEOTIFF\2021_pre_floodwave.vrt , 1.0
+  2021-08-08T00:00:00+01:00, p:\…\2021 Grensmaas Hoogwater zomer.tif , 1.0
+  ```
+  * Times carry a time-zone offset. `factor` converts values to model units, e.g. cm → m.
+  * The files can be:
+    * `.tif` (GeoTIFF);
+    * `.vrt` (GDAL virtual mosaic of many GeoTIFF tiles; each tile gets its own bounding box);
+    * `.shp` (polygons, "vakken", with statistics per polygon).
+  * All files used for one image must be of the same type.
+* **Selection** for a plot at time *t* and window *(xlim, ylim)*: every catalogue entry with `|t_mea − t| < tol_time_measurements` (default 30 days; 60 days in the example) whose bounding box overlaps the window enlarged by `tol_x/y_measurements` (default 1000 m).
+* **Rasters**:
+  * the selected tiles are read in that window, multiplied by `factor`, and mosaicked on a common grid. Cells are filled in catalogue order: a cell already filled is not overwritten;
+  * a validity mask is kept;
+  * if tile grids do not coincide, Matlab tries a shift of 0.5 cell.
+* **Polygons**: the value field (`MEAN`) is shown per polygon. Two filters set polygons to NaN:
+  * *coverage*: `COUNT / area < 0.99`, i.e. fewer than one sounding point per m²;
+  * *location*: the location code (`Locatie`, e.g. L1…L3, R1…R3) is not in the list `[-3 … 3]`.
+  
+  The field names are configurable in Matlab. In the 2026 shapefiles they differ from the defaults: the fields are `A` (area) and `locatie`, and there is a unique id field `code_uniek`.
+* **Comparisons**:
+  * `value` shows the measurements at *t*;
+  * `difference_time` shows measurement(*t*) − measurement(*t₀*). Rasters are subtracted on the intersection of their grids. Shapefiles are subtracted polygon by polygon *by order*, which requires the same number of polygons;
+  * differences between simulations show no measurements.
+* **Display**: a second panel to the right of the model panel, with the same colormap and colour limits. Its title is the mean time of the measurements used. The option `do_clims_measurements=1` is used in the example script but was not found in the OET version checked, so its meaning is still to be confirmed (§12).
+* **Cost**: measurements are re-read for every colour-limit set × window × simulation.
+
+**SMB**: [gdm_load_measurements_match_time.m](https://github.com/openearth/matlab-tools/blob/main/applications/vtools/D3D/plot/gdm_load_measurements_match_time.m), [gdm_load_measurements.m](https://github.com/openearth/matlab-tools/blob/main/applications/vtools/D3D/plot/gdm_load_measurements.m)
+
+* **Input**: one `.mat` file per region (`measurements{kp}` next to `sb_pol{kp}`), plus optional files for region differences (`measurements_diff`).
+* **Structure** (verified on `L1R1_measured.mat`):
+  ```
+  data.<variable>.<statistic>.rkm       [nx]      river km
+  data.<variable>.<statistic>.s         [nx]      distance along the axis [m] (optional)
+  data.<variable>.<statistic>.tim_dnum  [nt]      Matlab datenum (no time zone); NOT necessarily sorted
+  data.<variable>.<statistic>.val       [nx, nt]
+  data.<variable>.<statistic>.unit      'bed elevation [m+NAP]'
+  data.<variable>.source                {nt}      source files (here: the polygon shapefiles above)
+  ```
+  The example has `bl` and `detab_ds` with statistic `val_mean`, 989 locations and 4 times: 2021-02-08, 2023-01-15, 2021-08-08 and 2026-02-23. These times are *not* in chronological order.
+* **Matching**:
+  * variable names are matched with aliases (`bl` = `mesh2d_mor_bl` = `DPS`);
+  * statistics are matched with equivalences: the model `val_mean_weighted` is compared with the measured `val_mean`;
+  * the x-axis is `rkm` (default for SMB) or `s`.
+  * Profile views: the time nearest to *t* within `tol_time_measurements` (days).
+  * Time-series views: the location nearest to the km within 1 km (hard-coded).
+* **Comparisons**:
+  * `value`: measurement(*t*);
+  * `difference_time`: measurement(*t*) − measurement(*t₀*);
+  * differences between simulations: none.
+* **Display**: a line or markers on the same axes as the model, one per region in a region group. Axis limits can include the measurements (`do_include_mea_xylims`).
+
+**Other inputs seen in the example** that the design must accept:
+* the land boundary as a `.mat` file (`j21_ldb.mat`: one N×2 array of NaN-separated polylines);
+* user functions applied to SMB figures (`function_handles = {@add_structures_rkm, @legend_horizontal}`), see §4.13;
+* many x-windows for SMB (`xlims` with 20 rows);
+* windows along river km for M2D (`fpath_rkm_plot_along` + `rkm_tol_x/y`).
 
 ---
 
@@ -288,12 +364,18 @@ delft3d-plot/                         repo; distribution "delft3d-plot", import 
 │  │  ├─ rivers/                      providers: rijntakken.py, maas.py, generic.py (+ cutoffs data)
 │  │  ├─ regions.py                   region (summer bed) membership
 │  │  └─ extents.py                   per-extent face subsets for fast plotting (§4.10)
+│  ├─ measurements/                   measurement layer (§4.12)
+│  │  ├─ catalogue.py                 time catalogue (CSV time,file,factor; YAML; NetCDF stacks)
+│  │  ├─ readers/                     raster.py (tif, vrt, nc), polygons.py (shp, gpkg), profiles.py (nc, mat)
+│  │  ├─ convert.py                   .mat -> NetCDF (river-km profiles)
+│  │  ├─ filters.py                   polygon filters (coverage, location, …), configurable presets
+│  │  └─ match.py                     time / location matching, differences (t - t0)
+│  ├─ hooks.py                        user plot hooks (§4.13)
 │  ├─ analyses/
-│  │  ├─ base.py                      Analysis protocol (§4.4)
 │  │  ├─ map2d.py                     M2D
 │  │  └─ river_km_statistics.py       SMB
 │  ├─ comparisons.py                  value / differences; regridding
-│  ├─ store/                          grid.py, data.py, fingerprint.py, atomic.py
+│  ├─ store/                          grid.py, data.py, fingerprint.py, atomic.py, guard.py (write guard, §4.14)
 │  ├─ plotting/                       map.py, profile.py, space_time.py, time_series.py, decorations.py,
 │  │                                  movie.py, writers.py (PNG now; registry for more formats)
 │  ├─ execute/                        tasks.py, planner.py, executors.py, slurm.py
@@ -346,9 +428,10 @@ Analyses are registered through entry points (`d3dplot.analyses`), so project-sp
   * Plot tasks: one *plot group* per (simulation × variable × comparison × block of times). A group saves all images for its colour-limit sets and extents, reusing one figure (§4.10).
 * **`river_km_statistics`** (SMB)
   * Preparation task, per (simulation × region × river-km set): the segment geometry and cell assignment (§2.5), **written to a file** in `cache/geometry/`.
-  * Process tasks: (simulation × region × km set × variable × time step), computing all statistics at once.
+  * Process tasks: (simulation × region × km set × variable × time step), computing all statistics at once. Region groups reuse the results of their regions.
   * Post-process tasks: derived quantities (slope, × width, region differences, time averages).
-  * Plot tasks: one per (view × comparison × variable × …).
+  * Plot tasks: one per (view × comparison × variable × region group × …).
+* **Measurements** are prepared in the *prepare* stage (conversion, catalogue, raster windows), not during plotting (§4.12).
 
 ### 4.5 Cache: grid file + one data file per time step
 
@@ -387,6 +470,10 @@ cache/
 │  ├─ segments_<region>_<km set>.nc               face -> segment index (-1 = none), centres,
 │  │                                              edges, Δs, branch, cut-line and polygon vertices
 │  └─ extent_<hash>.nc                            face indices inside a plot extent            (§4.10)
+├─ measurements/                                  (reference simulation only; §4.12)
+│  ├─ catalogue_<hash>.csv                        parsed catalogue + bounding box per file/tile
+│  ├─ profiles/<region>_<hash>.nc                 .mat measurements converted to NetCDF
+│  └─ map2d/<catalogue>/<extent>/<time>.nc        raster mosaic in a window (or .gpkg for polygons)
 └─ data/
    ├─ map2d/<variable>/<selection>/<yyyymmddHHMMSS>.nc                       values (face)
    └─ river_km_statistics/<region>/<km set>/<variable>/<yyyymmddHHMMSS>.nc   (segment, statistic)
@@ -492,15 +579,15 @@ What the user must know:
 * On network drives (`P:`), many workers reading at once can be limited by the network rather than by the CPU. More workers do not always help. `d3dplot benchmark` can suggest a value.
 * **Scope on Windows: one machine.** Distributing work over several Windows machines is **not** part of v1. On Windows, the large jobs should go to the Linux cluster.
 
-#### SLURM (Linux)
+#### SLURM (Linux): stub in v1
 
-* **Job arrays with sharding.** Each array element runs the same command with `--shard $SLURM_ARRAY_TASK_ID/$SLURM_ARRAY_TASK_COUNT`. It computes the same task list and executes only its own share, balanced by estimated cost.
-* Inside an element, the local process pool uses as many workers as tasks/CPUs allocated to it.
-* There is no scheduler process and no communication between jobs.
-* The stages are submitted as separate jobs chained with `--dependency=afterok`. *prepare* is a single job (shared items are created once). *process* and *plot* are arrays.
-* Re-submitting skips finished files.
+SLURM support is **a stub in v1** and will be detailed later. What v1 fixes now, so that the rest of the design does not depend on the details:
+* `slurm` is an executor behind the same interface as `serial` and `processes`.
+* The task list is deterministic. A `--shard i/N` option executes only one share of it, which is the building block for job arrays.
+* Stages (prepare → process → plot) are separate commands, so they can later be chained as dependent jobs.
+* The configuration has an `execution.slurm` section. v1 validates it and writes the job scripts with `--dry-run`, but does not submit.
 
-Defaults (from your cluster; all overridable in `execution.slurm` or on the CLI):
+Cluster defaults recorded for later:
 
 ```yaml
 execution:
@@ -509,53 +596,34 @@ execution:
     tasks_per_node: 4
     partition: 4vcpu
     time_limit: "12:00:00"
-    array_size: 16                   # number of shards for process/plot
-    setup: ["source ~/miniforge3/bin/activate d3dplot"]   # lines run before the command
+    job_name: process          # per stage: prepare / process / plot
 ```
 
-Generated script (example for the *process* stage):
-
-```bash
-#!/bin/bash
-#SBATCH --job-name=process
-#SBATCH --nodes=1
-#SBATCH --ntasks-per-node=4
-#SBATCH --partition=4vcpu
-#SBATCH --time=12:00:00
-#SBATCH --array=0-15
-#SBATCH --output=logs/slurm/%x_%A_%a.out
-source ~/miniforge3/bin/activate d3dplot
-d3dplot process config.yaml --shard ${SLURM_ARRAY_TASK_ID}/${SLURM_ARRAY_TASK_COUNT} --workers ${SLURM_NTASKS_PER_NODE}
-```
-
-```bash
-d3dplot slurm submit config.yaml            # writes slurm/{prepare,process,plot}.sh and submits the chain
-d3dplot slurm submit config.yaml --dry-run  # only writes the scripts
-```
-
-Note: here one Python process per node uses the 4 allocated tasks as 4 worker processes. If your cluster's convention is `--ntasks=1 --cpus-per-task=4` instead, the tool reads either variable.
-
-*(Later, optional)* `dask-jobqueue`: a scheduler process requests worker jobs from SLURM and sends them tasks over the network. Better load balancing, but more moving parts. It can be added behind the same executor interface if needed.
-
+The choice between job arrays with sharding and `dask-jobqueue` (explained in v2) stays open until the SLURM part is detailed.
 ### 4.9 Output location and layout
 
-**Default: inside each simulation folder** (as Matlab). It can be overridden:
+**Default: inside each simulation folder**, in **one sub-folder `d3dplot/`**. It can be overridden:
 * per simulation: `simulations[k].output_dir`;
-* for all simulations: `output.root`, giving `<root>/<simulation label>/`. Useful when simulation folders are archived or read-only.
+* for all simulations: `output.root`, giving `<root>/<simulation label>/`. Useful when simulation folders are archived or read-only, and used by the acceptance tests (§9.3).
 
-Validation checks that output folders are writable and that no two simulations share one.
+Why a single sub-folder instead of Matlab's `mat/`, `figures/`, `csv/`, `json/`, `logs/` directly in the simulation folder:
+* existing simulation folders already contain Matlab `D3D_plot` output with exactly those names. Mixing both tools' files in one `figures/` folder would be confusing;
+* it is a safety measure (§4.14): the tool only writes, and `clean` only deletes, inside folders it created and marked;
+* removing all postprocessing of a simulation is removing one folder.
+
+Validation checks that output folders are writable, are not inside an input-only location given by the user (`output.forbidden_roots`, §4.14), and that no two simulations share one.
 
 ```
-<simulation folder or output_dir>/
-├─ cache/        grid.nc, times.nc, simulation_status.json, geometry/, data/        (§4.5)
-├─ figures/      <analysis>/<series>/<view>/<comparison>/<variable>/<name>.png
-├─ tables/       simulation_status.csv, river_km_statistics/*.csv
-├─ config/       run_<timestamp>.yaml (resolved), latest.yaml
-└─ logs/         d3dplot_<timestamp>.log, slurm/
+<simulation folder or output_dir>/d3dplot/
+├─ .d3dplot-output   marker file (tool version, creation time); required before anything is written or cleaned
+├─ cache/            grid.nc, times.nc, simulation_status.json, geometry/, measurements/, data/   (§4.5)
+├─ figures/          <analysis>/<series>/<view>/<comparison>/<variable>/<name>.png
+├─ tables/           simulation_status.csv, river_km_statistics/*.csv
+├─ config/           run_<timestamp>.yaml (resolved), latest.yaml
+└─ logs/             d3dplot_<timestamp>.log
 ```
 
-Figures and tables that combine simulations (`all_simulations`, differences with the reference) go under the **reference simulation**.
-
+Figures and tables that combine simulations (`all_simulations`, differences with the reference) go under the **reference simulation**. So do the project-level measurement caches.
 ### 4.10 Efficient plotting: "draw once, save many"
 
 **Problem.** For M2D, one dataset (a variable at one time) usually produces many images: several colour-limit sets and several *extents* (x/y windows zooming into parts of a large model). Matlab rebuilt the complete figure for every image: it drew all faces of the grid and then set `xlim`/`ylim`. This is robust (no state carried over), but slow:
@@ -611,49 +679,219 @@ Rules:
 * Users can add or override entries with their own CSV files in the same format (`labels.extra_dictionaries`), without changing the package.
 * The `language` option, the datum (`labels.vertical_datum`, default `+NAP`) and the display scale (`display_scale`) are configuration options.
 
+### 4.12 Measurements
+
+Goals:
+* the same capabilities as Matlab for M2D and SMB;
+* general enough for later analyses (HIS, PRF);
+* measurements are prepared in the *prepare* stage, not while plotting;
+* inputs are never modified.
+
+**Measurement kinds**, each with a small documented data model and readers selected by file type (a registry, so new formats are plugins):
+
+| Kind | Used by | Accepted input | In memory |
+|------|---------|----------------|-----------|
+| `raster` | M2D | GeoTIFF `.tif`, GDAL `.vrt` mosaics, NetCDF CF raster (`[time,] y, x` + CRS) | `xarray.DataArray (y, x)` + validity mask, read by window |
+| `polygons` | M2D | `.shp`, `.gpkg` with a value field | `geopandas.GeoDataFrame` (geometry, value, id) |
+| `river_km_profiles` | SMB | **NetCDF** (recommended), `.mat` (Matlab structure, converted automatically) | `xarray.Dataset (statistic, time, river_km)` |
+| `time_series` *(later)* | HIS | NetCDF (CF `timeSeries`), CSV | — |
+
+New dependency: `rioxarray`/`rasterio` (GDAL wheels for Windows and Linux) for GeoTIFF/VRT. `geopandas`/`pyogrio` already come with dfm_tools.
+
+#### M2D: catalogue, selection, preparation
+
+* **Catalogue.**
+  * The existing CSV format is accepted unchanged: `time, file, factor`. Times are ISO 8601 with offset. Paths are absolute or relative to the CSV, and Windows/Linux path styles are converted.
+  * Alternatives:
+    * a YAML catalogue with the same columns plus optional `type`, `crs`, `value_field`;
+    * a single NetCDF raster stack with a `time` dimension, which needs no catalogue.
+* A catalogue is attached to a **variable** (`measurements: {bed_level: …}`), because measurements are of one quantity.
+* **Prepare, metadata only:**
+  * parse the catalogue and resolve the paths;
+  * read the bounding box and CRS of every file, and of every tile of a VRT;
+  * write `cache/measurements/catalogue_<hash>.csv`.
+* **Selection** (as Matlab), per plot time *t* and extent:
+  * the entries with `|t_mea − t| ≤ time_tolerance` whose bounding box overlaps the extent enlarged by `spatial_margin_m`;
+  * the panel title shows the mean time of the selected entries.
+* **Rasters**:
+  * only the window is read (`rioxarray`/`rasterio` windowed reads; VRTs are handled by GDAL) and multiplied by `factor`;
+  * the tiles are mosaicked on the grid of the first tile. Cells are filled in catalogue order (Matlab rule, `mosaic: first`; alternatives `last`, `mean`);
+  * *Change from Matlab:* tiles whose grid is not aligned are resampled (nearest) onto the common grid, instead of the 0.5-cell shift. This is covered by the acceptance test.
+* **Polygons**:
+  * read with a bounding-box filter (`geopandas.read_file(..., bbox=…)`);
+  * the polygon filters are applied and the value is multiplied by `factor`.
+* **Polygon filters** are configurable rules, not code. A preset `rws_vakken` reproduces Matlab:
+  * value field `MEAN`;
+  * coverage `COUNT / area ≥ 0.99`, with the area field taken from the candidates `A`, `oppervlak_`;
+  * location field `locatie`/`Locatie`, allowed codes −3…3 (L3…R3).
+  
+  Field names are matched case-insensitively against candidate lists, because they differ between datasets (§2.6).
+* **Differences** for `difference_time`, measurement(*t*) − measurement(*t₀*):
+  * rasters: the *t₀* mosaic is resampled onto the *t* grid, and the result is valid only where both are;
+  * polygons are matched by **id field** (`code_uniek`) when available, otherwise by identical geometry. Only as a last resort are they matched by order with a count check (the Matlab behaviour), with a warning.
+* **Written to files**: `cache/measurements/map2d/<catalogue>/<extent>/<time>[_diff].nc` for rasters (x, y, value, mask), or `.gpkg` for polygons. They are prepared once per (extent × plot time × value/difference) and reused by all colour-limit sets and simulations. Matlab re-read them for every colour-limit set × window × simulation.
+
+#### M2D: plotting
+
+* **Layout** `side_by_side` (Matlab default): a model panel and a measurement panel, with the same colormap, colour limits and colour bar. The titles show the model time and the measurement time.
+  * The layout is a parameter of the figure template, so `overlay` or `model_minus_measurement` (which needs the measurements interpolated to the faces) can be added later.
+* `color_limits_include_measurements`: automatic colour limits computed from model and measurement values. This is the presumed meaning of Matlab `do_clims_measurements`, to be confirmed (§12).
+* Draw once, save many (§4.10): the measurement image is created once per extent, and only its data changes per time.
+* No measurements are shown in the `difference_simulation*` comparisons.
+
+#### SMB: river-km profiles
+
+**Canonical NetCDF format** (recommended for all new measurement data):
+
+```
+dimensions:  statistic, time, river_km
+coordinates: time(time)              datetime64 (UTC); attribute source_time_zone
+             river_km(river_km)      km
+             s(river_km)             m, distance along the axis (optional)
+             branch(river_km)        string (optional)
+             statistic(statistic)    string: mean, mean_area_weighted, std, …   (SMB statistic names, §7.5)
+variables:   bed_level(statistic, time, river_km)              units "m", vertical_datum "NAP", long_name
+             bed_slope_streamwise(statistic, time, river_km)   units "1"
+global:      Conventions "CF-1.8", d3dplot_kind "river_km_profiles", region, source_files, history
+```
+
+Variable names are the canonical names (§7.6). Aliases such as `bl`, `mesh2d_mor_bl` and `DPS` are resolved through the variable registry.
+
+**`.mat` input is accepted.** In the prepare stage it is converted automatically to `cache/measurements/profiles/<region>_<hash>.nc`, where the hash covers the source path, size and modification time. Every later step uses the NetCDF; the `.mat` file is only read. The converter:
+* reads MAT v5/v7 with `scipy.io.loadmat`, and v7.3 (HDF5) with `h5py`;
+* maps `val_<statistic>` to the SMB statistic names (`val_mean` → `mean`, `val_mean_weighted` → `mean_area_weighted`, …) and variable aliases to canonical names (`bl` → `bed_level`, `detab_ds` → `bed_slope_streamwise`);
+* converts Matlab datenums to datetimes. Datenums have no time zone, so they are interpreted in `measurements.time_zone` (default: the model's time zone);
+* **sorts the times**. The example file is not in chronological order;
+* parses the unit string (`'bed elevation [m+NAP]'` → units `m`, datum `NAP`) and copies `source` to `source_files`;
+* checks that `val` is `[n_location, n_time]` and consistent with `rkm`, `s` and `tim_dnum`. If variables have different axes, it writes one dataset per variable.
+
+`d3dplot measurements convert L1R1_measured.mat -o L1R1_measured.nc` converts a file permanently. It never overwrites an existing file. The docs describe the format and include a short Python example to write it, so that new data is delivered as NetCDF.
+
+**Matching** (Matlab rules, configurable):
+* *profile views*: the nearest measurement time within `measurements_time_tolerance` (default 30 days);
+* *time-series views*: the nearest location within `measurements_km_tolerance` (default 1 km; hard-coded in Matlab);
+* *statistic equivalences*, default `mean_area_weighted → [mean_area_weighted, mean]` and `mean → [mean, mean_area_weighted]` (Matlab prefers the measured `val_mean`);
+* *x-axis*: `river_km` (default) or `s`.
+
+**Comparisons**:
+* `value`;
+* `difference_time`: measurement(*t*) − measurement(*t₀*), with *t₀* matched to the first plot time;
+* differences between simulations: none.
+
+**Regions**:
+* every region in a region group has its own measurement file;
+* region differences have their own file (`region_differences[].measurements`).
+
+**Display**: markers or a line per region. `limits_include_measurements` extends the axis limits to include them.
+
+#### Validation of measurements
+
+* Files exist and are readable.
+* Catalogue columns and file types are valid.
+* CRS matches the model.
+* Times have a time-zone offset, or a `time_zone` is configured.
+* The requested variable and statistic exist (with aliases and equivalences).
+* The km ranges overlap the requested river km.
+* For every plot time, a measurement exists within the tolerance. If not, a **warning** lists the nearest available measurement times.
+
+*Future*:
+* SMB profiles computed directly from the polygon shapefiles with the same segment geometry (§2.5). The `.mat` files are derived from such shapefiles, see `source`;
+* model − measurement maps;
+* station time series for HIS.
+
+### 4.13 Plot hooks (user functions)
+
+Matlab `function_handles` (e.g. `@add_structures_rkm`, `@legend_horizontal`) let projects add elements to figures. Python equivalent:
+
+```yaml
+analyses:
+  river_km_statistics:
+    hooks: ["maas_project.plotting:add_structures_rkm", "d3dplot.hooks:legend_horizontal"]
+```
+
+* A hook is an importable `"module:function"` string, so it works from YAML and inside worker processes.
+* Signature: `hook(figure, axes, context)`. `context` holds the analysis, variable, time, extent, simulations, labels and the river-km provider.
+* Hooks are called after the tool has drawn and before saving.
+* The hook names and the hash of their source code are part of the figure fingerprint, so changing a hook replots the affected figures.
+* Generic hooks are shipped with the tool (e.g. `legend_horizontal`). Project-specific ones live in the user's project package.
+
+### 4.14 Inputs are read-only
+
+Principle: **the tool never modifies or deletes any input file** (model files, measurements, GIS files, river-km files). It only creates files in its own output folders.
+
+1. **Single write path.** Every file write goes through the `store` atomic writer. Its *write guard* refuses any target that is not inside an output folder carrying the `.d3dplot-output` marker. The marker is only created in a new or empty folder.
+2. **Nothing is written next to inputs.**
+   * Matlab wrote parsed copies next to inputs (`rkm.mat` next to `rkm.csv`) and `simdef.mat` in the simulation folder. The Python tool keeps such data in its own cache.
+   * The default output does create a *new* `d3dplot/` folder inside the simulation folder (§4.9). It never changes existing files there.
+   * If even that is not allowed (archived or input-only locations), use `output.root`.
+3. **Inputs are opened read-only**: NetCDF in mode `r`, rasterio in read mode, other files as `"rb"`.
+4. **`clean`** deletes only inside marked folders, and only files it recognises (a fingerprint attribute or a known tool file name). It never follows links out of the folder.
+5. **Converters** never overwrite existing files and refuse to write to a path that is an input of the current configuration.
+6. **`output.forbidden_roots`** (e.g. `p:\11211565-002-maas-mor-2026\C_Work\00_data`): validation fails if any output folder resolves inside them.
+7. **Tests**:
+   * unit tests for the guard;
+   * an integration test that records size, modification time and hash of every input file before and after a full run, and asserts that nothing changed;
+   * the acceptance tests on P-drive data run with `output.root` in a local temporary folder (§9.3).
+
 ---
 ## 5. v1 analyses: configuration sketch
 
+The example below is the Python equivalent of the Maas acceptance case `main_plot_01.m` (§2.6, §9.3). Paths are abbreviated.
+
 ```python
+from datetime import datetime, timedelta
+from pathlib import Path
 from d3dplot import Project, Simulation
 from d3dplot.analyses import Map2D, RiverKmStatistics
-from d3dplot.config import Times, Vertical, Figure, RiverKm, Region, Execution
+from d3dplot.config import Times, Figure, RiverKm, Region, RegionGroup, Measurements, Execution, Output
+
+prj = Path(r"p:\11211565-002-maas-mor-2026")
+data = prj / "C_Work" / "00_data"
+mea_smb = data / "11_bl_DM_pol_measurements" / "Lixhe-Roermond-2021-2026"
+times = [datetime(2021, 2, 8), datetime(2021, 8, 8), datetime(2023, 1, 15), datetime(2025, 12, 31)]
+
+def region(name):                                   # region polygon + its measurements (.mat accepted)
+    return Region(name=name, polygon=data / "02_sb" / f"{name}.shp",
+                  measurements=mea_smb / f"{name}_measured.mat")
 
 project = Project(
-    simulations=[
-        Simulation(path=r"p:\proj\runs\r002", label="reference"),
-        Simulation(path=r"p:\proj\runs\r003", label="dredging"),     # FM or SMT, detected automatically
-    ],
-    reference_simulation="reference",
+    simulations=[Simulation(path=prj / r"C_Work\…\computations_smt\r209", label="validation")],  # SMT
+    reference_simulation="validation",
     language="en",
+    series="05",
+    output=Output(forbidden_roots=[data]),          # never write into the input data folder
     execution=Execution(executor="processes", workers=8),
     analyses=[
         Map2D(
-            variables=["bed_level", "velocity_magnitude"],
-            times=Times.all(axis="morphological"),
-            vertical=Vertical.depth_average(),
-            comparisons=["value", "difference_time", "difference_simulation"],
+            variables=["bed_level"],
+            times=Times.at(times, axis="morphological", tolerance=timedelta(days=10)),
+            comparisons=["value", "difference_time"],
+            measurements={"bed_level": Measurements(
+                catalogue=data / "12_2D_measurements" / "2D_measurements_02.csv",
+                time_tolerance=timedelta(days=60),
+                color_limits_include_measurements=True)},
             figure=Figure(
-                color_limits={"bed_level": {"value": [(-6.0, 4.5)], "difference_time": [(-1, 1)]}},
-                extents=[None, (180_000, 195_000, 425_000, 435_000)],   # None = full model
-                background_tiles=True,
-                land_boundaries=[r"p:\proj\gis\mkm-inner.ldb"],
+                color_limits={"bed_level": {"difference_time": [None, (-1, 1)]}},   # None = automatic
+                extents_along_river_km={"file": data / "01_rkm" / "rkm_3km_lr.csv", "window_x_m": 1500, "window_y_m": 1500},
+                river_km_labels={"file": data / "01_rkm" / "rkm_1km_lr.csv"},
+                land_boundaries=[data / "05_landuse" / "j21_ldb.mat"],
+                aspect="equal",
             ),
         ),
         RiverKmStatistics(
-            variables=["bed_level", "bed_shear_stress"],
-            regions=[Region(name="summer_bed", polygon=r"p:\proj\gis\summerbed.shp")],
-            river_km=RiverKm(
-                file=r"p:\proj\gis\rkm_rijntakken.csv",   # fixed format: x, y, branch label, km
-                sets={"1km": range(868, 952)},
-                track="WA",                               # required for Rijntakken files, else optional
-                half_width_m=1000,
-            ),
-            statistics=["mean", "mean_area_weighted", "std"],
-            times=Times.all(axis="morphological"),
-            views=["profile", "space_time", "time_series"],
-            comparisons=["value", "difference_time", "difference_simulation"],
-            time_series_locations_km=[880.5, 930.2],
+            variables=["bed_level"],
+            regions=[region(n) for n in ["L1R1", "L3R3", "L1L3", "R1R3", "L2L3", "R2R3"]],
+            region_groups=[RegionGroup(["R2R3", "L2L3"]), RegionGroup(["R1R3", "L1L3"])],
+            river_km=RiverKm(file=data / "01_rkm" / "rkm.csv",       # MA tags -> Maas rules, no track needed
+                             sets={"250m": [2 + 0.25 * i for i in range(333)]}),
+            statistics=["mean_area_weighted"],
+            times=Times.at(times, axis="morphological", tolerance=timedelta(days=10)),
+            views=["profile", "time_series"],
+            comparisons=["value", "difference_time"],
+            time_series_locations_km=[*range(15, 19), *range(23, 31), *range(35, 42)],
+            measurements_time_tolerance=timedelta(days=60),
+            figure=Figure(x_limits=[(2, 85), (2, 7), (7, 12), (16, 21), (30, 36), (15, 55)]),   # one figure each
+            hooks=["maas_project.plotting:add_structures_rkm", "d3dplot.hooks:legend_horizontal"],
         ),
     ],
 )
@@ -662,7 +900,7 @@ if __name__ == "__main__":       # required for multiprocessing on Windows
     project.run()
 ```
 
-The river (Rijntakken, Maas or generic) is detected from the branch tags in the river-km file (§2.5).
+The river (Rijntakken, Maas or generic) is detected from the branch tags in the river-km file (§2.5). Here the file has `MA` tags, so the Maas rules apply and no track is needed (Matlab needed `maas_branches`).
 
 ---
 
@@ -692,7 +930,7 @@ d3dplot validate d3dplot.yaml                   # seconds; reads metadata only
 d3dplot process  d3dplot.yaml --workers 16      # build cache (resumable)
 d3dplot plot     d3dplot.yaml --only map2d --variable bed_level --time last
 d3dplot run      d3dplot.yaml                   # validate + process + plot
-d3dplot slurm submit d3dplot.yaml               # Linux cluster (defaults in §4.8)
+d3dplot slurm submit d3dplot.yaml --dry-run     # v1: only writes SLURM scripts (stub, §4.8)
 d3dplot status   d3dplot.yaml                   # simulation status table + cache/figure progress
 ```
 
@@ -701,8 +939,8 @@ d3dplot status   d3dplot.yaml                   # simulation status table + cach
 The Matlab JSON served provenance *and* replotting. The proposal keeps both, at three levels:
 
 1. **Whole project**:
-   * Every run writes the *resolved* configuration (all defaults filled in) to `config/run_<timestamp>.yaml` and `config/latest.yaml` (under the reference simulation).
-   * `d3dplot plot <postprocess_dir>` (or `… config/latest.yaml`) replots from the cache without needing the original script.
+   * Every run writes the *resolved* configuration (all defaults filled in) to `d3dplot/config/run_<timestamp>.yaml` and `d3dplot/config/latest.yaml` (under the reference simulation).
+   * `d3dplot plot <simulation folder>/d3dplot` (or `… config/latest.yaml`) replots from the cache without needing the original script.
    * Because figures have fingerprints, only the figures whose options changed are redrawn.
 2. **With overrides**, without editing files:
    ```bash
@@ -768,7 +1006,7 @@ df = project.results("river_km_statistics", simulation="dredging", variable="bed
 | `order_anl`, `order_anl_param` | *(removed)* | Replaced by `execution` (§4.8) |
 | `do`, `do_p`, `do_mat`, `do_create_mat`, `tim_just_load` | *(removed)* | Use `enabled: bool` and CLI stages (`process`, `plot`) |
 | `overwrite` / `fig_overwrite` | `reprocess` / `replot` | `if_changed` \| `never` \| `always` (§4.6) |
-| `only_adhoc`, `adhoc`, `function_handles` | `hooks` / plugin analyses | |
+| `only_adhoc`, `adhoc`, `function_handles` | `hooks: ["module:function", ...]` / plugin analyses | §4.13 |
 | `var` | `variables` | Descriptive names, aliases accepted (§7.6) |
 | `var_idx` / `sum_var_idx` | `fractions: list[int] \| "all"` / `sum_fractions: bool` | |
 | `layer` (`NaN`/`Inf`/`[]`/n) | `vertical: "top" \| "bottom" \| "all" \| {layers: [...]}` | |
@@ -791,7 +1029,8 @@ df = project.results("river_km_statistics", simulation="dredging", variable="bed
 | `fig_visible` | *(removed)* | Always off-screen |
 | `fig_variable`, `fig_unit` | `display_name`, `display_scale` | |
 | `do_movie`, `tim_movie` | `movie: {duration_s: 40}` (absent = no movie) | |
-| `measurements`, `tol_time_measurements` | `measurements: {file, time_tolerance}` | |
+| `measurements`, `tol_time_measurements` | `measurements` (per variable for maps; per region for SMB), `time_tolerance` | §4.12 |
+| *(new)* | `output.forbidden_roots` | Output folders may never be inside these (§4.14) |
 | `do_replace_underscore`, `leg_str` | `legend_labels` | Labels are taken from `simulations[].label` |
 
 ### 7.4 `map2d` (M2D)
@@ -804,17 +1043,29 @@ df = project.results("river_km_statistics", simulation="dredging", variable="bed
 | `do_axis_equal` | `aspect: "equal" \| "auto"` |
 | `plot_tiles`, `path_tiles` | `background_tiles: bool`, `tiles_cache_dir` |
 | `epsg_in` | `crs` |
-| `fpath_ldb` | `land_boundaries` |
+| `fpath_ldb` | `land_boundaries` (`.ldb`, `.pli`/`.pol`, `.shp`, `.mat` with an N×2 NaN-separated array) |
 | `do_rkm_disp`, `fpath_rkm_disp`, `rkm_disp_color` | `river_km_labels: {file, color}` |
 | `do_plot_along_rkm`, `fpath_rkm_plot_along`, `rkm_tol_x/y` | `extents_along_river_km: {file, window_x_m, window_y_m}` |
 | `write_shp`, `save_format` | `export: ["shapefile", "netcdf"]` |
+| `measurements` (catalogue CSV) | `measurements: {<variable>: {catalogue, ...}}` |
+| `tol_time_measurements` | `measurements.<variable>.time_tolerance` (default 30 days) |
+| `tol_x_measurements`, `tol_y_measurements` | `measurements.<variable>.spatial_margin_m` (default 1000) |
+| `measurements_edgecolor` | `measurements.<variable>.edge_color` |
+| `measurements_tag_variable`, `_tag_count`, `_tag_area`, `_tag_location`, `measurements_coverage`, `measurements_pol_location` | `measurements.<variable>.polygon_filters: {preset: "rws_vakken", value_field, count_field, area_field, min_coverage, location_field, allowed_locations, id_field}` |
+| `do_clims_measurements` | `measurements.<variable>.color_limits_include_measurements` (meaning to confirm) |
+| *(new)* | `measurements.<variable>.layout: "side_by_side"`, `mosaic: "first" \| "last" \| "mean"` |
 
 ### 7.5 `river_km_statistics` (SMB)
 
 | Matlab | New |
 |--------|-----|
-| `sb_pol` | `regions: [{name, polygon}]` |
-| `sb_pol_diff` | `region_differences: [[region_a, region_b]]` |
+| `sb_pol` + `measurements{kp,1}` | `regions: [{name, polygon, measurements}]` (`.nc` recommended, `.mat` accepted) |
+| `sb_pol{kp,2}`, `measurements{kp,2}` (several regions in one figure) | `region_groups: [[region_a, region_b]]` |
+| `sb_pol_diff`, `measurements_diff` | `region_differences: [{regions: [a, b], measurements}]` |
+| `tol_time_measurements` | `measurements_time_tolerance` (default 30 days) |
+| *(hard-coded 1 km)* | `measurements_km_tolerance` (default 1 km) |
+| `do_include_mea_xylims` | `limits_include_measurements` |
+| `leg_mea` | `measurements_label` |
 | `fpath_rkm` | `river_km.file` (format fixed, §2.5) |
 | `rkm`, `rkm_name` | `river_km.sets: {name: [km...]}` |
 | `rkm_br`, `rkm_track` | `river_km.branches` (generic files with several branches) / `river_km.track` (required for Rijntakken). The river is detected from the file tags |
@@ -914,6 +1165,8 @@ This matches dfm_tools (GPL-3.0), which the tool imports. HYDROLIB-core (MIT) is
 |-------|---------|------|------|
 | Unit | Config models and names, validation rules and hints, time selection/matching, vertical selection, variable registry, labels (all keys in en/nl/es, UTF-8, templates), fingerprints and reprocess policy, status detection (synthetic `.dia` files), comparisons, statistics, sharding, SLURM script generation | Synthetic `xugrid` datasets and folders in fixtures | Every commit, Windows + Linux |
 | SMB geometry | River-km file parsing (tags, no-tag files), river detection (Rijntakken/Maas/generic), branch per km for every track, bend cutoffs, edges, angles, cut lines, segment polygons, cell assignment, coverage and self-intersection checks. Compared with values computed by Matlab for the same inputs | Synthetic straight and curved rivers + real Rijntakken/Maas km files | Every commit |
+| Measurements | Catalogue parsing (CSV with offsets, relative paths, Windows/Linux paths), bounding boxes incl. VRT tiles, time/space selection, raster mosaic and resampling, polygon filters (preset and custom field names), differences (rasters; polygons by id/geometry/order), `.mat` → NetCDF conversion (v5/v7.3, datenum, unsorted times, units), statistic/variable equivalences, km matching | Small synthetic GeoTIFF/VRT/shapefiles/`.mat` files created in fixtures | Every commit |
+| Read-only inputs | Write guard. Before/after snapshot (size, mtime, hash) of every input file of a full run must be identical. `clean` and converters never touch inputs | Same | Every commit |
 | Integration | `map2d` and `river_km_statistics` end to end on small real FM runs (2D, 3D sigma/z, partitioned, morphodynamic) and a small **SMT** run (≥ 3 sub-runs) | dfm_tools sample data + tiny purpose-made models in `tests/data` (Git LFS) | Every commit |
 | Regression: numbers | Cache contents compared with references (`xarray.testing.assert_allclose`) | Same | Every commit |
 | Regression: images | `pytest-mpl` baselines | Same | Every commit (Linux baseline) |
@@ -923,8 +1176,19 @@ This matches dfm_tools (GPL-3.0), which the tool imports. HYDROLIB-core (MIT) is
 | Figure reuse | "Draw once, save many" gives PNGs pixel-identical to `--fresh-figures` (§4.10) | Same | Every commit |
 | Benchmarks | Process and plot throughput (incl. zoomed extents, fresh vs. reused figures) tracked over time | Medium model | Nightly |
 | End-to-end | `examples/*` through the CLI | Same | Nightly |
-| Acceptance | Real projects compared with Matlab `D3D_plot` output (`@pytest.mark.requireslocaldata`) | P-drive | Manual / scheduled |
-| SLURM | Submit a tiny job array (self-hosted runner or manual) | Cluster | Release |
+| Acceptance | Real projects compared with Matlab `D3D_plot` output (`@pytest.mark.requireslocaldata`). **Case 1: Maas Lixhe–Roermond** (below) | P-drive, **read-only** | Manual / scheduled |
+| SLURM | Script generation (`--dry-run`) in v1; submission tests when the SLURM part is detailed | — | Release |
+
+**Acceptance case 1: Maas Lixhe–Roermond** (from `p:\11211565-002-maas-mor-2026\E_Software_Scripts\co\57_plot_Lixhe_Roermond\main_plot_01.m`)
+* Simulation: SMT run `r209` (`computations_smt`), morphological time.
+* M2D: `bed_level` (value, difference in time), measurements from `2D_measurements_02.csv` (VRT/GeoTIFF), windows along `rkm_3km_lr.csv` (±1500 m), river-km labels, land boundary `j21_ldb.mat`.
+* SMB: `bed_level`, river-km file `rkm.csv` (Maas tags), 250 m segments from km 2 to 85, regions L1R1, L3R3, L1L3, R1R3, L2L3, R2R3 with `.mat` measurements, two region groups, time series at km 15–18, 23–30, 35–41.
+* Comparison targets: the existing Matlab output of this case (cache values and figures), with tolerances. The Matlab cache is read, never rewritten.
+* **Rules**:
+  * the test only reads from the P-drive;
+  * `output.root` points to a local temporary folder;
+  * `output.forbidden_roots` contains the project folder;
+  * the input-snapshot check (above) runs as part of the test.
 
 ---
 
@@ -952,27 +1216,26 @@ Approach: develop first behind an internal adapter in `d3dplot` (with tests). Op
 | Phase | Deliverable |
 |-------|-------------|
 | 0 | Repository skeleton, GPL-3.0 licence, tooling, CI (Win/Linux), docs site, small FM + SMT test data |
-| 1 | Config models + JSON schema, simulation discovery (FM/DIMR/SMT), status, variable registry, label dictionaries (en/nl/es), `info`/`variables`/`init`/`validate` |
+| 1 | Config models + JSON schema, simulation discovery (FM/DIMR/SMT), status, variable registry, label dictionaries (en/nl/es), write guard + read-only input checks, `info`/`variables`/`init`/`validate` |
 | 2 | Core engine: grid file + per-time-step data files, fingerprints, planner, `serial` and `processes` executors |
-| 3 | **`map2d`** end to end (comparisons, extents with visible-face subsets, figure reuse, colour-limit sets, tiles, land boundaries, movies), replotting |
-| 4 | **`river_km_statistics`** end to end (river-km file, Rijntakken/Maas/generic, cut lines and segments, geometry files, statistics, views, derived quantities, time averages), Matlab comparison |
-| 5 | SLURM executor (job arrays + dependencies, cluster defaults), agent skills, docs gallery, **v1.0** |
-| 6+ | Further analyses (HIS, PRF, M1D, HFM, GRD, …), more figure formats, Delft3D4, optional dask executor |
+| 3 | **`map2d`** end to end (comparisons, extents with visible-face subsets, figure reuse, colour-limit sets, tiles, land boundaries incl. `.mat`, movies), **raster/polygon measurements**, replotting, hooks |
+| 4 | **`river_km_statistics`** end to end (river-km file, river providers, cut lines and segments, geometry files, statistics, views, region groups, derived quantities, time averages), **`.mat` → NetCDF profile measurements**, acceptance case 1 |
+| 5 | SLURM stub (`--shard`, `--dry-run` scripts), agent skills, docs gallery, **v1.0** |
+| 6+ | Full SLURM support, further analyses (HIS, PRF, M1D, HFM, GRD, …), more figure formats, Delft3D4 |
 
 ---
 
 ## 12. Remaining open questions
 
-Resolved in v3:
-* river-km for SMB: Matlab rules kept, fixed file format, river detected from tags (§2.5);
-* cache location: simulation folder by default (§4.9);
-* figure formats: PNG (§4.10);
-* languages: en, nl, es (§4.11);
-* SLURM defaults (§4.8);
-* licence: GPL-3.0.
+Resolved in v4:
+* one track per km set is enough, and the architecture stays general (§2.5);
+* bend cutoffs: only the IJssel for now, as provider data (§2.5);
+* acceptance case: the Maas Lixhe–Roermond script (§9.3);
+* SLURM: stub in v1 (§4.8).
 
 Still open:
-1. **Rijntakken track for a km set that spans several tracks**: Matlab uses one track per km set. Is that always enough, or are km sets that change track (e.g. Waal → IJssel) needed?
-2. **Bend cutoffs**: the table only contains IJssel cutoffs. Are cutoffs for other branches (or for the Maas) known and needed?
-3. **Matlab reference results for SMB**: can you provide one or two real cases (river-km file, summer-bed shapefile, simulation, Matlab output) to use as acceptance tests for §2.5?
-4. **Environment activation on the cluster**: which command activates the Python environment in a SLURM job (conda/pixi/module)? It goes into the `setup` lines of the generated scripts.
+1. **`do_clims_measurements`**: used in the example script but not found in the OET version checked. Does it mean "automatic colour limits computed over model and measurements" (assumed in §4.12), or something else?
+2. **`d3dplot/` sub-folder** (§4.9): OK to group all Python output in one sub-folder of the simulation folder, instead of Matlab's `mat/`, `figures/`, … directly in it?
+3. **Raster alignment** (§4.12): OK to resample misaligned tiles onto a common grid (nearest), instead of Matlab's 0.5-cell shift? The results can differ slightly at tile edges.
+4. **Time zone of `.mat` datenums**: is the model time zone (from the MDU) the right default for the measurement times in the `.mat` files?
+5. **Matlab output of the acceptance case**: where is the existing Matlab output of `main_plot_01.m` (the `mat/` and `figures/` folders of `r209`)? It is needed as the comparison target. It will only be read.
