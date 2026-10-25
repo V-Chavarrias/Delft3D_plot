@@ -1,6 +1,6 @@
 # Synthetic SMT case generator
 
-Generates a small, artificial D-Flow FM **SMT** simulation (input and output) with the structure and file formats of the Maas run `r209`, plus project inputs and measurements in the formats of the Maas project. All fields are analytic, so expected results are known. See [docs/architecture.md §9.4](../../docs/architecture.md).
+Generates a small, artificial D-Flow FM **SMT** simulation (input and output) with the structure and file formats of the Maas run `r209`, plus project inputs and measurements in the formats of the Maas project. All fields are analytic, so expected results are known. See [docs/architecture.md §13.3](../../docs/architecture.md).
 
 No project data is used or copied: the real run was only inspected to reproduce its *structure*.
 
