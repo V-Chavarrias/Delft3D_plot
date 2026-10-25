@@ -2,7 +2,7 @@
 
 Python tool to postprocess and plot Delft3D (D-Flow FM / SMT) results. Version 1 covers 2D maps (`map2d`) and river-km statistics (`river_km_statistics`).
 
-> **Status:** design phase. No code yet. The architecture proposal is in [docs/architecture.md](docs/architecture.md).
+> **Status:** design phase. The architecture proposal is in [docs/architecture.md](docs/architecture.md). The only code so far is the [synthetic SMT test case generator](tools/synthetic_smt/README.md).
 
 ## Goals
 
@@ -18,6 +18,7 @@ The functional reference is the Matlab tool `D3D_plot` in [OpenEarthTools](https
 ## Documentation
 
 - [Architecture proposal](docs/architecture.md)
+- [Synthetic SMT test case generator](tools/synthetic_smt/README.md)
 
 ## Development workspace
 

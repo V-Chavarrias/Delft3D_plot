@@ -1,6 +1,6 @@
 # Delft3D_plot (Python): Architecture Proposal
 
-Status: **draft v5 for discussion** · Scope: requirements and architecture only. Nothing is implemented yet.
+Status: **draft v5 for discussion** · Scope: requirements and architecture. Only the synthetic test case generator (§9.4) is implemented.
 
 Changes since v4:
 * answers on measurements (colour limits from the measurements, raster resampling, time zone) and the `d3dplot/` sub-folder
@@ -404,7 +404,8 @@ class Simulation:                 # one per input folder
   * Proposed upstream as a generic dfm_tools helper (§10).
   * **Duplicate boundary times.** Sub-run *k+1* starts at the `TStop` of sub-run *k* from its restart file, so the boundary time appears in both map files (e.g. `r209`: 95 040 s is the last map time of sub-run 0 and the first of sub-run 1). The merged time axis keeps **one** entry, the one from sub-run *k* (the state at the end of the run). Validation can optionally check that both entries are equal.
   * Sub-runs are numbered `0 … N−1` without gaps. A gap is a validation error.
-* **Time reference.** The time units of the **map files** are authoritative (e.g. `seconds since 2021-02-08 00:00:00 +01:00`). In `r209` the MDU still says `RefDate = 20121231`, because the map files were updated afterwards. A mismatch between the MDU `RefDate` and the map time units is reported as a **warning**, not an error. The time zone also comes from the map time units. The morphological time comes from `morft` in the map file.
+* **Time reference.** The time units of the **map files** are authoritative (e.g. `seconds since 2021-02-08 00:00:00 +01:00`). In `r209` the MDU still says `RefDate = 20121231`, because the map files were updated afterwards. A mismatch between the MDU `RefDate` and the map time units is reported as a **warning**, not an error. The time zone also comes from the map time units. The morphological time comes from `morft` in the map file. `morft` has time units, so xarray decodes it to datetimes.
+* **CRS.** The real map files have EPSG 0 ("Unknown projected"). The CRS then comes from the configuration (`crs`, e.g. EPSG:28992). Validation reports an error only when the CRS is needed (tiles, inputs in another CRS) and not configured.
 
 ### 4.4 Analysis plugin contract
 
@@ -1167,7 +1168,7 @@ This matches dfm_tools (GPL-3.0), which the tool imports. HYDROLIB-core (MIT) is
 | SMB geometry | River-km file parsing (tags, no-tag files), river detection (Rijntakken/Maas/generic), branch per km for every track, bend cutoffs, edges, angles, cut lines, segment polygons, cell assignment, coverage and self-intersection checks. Compared with values computed by Matlab for the same inputs | Synthetic straight and curved rivers + real Rijntakken/Maas km files | Every commit |
 | Measurements | Catalogue parsing (CSV with offsets, relative paths, Windows/Linux paths), bounding boxes incl. VRT tiles, time/space selection, raster mosaic and resampling, polygon filters (preset and custom field names), differences (rasters; polygons by id/geometry/order), `.mat` → NetCDF conversion (v5/v7.3, datenum, unsorted times, units), statistic/variable equivalences, km matching | Small synthetic GeoTIFF/VRT/shapefiles/`.mat` files created in fixtures | Every commit |
 | Read-only inputs | Write guard. Before/after snapshot (size, mtime, hash) of every input file of a full run must be identical. `clean` and converters never touch inputs | Same | Every commit |
-| Integration | `map2d` and `river_km_statistics` end to end on small real FM runs (2D, 3D sigma/z, partitioned, morphodynamic) and a small **SMT** run (≥ 3 sub-runs) | dfm_tools sample data + tiny purpose-made models in `tests/data` (Git LFS) | Every commit |
+| Integration | `map2d` and `river_km_statistics` end to end on the **synthetic SMT case** (§9.4: partitioned, morphodynamic, 4 sub-runs, variants) and dfm_tools sample data (2D, 3D sigma/z) | Generated in a temporary folder + dfm_tools sample data | Every commit |
 | Regression: numbers | Cache contents compared with references (`xarray.testing.assert_allclose`) | Same | Every commit |
 | Regression: images | `pytest-mpl` baselines | Same | Every commit (Linux baseline) |
 | Cache semantics | Changing a parameter / re-running a sim / appending times rebuilds exactly the expected entries. `never` / `always` behave as specified | Same | Every commit |
@@ -1198,11 +1199,12 @@ This matches dfm_tools (GPL-3.0), which the tool imports. HYDROLIB-core (MIT) is
 
 The real case (`r209`: 195 sub-runs × 44 partitions, ≈ 8 GB per sub-run) is too large and too project-specific for everyday testing. A **synthetic SMT simulation** is therefore generated, input *and* output. It has the same structure and file formats as `r209`, but it is small, can be shared publicly, and its fields are analytic, so the expected results are known exactly.
 
-**Generator.**
-* `tools/synthetic_smt/` (committed) builds the case deterministically (fixed seed, versioned parameters).
-* Default output: `data_local/synthetic_smt_01/`, git-ignored, for local experiments. Tests generate it into a temporary folder.
-* A frozen copy of the generated case plus its **Matlab reference results** is committed under `tests/data/synthetic_smt_01/` (target < 10 MB). It is used to compare with Matlab `D3D_plot` in CI.
-* Dependencies: `numpy`, `netCDF4`, `shapely`, `rasterio` (GeoTIFF), `scipy`/`h5py` (`.mat`). The VRT is written as XML text.
+**Generator** (implemented, [tools/synthetic_smt](../tools/synthetic_smt/README.md)).
+* `tools/synthetic_smt/` (committed) builds the case deterministically (fixed seed, versioned parameters) and verifies it with HYDROLIB-core, dfm_tools, rasterio, geopandas and scipy.
+* Output: `data_local/synthetic_smt_01/` (git-ignored, about 74 MB including the variants). **Decided: no frozen copy is committed.** Tests regenerate the case into a temporary folder.
+* The Matlab reference results are produced locally by running `main_plot_synthetic.m`.
+* Dependencies: `numpy`, `netCDF4`, `shapely`, `geopandas`, `rasterio` (GeoTIFF), `scipy` (`.mat`), plus dfm_tools/HYDROLIB-core for the self-check. The VRT is written as XML text.
+* Not yet generated: the MAT v7.3 (HDF5) variant.
 
 **River and grid.**
 * A meandering channel about 10 km long, generated from a sine-generated curve, in projected coordinates (EPSG:28992-like range).
@@ -1268,7 +1270,7 @@ Expected results stored with the case:
 * Land boundary as `.mat` (an N×2 NaN-separated array) and as `.ldb`.
 
 **Scripts.**
-* `main_plot_synthetic.m`: the Matlab `D3D_plot` input equivalent to the Maas case (M2D + SMB with measurements, region groups, windows along km). **You run it once** with Matlab to produce the Matlab reference (`mat/`, `fig/`), which is then frozen in `tests/data/`.
+* `main_plot_synthetic.m`: the Matlab `D3D_plot` input equivalent to the Maas case (M2D + SMB with measurements, region groups, windows along km). **You run it once** with Matlab to produce the Matlab reference (`mat/`, `fig/`) locally in `data_local/`. Regenerating the case deletes it.
 * `main_plot_synthetic.py` / `.yaml`: the same case for the Python tool. It is the first end-to-end example and the input of the main regression tests.
 
 ---
@@ -1316,5 +1318,4 @@ Resolved in v5:
 * Matlab reference of the acceptance case: `r209/mat` and `r209/fig`.
 
 Still open:
-1. **Synthetic case, frozen copy**: OK to commit the generated synthetic case and its Matlab reference results to the repository (`tests/data/`, target < 10 MB, public)? The alternative is to keep them only in `data_local/` and regenerate them.
-2. **Matlab reference run**: once the generator exists, can you run `main_plot_synthetic.m` with your Matlab `D3D_plot` to produce the reference results?
+1. **Matlab reference run**: please run `data_local/synthetic_smt_01/scripts/main_plot_synthetic.m` with your Matlab `D3D_plot` to produce the reference results. Report any Matlab error: it may reveal a structural difference from real SMT output.

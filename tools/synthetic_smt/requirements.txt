@@ -1,0 +1,10 @@
+# Synthetic SMT generator. dfm_tools and HYDROLIB-core can also be installed from local checkouts (pip install -e).
+dfm_tools>=0.47
+hydrolib-core>=1.5
+netCDF4
+numpy
+scipy
+shapely>=2
+geopandas
+rasterio>=1.4
+matplotlib
