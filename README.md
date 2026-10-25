@@ -1,6 +1,6 @@
 # Delft3D_plot
 
-Python tool to postprocess and plot Delft3D (D-Flow FM / SMT) results.
+Python tool to postprocess and plot Delft3D (D-Flow FM / SMT) results. Version 1 covers 2D maps (`map2d`) and river-km statistics (`river_km_statistics`).
 
 > **Status:** design phase. No code yet. The architecture proposal is in [docs/architecture.md](docs/architecture.md).
 
@@ -33,4 +33,4 @@ checkouts/
 
 ## Licence
 
-To be decided (see [docs/architecture.md §9.2](docs/architecture.md)).
+[GPL-3.0-or-later](LICENSE).
