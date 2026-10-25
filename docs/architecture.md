@@ -1,6 +1,6 @@
 # Delft3D_plot (Python): Architecture and Implementation Plan
 
-Status: **v6, plan for review.** Only the synthetic test-case generator is implemented ([tools/synthetic_smt](../tools/synthetic_smt/README.md)). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
+Status: **v6.1, plan for review.** Only the synthetic test-case generator is implemented ([tools/synthetic_smt](../tools/synthetic_smt/README.md)). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
 
 Document map:
 * §0 Session handover
@@ -164,13 +164,13 @@ Status: **A** = agreed with the user; **P** = proposed in this plan and awaiting
 | D19 | Synthetic SMT case generated locally; no frozen copy committed | User | A |
 | D20 | **Land boundaries are input as `.ldb` only**. Parsed results are cached | User | A |
 | D21 | **Model output is read through a per-simulation merge plan**. dfm_tools/xugrid build the merged grid once (§7.6) | Measured: 75 s vs 1 s per `r209` sub-run (§5.3) | P |
-| D22 | **MDU/`.mor`/`.sed` are read with HYDROLIB-core's tolerant INI parser** plus a typed adapter. The strict `FMModel` is not used | `FMModel` rejects the real `r209` MDU (§5.4) | P |
-| D23 | **Corrupt or inconsistent partitions are detected**. `time`/`morft` come from a reference partition | `r209` sub-run 0, partition 0021 is corrupt (§5.2) | P |
+| D22 | **MDU/`.mor`/`.sed` are read with HYDROLIB-core's tolerant INI parser** plus a typed adapter. `FMModel`/`ResearchFMModel` are not used for reading; once upstream accepts the missing keywords (§14) they can be used as an optional strict check | `FMModel` rejects the real `r209` MDU (§5.4); a read-only postprocessor must read every MDU the kernel accepted, of any version | P |
+| D23 | **Corrupt or inconsistent partitions are detected**. `time`/`morft` come from the partition majority. Affected faces are **masked** (NaN) and every masking is written to the diagnostic file (D41) | `r209` sub-run 0, partition 0021 is corrupt (§5.2); user | A |
 | D24 | Times are stored internally as time-zone-aware UTC and shown in the model time zone. Cache file names use the hydrodynamic time | xarray drops the offset; morphological time is not unique (§7.8) | P |
-| D25 | When several outputs share a morphological time, select the **last** one (configurable) | Morphological time repeats during spin-up (§7.8) | P |
-| D26 | Cache values in **float64** by default (float32 optional) | Exact comparison with Matlab and analytic results; size is small | P (changes v2) |
+| D25 | When several outputs share a morphological time, select the **last** one, and write the choice to the diagnostic file (D41) | Morphological time repeats during spin-up (§7.8); user | A |
+| D26 | Cache values in **float64** by default (float32 optional) | Exact comparison with Matlab and analytic results; size is small | A |
 | D27 | Process tasks per (simulation × sub-run), each writing one file per time step | Amortises opening a sub-run (§7.13) | P |
-| D28 | Environment and packaging with **uv** + `pyproject.toml` (hatchling); pixi optional | Already used, fast, pip-compatible; GDAL via rasterio wheels | P (changes v2: pixi) |
+| D28 | Environment and packaging with **uv** + `pyproject.toml` (hatchling) | Already used, fast, pip-compatible; GDAL via rasterio wheels | A |
 | D29 | Draw-once plotting with matplotlib `PolyCollection` directly; xugrid only for grid objects and rasterising | Speed (§7.14) | P |
 | D30 | Windows path length: keep paths short and warn above 240 characters | P-drive paths are long; Windows MAX_PATH is 260 | P |
 | D31 | No dask in the processing path. Parallelism only at task level, with single-threaded libraries in workers | Avoids nested parallelism and memory blow-ups | P |
@@ -183,6 +183,9 @@ Status: **A** = agreed with the user; **P** = proposed in this plan and awaiting
 | D38 | Fixed UTC offsets only (no named time zones with DST); CF numeric UTC on disk | D-Flow FM uses offsets | P |
 | D39 | SMB geometry: boundaries inclusive for regions, shared cut lines to the lower segment; invalid or overlapping segments are errors unless overridden | Determinism (independent review) | P |
 | D40 | Every output path contains its subject (simulation, simulation_vs_reference, or all_simulations) | No two tasks write the same file | P |
+| D41 | **Every run writes a diagnostic file** `logs/d3dplot_<timestamp>.dia` recording what was done: inputs, choices (selected times, duplicates resolved), masked corrupt outputs, reused/rebuilt cache, files written, warnings, errors (§7.19) | User: "make sure a dia file is created with what is being done" | A |
+| D42 | **Background tiles with contextily** (as recommended by dfm_tools, which deprecated its own `plot_background`) and contextily's persistent on-disk cache (`tiles_cache_dir`). This replaces Matlab's `earth_tiles` cache (`plotMapTiles`) | User; dfm_tools | A |
+| D43 | Land boundaries `.ldb` have the `.pli`/`.pol` (Tekal) format and are read with HYDROLIB-core `PolyFile` | User; verified (§3 F6) | A |
 
 ## 3. Review of the plan (v6)
 
@@ -450,6 +453,15 @@ Tags: `GRD`, `M2D`, `M1D`, `PRF`, `SMB`, `HIS`, `HFM`, `CRS`, `STO`, plus legacy
 
 `FMModel(path, recurse=False)` raises pydantic `ValidationError`s ("Unknown keywords are detected in section …") for `[sediment]` (`dredgefile`, `morcfl`, `dzbdtmax`, `morphopol`, `inmorphopol`), `[time]` (`tstarttlfsmo`), `[restart]` (`rstignorebl`), `[output]` (`wrimap_trachytopes`, `writedfminterpretedvalues`, `wrirst_bnd`, `nccompression`) and others. `UnknownKeywordErrorManager` (`hydrolib/core/dflowfm/ini/util.py`) has no option to downgrade these errors to warnings.
 
+`ResearchFMModel` (`hydrolib.core.dflowfm.research.models`, which also accepts research keywords) gets much further. It fails only on:
+* `[geometry]` `circumcentermethod`, `circumcentertolerance`: deprecated keywords; D-Flow FM itself only warns about them (seen in the `r209` `.dia`);
+* `[sediment]` `dredgefile`, `morcfl`, `dzbdtmax`, `morphopol`, `inmorphopol`: valid morphology keywords that are missing from the model.
+
+Related upstream issues:
+* [#931](https://github.com/Deltares/HYDROLIB-core/issues/931) (obsolete/deprecated keywords; its to-do list includes "unknown keywords → warning, later error, once all keywords are in `mdu.json`");
+* [#643](https://github.com/Deltares/HYDROLIB-core/issues/643) (strict unknown-keyword checks for other files);
+* [#788](https://github.com/Deltares/HYDROLIB-core/issues/788) (precedent: a missing MDU keyword added).
+
 ## 6. Libraries and tools
 
 ### 6.1 Reused domain libraries
@@ -478,7 +490,7 @@ Tags: `GRD`, `M2D`, `M1D`, `PRF`, `SMB`, `HIS`, `HFM`, `CRS`, `STO`, plus legacy
 | Configuration | pydantic v2, pyyaml (`safe_load`), JSON schema export | ruamel.yaml: only if comments must be preserved |
 | CLI | typer (+ rich for tables and progress) | click, argparse |
 | Plotting | matplotlib (Agg); `PolyCollection` directly (D29) | xugrid `.ugrid.plot` per figure: too slow for draw-once |
-| Background tiles | contextily (optional extra `tiles`) | Local tile folder: §17 |
+| Background tiles | contextily (optional extra `tiles`) with its persistent cache (D42) | dfm_tools `plot_background` (deprecated in favour of contextily); Matlab `earth_tiles` cache (replaced) |
 | Movies | imageio + imageio-ffmpeg (optional extra `movies`) | — |
 | Parallel | `concurrent.futures.ProcessPoolExecutor` (`spawn`) | dask, joblib (§3) |
 | Logging | stdlib `logging` + `rich`; workers log through `QueueHandler` | loguru |
@@ -697,9 +709,9 @@ The partition count must be equal in all sub-runs (V-OUT-003).
 * `time` and `morft` are read from **every partition** of every sub-run during inspect. These are small reads; for `r209` about 8 600 file opens, a few minutes, cached in `times.nc`.
 * The reference values are those of the majority of the partitions. A partition whose `time`/`morft` differ (beyond 1 s), or are not finite, or are outside `[TStart, TStop]`, is marked **corrupt for those map times** (V-OUT-030, warning).
 * When a value is read for a time with a corrupt partition, the policy `on_corrupt_output` applies:
-  * `error` *(default)*: the task fails with a clear message;
-  * `mask`: the faces of that partition are set to NaN, with a warning;
-  * `skip`: that time is dropped from the analysis.
+  * `mask` *(default; agreed)*: the faces owned by that partition are set to NaN. Each occurrence is written to the diagnostic file (D41) with sub-run, partition, map time and the number of masked faces. It is also counted in the run summary;
+  * `error`: the task fails with a clear message;
+  * `skip`: that time is dropped from the analysis (also written to the diagnostic file).
 * Plausibility of values: `|v| > 1e30` or non-finite in a partition that is not marked → V-OUT-031 (warning during processing; the face values are masked).
 
 ### 7.7 SMT time axis
@@ -728,7 +740,7 @@ The partition count must be equal in all sub-runs (V-OUT-003).
 **Selecting times**, on the configured `time_axis` (`hydrodynamic` | `morphological`):
 * `all`, `last`, an explicit list (+ `time_tolerance`), `{indices: […]}` or `{start, end, step}`.
 * For each explicit time, the **candidates** are the outputs within `time_tolerance`. None → V-TIME-010 (error, listing the nearest available times).
-* **Duplicates** (one rule for every case): candidates whose times on the selection axis differ by less than `duplicate_tolerance` from the nearest candidate form a duplicate group. Default: 60 s on the morphological axis, 1 s on the hydrodynamic axis. The 60 s default covers the spin-up drift observed in `r209` (11.5 s), while distinct morphological outputs are at least `MorFac × map interval` apart (days in practice). Within a group, `duplicate_morphological_times: "last"` *(default: the state after the spin-up of that sub-run)* or `"first"` picks the output by hydrodynamic order. Boundary duplicates are already removed by §7.7, so this rule only sees distinct outputs.
+* **Duplicates** (one rule for every case): candidates whose times on the selection axis differ by less than `duplicate_tolerance` from the nearest candidate form a duplicate group. Default: 60 s on the morphological axis, 1 s on the hydrodynamic axis. The 60 s default covers the spin-up drift observed in `r209` (11.5 s), while distinct morphological outputs are at least `MorFac × map interval` apart (days in practice). Within a group, the **last** output in hydrodynamic order is selected (agreed: the state after the spin-up of that sub-run). `duplicate_morphological_times: "first"` remains available for comparisons with other tools. Every resolved duplicate is written to the diagnostic file (D41): requested time, candidates with both times, and the chosen output. Boundary duplicates are already removed by §7.7, so this rule only sees distinct outputs.
 * The selected outputs are listed in the run summary with both times, so the choice is visible.
 
 **Matching between simulations** (`time_matching`): `reference` (default; every simulation uses the reference simulation's selected times, matched within `time_tolerance` with the same duplicate rule) or `own`.
@@ -793,7 +805,7 @@ d3dplot/
 │                                 all_simulations for grouped figures
 ├─ tables/                        simulation_status.csv, river_km_statistics/*.csv
 ├─ config/                        run_<timestamp>.yaml (resolved), latest.yaml
-└─ logs/                          d3dplot_<timestamp>.log
+└─ logs/                          d3dplot_<timestamp>.dia (diagnostic file, D41), d3dplot_<timestamp>.log (debug)
 ```
 
 * `<selection>` is a short readable label (`all`, `layer-top`, `fraction-3`, `depth-average`). The full selection is in the file attributes.
@@ -978,7 +990,11 @@ Every task key contains the subject (and the reference label for simulation diff
   * clipped per extent when drawn.
 * **River-km labels**: from a river-km file (fixed format). Points within the extent get a label with their km.
 * **Extents along river km**: one extent per point of a river-km file, of size `2·window_x_m × 2·window_y_m` centred on the point (Matlab `rkm_tol_x/y`).
-* **Background tiles**: contextily (optional) with a local cache folder (`tiles_cache_dir`). Tiles are fetched once per extent in the prepare stage. Offline use: see §17.
+* **Background tiles** (D42): contextily, an optional extra. dfm_tools deprecated its own `plot_background` in favour of contextily.
+  * Default provider: satellite imagery (`Esri.WorldImagery`); configurable (`background_tiles: {provider: …}`), with the provider's attribution shown on the figure.
+  * Tiles are fetched once per extent in the prepare stage, in the model CRS (configured `crs`, since the map files have EPSG 0).
+  * Caching: `contextily.set_cache_dir(tiles_cache_dir)` gives a persistent on-disk cache. This replaces Matlab's `earth_tiles` folder (Matlab `plotMapTiles`: `<cache>/<server>/<z>/<x>/<y>.png`). Default: a per-user cache folder. It can point to a shared folder so several users and offline machines reuse downloaded tiles; the write guard allows this one configured folder.
+  * Without network and without cached tiles: a warning (V-ENV-002) and the figure is drawn without a background.
 * **Fixed weirs** (later): HYDROLIB-core `PolyFile` on `.pliz`.
 
 ### 7.17 Inputs are read-only (D14)
@@ -1003,7 +1019,17 @@ Every task key contains the subject (and the reference label for simulation diff
 
 ### 7.19 Logging, provenance and replotting
 
-* **Logging**: console (rich, level INFO) + file `logs/d3dplot_<timestamp>.log` (DEBUG) under the reference simulation; worker records arrive through a queue. Every task logs its key, duration and outcome.
+* **Logging**: console (rich, level INFO) + file `logs/d3dplot_<timestamp>.log` (DEBUG, for developers); worker records arrive through a queue. Every task logs its key, duration and outcome.
+* **Diagnostic file** (D41): `logs/d3dplot_<timestamp>.dia`, written by the main process for **every** command that does work (`validate`, `inspect`, `prepare`, `process`, `plot`, `run`, `replot`, `clean`). It is plain UTF-8 text in the style of D-Flow FM `.dia` files: one message per line, prefixed `** INFO   :`, `** WARNING:` or `** ERROR  :`. It is meant for users: everything that was done and every choice made, in order:
+  1. header: tool version, command line, start time, host, user, configuration file and its hash, resolved-configuration path;
+  2. inputs: each simulation (kind, sub-runs, partitions, status), each input file (path, content hash);
+  3. validation: all issues (code, location, message, hint);
+  4. **choices**: per analysis and simulation, the requested times → selected outputs (sub-run, hydrodynamic and morphological time), including every resolved duplicate (D25) and every time matched between simulations;
+  5. **data quality**: every corrupt partition found (V-OUT-030) and every masking or skipping applied at read time (D23), with the number of faces; implausible values (V-OUT-031);
+  6. work: per stage, tasks run / reused from cache / failed, with durations. Files written are counted per folder; individual paths go to the `.log`;
+  7. footer: end time, total duration, outcome, and `** INFO   : d3dplot finished` as the last line (or `** ERROR  : d3dplot stopped` with the reason).
+  
+  The file is written to the reference simulation's root, and a copy goes to every other simulation root involved, so each simulation's `d3dplot/` folder documents the work done on it. Messages are flushed line by line, so the file is useful even after a crash. The tool's own `.dia` files live in `d3dplot/logs/`, never in model output folders, so they cannot be confused with D-Flow FM's `.dia` files by the status detection (§7.11).
 * **Provenance**:
   * `config/run_<timestamp>.yaml` and `config/latest.yaml`: the resolved configuration, with all defaults and the tool version;
   * the run summary at the end of the log and in `tables/run_<timestamp>.csv`;
@@ -1240,7 +1266,7 @@ ProjectConfig
 ├─ execution: {executor: serial|processes|slurm, workers?, shard?, slurm: {…}}
 ├─ labels: {vertical_datum: "+NAP", extra_dictionaries: []}
 ├─ reprocess / replot: if_changed | never | always
-├─ on_corrupt_output: error | mask | skip
+├─ on_corrupt_output: mask | error | skip         (default mask; every masking goes to the diagnostic file)
 └─ analyses: [Map2DConfig | RiverKmStatisticsConfig | plugin configs]
 ```
 
@@ -1384,6 +1410,7 @@ Codes are stable, documented, and tested one by one. **E** = error, **W** = warn
 | V-MEA-006 | E | `.mat` is v7.3 (HDF5), not supported in v1 |
 | V-LDB-001 | E | `.ldb` unreadable (or a non-`.ldb` land boundary given) |
 | V-ENV-001 | E | Optional dependency missing for a requested feature (tiles, movies) |
+| V-ENV-002 | W | Background tiles not available (no network and not cached); figures drawn without background |
 | V-HOOK-001 | E | Hook cannot be imported |
 
 ## 13. Quality and tests
@@ -1414,6 +1441,7 @@ Codes are stable, documented, and tested one by one. **E** = error, **W** = warn
 | Images | pytest-mpl baselines (Linux, fixed fonts); `--fresh-figures` pixel-identical to draw-once | Synthetic | Every commit (Linux) |
 | Parallel equivalence | `serial` == `processes` == union of all shards (byte-identical cache) | Synthetic | Every commit |
 | Read-only inputs | Snapshot (size, mtime, hash) of all inputs before and after a full run | Synthetic | Every commit |
+| Diagnostic file | The `.dia` of each command exists, ends with the finish line, and contains the expected choices (selected times, duplicates, masking) for the synthetic variants | Synthetic | Every commit |
 | Matlab comparison (synthetic) | Cache values vs Matlab `mat/` of the synthetic case | Synthetic + Matlab results produced by the user (`@pytest.mark.requireslocaldata`) | Locally |
 | Acceptance (real) | Acceptance case 1 (§13.4) | P-drive, read-only (`requireslocaldata`) | Manually / before releases |
 | Benchmarks | Prepare, process and plot throughput; merge-plan reader vs dfm_tools | Synthetic (CI), r209 (local) | Nightly / locally |
@@ -1501,9 +1529,15 @@ Nightly: benchmarks and slow tests.
 
 Develop each item first behind an adapter in `d3dplot`, with tests. Propose it upstream when stable, then switch to the upstream version and pin the minimum version. Track the status in `docs/upstream.md`.
 
+**Should HYDROLIB-core be modified to accept the missing keywords? Yes, but the tool should not depend on it.**
+* *Modify upstream*: adding the 5 missing `[sediment]` keywords is a small, clearly correct pull request with precedent (#788). Handling the deprecated `circumcenter*` keywords as warnings fits #931. Together they would make `ResearchFMModel` read the real `r209` MDU, which benefits every HYDROLIB-core user.
+* *Do not depend on it*: a read-only postprocessor must read every MDU that the kernel ran, including those from older or newer kernel versions with keywords HYDROLIB-core does not know yet. Strict models will always lag behind the kernel. The tool therefore keeps the tolerant INI parser for reading (D22) and can use the strict models as an optional check (`validate --strict-mdu`) once upstream accepts the changes.
+
 | Repository | Contribution | Why | Priority |
 |------------|--------------|-----|----------|
-| HYDROLIB-core | Option to report unknown MDU keywords as **warnings** (e.g. a load setting) | `FMModel` rejects real MDUs (F2) | High |
+| HYDROLIB-core | **Add the missing `[sediment]` keywords** `dredgefile`, `morcfl`, `dzbdtmax`, `morphopol`, `inmorphopol` (all valid D-Flow FM keywords; precedent #788). With these, `ResearchFMModel` would parse the real `r209` MDU apart from the deprecated `circumcenter*` keywords | Small, uncontroversial; makes HYDROLIB-core usable on real morphological MDUs | **High, first** |
+| HYDROLIB-core | Handle **deprecated** keywords (`circumcentermethod`, `circumcentertolerance`) as warnings, as the D-Flow FM kernel does (contribute to #931) | Aligns with the kernel | High |
+| HYDROLIB-core | Opt-in **lenient loading** (unknown keywords → warnings) for read-only consumers, e.g. a load setting (contribute to the #931 to-do "unknown → warning") | Postprocessing tools must read MDUs of any kernel version | Medium (needs maintainer agreement) |
 | HYDROLIB-core | `MorphologyModel` (`.mor`) and `SedimentModel` (`.sed`) | Typed access to MorFac, MorStt, fractions | High |
 | HYDROLIB-core | Faster `PolyFile` path for large `.ldb`/`.pol` (NumPy block reader) | 7.7 s vs 0.7 s per 10⁶ points (F6) | Medium |
 | HYDROLIB-core | Typed `RefDate`/`TStart`/`TStop` → datetime helpers | Time handling | Low |
@@ -1547,7 +1581,7 @@ Develop each item first behind an adapter in `d3dplot`, with tests. Propose it u
 |----|---------|-----------|
 | 2.1 | Inspect phase: partition identity, merge plan(s) + `grid.nc`, topology signatures, reference sub-run selection (§7.6, §9.3) | Values equal dfm_tools on the synthetic case; `corrupt_partition` handled; a fixture with changed topology produces two plans. (local) `r209` merge plan built |
 | 2.2 | `MapReader`, quality checks, `times.nc`, `TimeAxis` (merge, duplicates, tz, selection, matching) | Synthetic `time_axis.csv` reproduced; V-OUT-030/031, V-TIME-* tested |
-| 2.3 | Execution: tasks, planner, fingerprints and skipping, serial/process executors, worker init, logging queue, run summary, sharding | Parallel-equivalence and resumability tests pass |
+| 2.3 | Execution: tasks, planner, fingerprints and skipping, serial/process executors, worker init, logging queue, run summary, **diagnostic file** (D41), sharding | Parallel-equivalence and resumability tests pass; the `.dia` of a synthetic run lists the selected times, the resolved duplicates and the masked corrupt outputs of `corrupt_partition` |
 
 ### 15.4 Phase 3: `map2d`
 
@@ -1555,7 +1589,7 @@ Develop each item first behind an adapter in `d3dplot`, with tests. Propose it u
 |----|---------|-----------|
 | 3.1 | Process (selections, files §9.5) | Values equal the analytic fields |
 | 3.2 | Plot: templates, extents (explicit, along km), visible-face subsets, render modes, comparisons incl. regridding, writer, naming, metadata | Image baselines; `--fresh-figures` identical |
-| 3.3 | Overlays: `.ldb` (+ cache), river-km labels, tiles (optional) | Shown in the baseline images |
+| 3.3 | Overlays: `.ldb` (HYDROLIB-core `PolyFile` + cache), river-km labels, background tiles (contextily + persistent cache, D42) | Shown in the baseline images; tiles test uses a pre-filled cache (no network in CI) |
 | 3.4 | Map measurements: catalogue, rasters (VRT, factor, mosaic, resampling), polygons (filters, id matching), differences, panel, `color_limits_from_measurements` | Synthetic catalogue cases (inside/outside tolerance, cm factor, shifted grid, shuffled polygons) correct |
 | 3.5 | Provenance, `replot`, `plot --set`, movies | Replot reproduces identical images |
 
@@ -1603,24 +1637,29 @@ HIS, PRF, M1D, HFM and GRD analyses; 3D (layers, depth average with dfm_tools); 
 | Upstream API changes (dfm_tools, HYDROLIB-core, xugrid) | Breakage | Pin minimum versions; adapters; CI against latest |
 | Large grids are slow to plot | Slow plots | Visible-face subsets, raster mode |
 | Windows path length, permissions on shared drives | Failed writes | V-OUT-040/041; short names; `output.root` |
-| Offline machines (tiles) | Missing backgrounds | Tiles optional; local tile source (§17) |
+| Offline machines (tiles) | Missing backgrounds | Tiles optional; persistent contextily cache, shareable (D42); V-ENV-002 |
 | Scope creep beyond v1 | Delay | Plugin architecture; v1 scope fixed (§1.3) |
 
 ---
 
 ## 17. Open questions
 
+Resolved with the user (v6.1):
+* duplicate morphological times → last, logged (D25);
+* corrupt output → mask, logged (D23);
+* a diagnostic file for every run (D41);
+* `.ldb` = Tekal `.pli`/`.pol` format, read with HYDROLIB-core (D43);
+* background tiles with contextily and its cache instead of `earth_tiles` (D42);
+* uv (D28) and the float64 cache (D26);
+* HYDROLIB-core: contribute the missing keywords upstream, but keep reading tolerant (§14).
+
+Still open:
 1. **Matlab reference run of the synthetic case**: pending. Run `data_local/synthetic_smt_01/scripts/main_plot_synthetic.m` with Matlab `D3D_plot` and report errors, if any.
-2. **Duplicate morphological times** (D25): select the *last* (proposed) or the *first* output with the same morphological time? What does Matlab do in practice? The acceptance comparison will show it.
-3. **Source `.ldb` of `j21_ldb.mat`**: where is the original `.ldb` used in the Maas project? It is needed for acceptance case 1.
-4. **Offline background tiles**: Matlab used a local `earth_tiles` checkout (`C:\checkouts\earth_tiles`, `p:\studenten-riv\05_OpenEarthTools\earth_tiles`). Should the tool support that format? What is it?
-5. **`on_corrupt_output` default**: `error` (proposed) or `mask`?
-6. **Reporting the corrupt partition** of `r209` sub-run 0 (partition 0021, map times 2–3) to the model team or D-Flow FM developers?
-7. **Changed proposals** to confirm: float64 cache (D26), uv instead of pixi (D28), merge-plan reader (D21), tolerant INI parsing (D22).
-8. **Distribution**: PyPI package `delft3d-plot` (name availability), conda-forge later?
-
----
-
+2. **Source `.ldb` of `j21_ldb.mat`**: where is the original `.ldb` of the Maas project (needed for acceptance case 1)?
+3. **Reporting the corrupt partition** of `r209` sub-run 0 (partition 0021, map times 2–3) to the model team or the D-Flow FM developers: yes or no?
+4. **Remaining proposals to confirm**: the merge-plan reader (D21) and tolerant MDU reading (D22), plus the other "P" decisions in §2 (D24, D27, D29–D32, D34–D40). Silence means agreement, but an explicit check is better before Phase 2.
+5. **Upstream work**: should the HYDROLIB-core pull request with the 5 missing `[sediment]` keywords (§14) be prepared now (independent of this tool), or later?
+6. **Distribution**: publish on PyPI as `delft3d-plot` (name availability to check), or GitHub releases only for now?
 ## 18. Glossary
 
 | Term | Meaning |
@@ -1779,3 +1818,4 @@ Principles:
 | v4 | Measurements, read-only inputs, hooks, region groups, SLURM stub, acceptance case |
 | v5 | Answers on measurements, `r209` findings, synthetic SMT case specification and generator |
 | v6 | Thorough review against real data (merge plan, tolerant MDU parsing, corrupt partitions, time zones, duplicate morphological times, float64, task granularity, path lengths); `.ldb`-only land boundaries; independent review (14 issues fixed: inspect phase, recursive fingerprints, topology signatures, deterministic sharding and geometry, derived-statistic definitions, verified versions); consolidated, self-contained plan with handover, file formats, validation catalogue and work packages |
+| v6.1 | User answers: last duplicate and masking of corrupt output, both written to a new per-run diagnostic file (`.dia`); `.ldb` read with HYDROLIB-core; contextily cache replaces `earth_tiles`; uv and float64 agreed; HYDROLIB-core keyword contribution analysed (`ResearchFMModel` fails only on 7 keywords) |
