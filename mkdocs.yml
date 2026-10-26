@@ -15,6 +15,7 @@ nav:
   - Configuration: configuration.md
   - Output store: output-store.md
   - Labels: labels.md
+  - Variables: variables.md
   - Model input: model-input.md
   - Simulation discovery: simulation-discovery.md
   - Upstream contributions: upstream.md

@@ -1,6 +1,6 @@
 # Delft3D_plot (Python): Architecture and Implementation Plan
 
-Status: **v6.26; WP 1.9 is complete locally on `feat/labels`: the Matlab-seeded label and unit catalogs, English/Dutch/Spanish translations, comparison templates, extra dictionaries, and NetCDF metadata fallback are implemented. All 100 CI-eligible tests, strict mypy, changed-file Ruff/format checks, and strict MkDocs pass.** The package foundations, configuration system, validation framework, synthetic cases, and simulation inspection are in place; analysis functionality is not yet implemented. See [the synthetic case generator](https://github.com/V-Chavarrias/Delft3D_plot/blob/main/tools/synthetic_smt/README.md). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
+Status: **v6.28; WP 1.10 is complete locally on `feat/variables`: the metadata registry covers all 10 v1 raw and 23 v1 derived quantities, resolves canonical/Matlab/registered-NetCDF names case-insensitively, and provides V-VAR-001 suggestions. The generated catalogue matches the registry. All 115 CI-eligible tests, strict mypy, changed-file Ruff/format checks, and strict MkDocs pass. Computation callbacks and dependency execution remain in WP 2.2a/b.** The package foundations, configuration system, validation framework, synthetic cases, and simulation inspection are in place; analysis functionality is not yet implemented. See [the synthetic case generator](https://github.com/V-Chavarrias/Delft3D_plot/blob/main/tools/synthetic_smt/README.md). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
 
 Document map:
 * §0 Session handover
@@ -33,8 +33,8 @@ Document map:
 
 | Item | Location | State |
 |------|----------|-------|
-| Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `feat/labels`, local and unpushed; WP 1.9 is complete |
-| Plan (this file) | `docs/architecture.md` | v6.26 |
+| Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `feat/variables`, local and unpushed; WP 1.10 is complete |
+| Plan (this file) | `docs/architecture.md` | v6.28 |
 | Licence | `LICENSE` | GPL-3.0 |
 | Synthetic SMT and plain FM test case generator | `tools/synthetic_smt/` | Implemented and verified locally (§13.3) |
 | Land-boundary converter (`.mat` cache → `.ldb`) | `tools/mat_to_ldb.py` | Implemented. Used to recreate the Maas land boundary (D45) |
@@ -42,7 +42,7 @@ Document map:
 | Recreated Maas land boundary | `data_local/maas/j21_ldb.ldb` (55.7 MB) | Git-ignored. 174 220 polylines, 2 343 057 points; read by HYDROLIB-core in 22 s, identical to the `.mat` |
 | HYDROLIB-core modifications | §14.1–§14.3 | WP 0.1 (`54011e0d`) and both DIMR fixes (`3e4f7317`, `96d07c87`) are integrated locally on `feat/mdu_morphology_keywords`; the external-library fix is also committed on `fix/dimr-external-libraries` |
 | Python environment | `.venv/` (uv, Python 3.12) | Git-ignored. dfm_tools and HYDROLIB-core are installed editable from the local checkouts; HYDROLIB-core is currently on `feat/mdu_morphology_keywords` with WP 0.1 and the DIMR fix |
-| Package `d3dplot` | `pyproject.toml`, `src/d3dplot/` | WP 1.1–1.9 foundations implemented locally; analysis functionality pending |
+| Package `d3dplot` | `pyproject.toml`, `src/d3dplot/` | WP 1.1–1.10 foundations implemented locally; analysis functionality pending |
 | Configuration design | §2 decisions D57–D59 | Nested `times` object and shared `map.render`; WP 1.3 complete locally; plugin config integration deferred to the analysis registry |
 | Validation framework | `src/d3dplot/validate/` | WP 1.4 complete locally: report serialization and static V-CFG-001..004 checks |
 | Model-input adapters | `src/d3dplot/model_input/` | WP 1.5 implemented locally; MDU, `.mor`, `.sed`, DIMR, V-MDU-001, and real r209 read-only validation complete |
@@ -50,8 +50,9 @@ Document map:
 | Simulation status | `src/d3dplot/simulation/status.py` | WP 1.7 implemented locally; synthetic statuses pass; real r209 is finished with no validation issues; bounded status scan 27.371 s |
 | Output store | `src/d3dplot/store/` | WP 1.8 implemented locally; guarded marked roots, atomic writers, fingerprints, and input snapshots are tested |
 | Labels | `src/d3dplot/labels/` | WP 1.9 implemented locally; 141 variable aliases, 127 complete translations, and 22 unit types are packaged and tested |
+| Variables | `src/d3dplot/variables/` | WP 1.10 complete locally; 10 raw and 23 derived v1 specs, aliases, NetCDF candidates, suggestions, and generated documentation |
 | Synthetic-case pytest fixture | `tests/conftest.py` | Session-scoped fixture generates and verifies in pytest's temporary folder (WP 1.2) |
-| CI and documentation site | `.github/workflows/ci.yml`, `mkdocs.yml` | 100 CI-eligible tests, strict mypy, strict docs, and changed-file Ruff/format checks pass; whole-repository Ruff/format checks report unrelated existing issues; remote CI not run |
+| CI and documentation site | `.github/workflows/ci.yml`, `mkdocs.yml` | 115 CI-eligible tests, strict mypy, strict docs, and changed-file Ruff/format checks pass; whole-repository Ruff/format checks report unrelated existing issues; remote CI not run |
 | Matlab reference results of the synthetic case | `data_local/synthetic_smt_01/simulations/r00*/mat`, `fig` | **Done** (2026-10-26): r001 37 mat + 1071 PNG, r002 37 mat + 858 PNG. Protected: `generate.py --force` refuses to delete them without `--discard-matlab-reference` |
 | Agent guidance for development | `AGENTS.md`, `.github/instructions/plotting.instructions.md`, `.github/skills/{add-analysis-or-option,upstream-contribution}` | Done (§13.6) |
 
@@ -123,7 +124,8 @@ APIs the design relies on (check them first when upgrading):
 10. **WP 1.6** is complete locally on `feat/simulation-discovery`: plain-FM/SMT discovery, typed V-SIM/V-OUT reporting, and read-only NetCDF header validation are tested. All 51 CI-eligible tests, strict mypy, strict MkDocs, and changed-file Ruff/format checks pass. Real r209 discovery found 195 sub-runs and 8,580 map files with no issues in 99.283 s (<2 min), using D61's bounded I/O thread pool. Do not push or open a pull request unless asked.
 11. **WP 1.7** is complete locally on `feat/simulation-status`: status inspection includes `not_started` when valid model input has no maps, per-sub-run `.dia` and NetCDF metadata, configurable staleness, and caller-writer JSON/CSV serializers. Corrupt-output counts remain unknown until WP 2.2. The 69 CI-eligible tests, strict mypy, strict MkDocs, and changed-file Ruff/format checks pass. Read-only r209 status is `finished` (195 sub-runs, 44 partitions, 0 validation issues); bounded status detection took 27.371 s, down from 433.548 s serially (15.8×). Discovery took 124.220 s and discovery plus status 151.590 s. Numeric `TStop` comparison uses elapsed seconds, not the decoded CF origin.
 12. **WP 1.8** is complete locally on `feat/store`: output-root precedence, marked-root and forbidden-path guards, atomic text/bytes/JSON writers, canonical recursive fingerprints, and before/after input snapshots are covered. V-OUT-041 reports forbidden, unwritable, and invalid output roots. All 82 CI-eligible tests, strict mypy, strict MkDocs, and changed-file Ruff/format checks pass.
-13. **WP 1.9** is complete locally on `feat/labels`: the Matlab mapping and translation catalogs are packaged with completed en/nl/es entries, comparison templates, and unit-scale definitions. The API supports project extra dictionaries, datum/fraction formatting, and warned NetCDF metadata fallback. All 100 CI-eligible tests, strict mypy, strict MkDocs, and changed-file Ruff/format checks pass; the wheel contains all three CSV resources. Continue with WP 1.10.
+13. **WP 1.9** is complete locally on `feat/labels`: the Matlab mapping and translation catalogs are packaged with completed en/nl/es entries, comparison templates, and unit-scale definitions. The API supports project extra dictionaries, datum/fraction formatting, and warned NetCDF metadata fallback. All 100 CI-eligible tests, strict mypy, strict MkDocs, and changed-file Ruff/format checks pass; the wheel contains all three CSV resources.
+14. **WP 1.10** is complete locally on `feat/variables`: the registry covers 10 raw and 23 derived v1 quantities, resolves canonical names, Matlab aliases, and registered NetCDF candidates case-insensitively, and raises V-VAR-001 with canonical suggestions. Generated `docs/variables.md` is tested against the registry; the three missing label translations were added. All 115 CI-eligible tests, strict mypy, changed-file Ruff/format checks, and strict MkDocs pass. The registry is metadata-only; computation callbacks remain WP 2.2a/b. Continue with WP 1.11.
 
 ---
 
@@ -227,6 +229,7 @@ Status: **A** = agreed with the user; **P** = proposed in this plan and awaiting
 | D59 | WP 1.3 validates and exports schemas for the built-in analyses only. Plugin config discovery, validation, and schema integration are delivered with the `d3dplot.analyses` entry-point registry | Keep WP 1.3 bounded and define the plugin config contract alongside the analysis registry | A |
 | D60 | When both are configured as lists, `figure.x_limits` and `figure.y_limits` must have the same number of rows (V-CFG-004) | User selected row-count validation for the two per-figure axis-limit lists | A |
 | D61 | Simulation discovery uses a bounded thread pool (up to 64 workers) for I/O-bound sub-run tasks; small cases remain serial, and netCDF4 access is serialized | Read-only r209 discovery with 64 workers found 195 sub-runs and 8,580 map files without issues in 99.283 s; 16 workers took 131.981 s | A |
+| D62 | WP 1.10 provides metadata for v1 quantities before the engine exists: resolve canonical names, Matlab aliases, and registered NetCDF names case-insensitively while preserving candidate spelling for file reads; unknown names raise V-VAR-001 with up to three canonical suggestions. Compute callbacks and dependency execution are added in WP 2.2a/b | The registry and CLI need stable names before model-output processing is implemented | A |
 
 ## 3. Review of the plan (v6)
 
@@ -873,6 +876,8 @@ The rest of this section specifies how the plan is built, validated and used.
 
 Raw NetCDF names are always accepted.
 
+The registry resolves canonical names, Matlab aliases, and registered NetCDF candidate names case-insensitively; it preserves each candidate's exact spelling for model-file reads. An unknown name raises V-VAR-001 with up to three canonical-name suggestions when matches are available. WP 1.10 supplies registry metadata only and does not open model output; quantity computation and dependency execution are delivered in WP 2.2a/b.
+
 **Selection order** for a variable: fraction(s) → bed layer / vertical selection → reduction (sum of fractions, depth average). This yields one value per face per time.
 
 ### 7.9a Quantity engine: central reading and derived quantities (D50)
@@ -883,6 +888,7 @@ Several plotted quantities are not stored in the map file but computed from one 
 * **Registry of quantities.** A `VariableSpec` (§7.9) is either
   * `raw`: read from `netcdf_candidates`; or
   * `derived`: `inputs` (other quantity names, raw or derived), `requires` (grid geometry, `.sed` fractions, `.mor` settings, constants), `compute(inputs, context) → array`, `location`, units and label key, and a `version` that enters the fingerprint.
+  WP 1.10 establishes the metadata catalog for v1 quantities; the compute callbacks and executable dependency graph are added with the engine in WP 2.2a/b.
 * **Dependency resolution.** For a request, the engine builds the dependency graph, detects cycles at registration time, and **reads every raw input once** per (sub-run, time), even if several requested quantities or several analyses need it. The arrays live in a per-task memory cache that is cleared after each time.
 * **Where selections apply.** Each derived spec declares `selection: inputs` (default: vertical/fraction selection is applied to the inputs before computing, e.g. Froude from depth-averaged velocity and depth) or `selection: output`.
 * **Grid information** needed by spatial operators (face–edge connectivity, edge lengths and orientation signs, face areas, neighbours) is computed once per merge plan in the inspect phase and stored in `cache/grid.nc` (§9.3). Spatial operators work on **global** arrays, which the merge plan provides, so they are correct across partition boundaries.
@@ -1332,6 +1338,8 @@ Local read-only r209 validation completed in **99.283 s**: 195 sub-runs, 8,580 m
 * `figure` (fonts, size, dpi, hooks via finalisation §7.14a) and `map` (the shared map view §7.14b: `color_limits`, `extents`, `extents_along_river_km`, `river_km_labels`, `land_boundaries`, `background_tiles`, `aspect`, `colormap`, `render`);
 * `measurements`, `movie`, `export`, `hooks`.
 
+`variables` accepts canonical names, Matlab aliases, and registered raw NetCDF names through the §7.9 registry.
+
 **Prepare**:
 * extents → visible-face subsets (`extent_<hash>.nc`);
 * land boundaries → cache;
@@ -1367,6 +1375,8 @@ Images = times × extents × colour-limit sets. Differences between simulations 
 * `multiply_by_width`, `time_averages`, `diagnostics: [segment_map, segment_membership]`, `display: auto | lines | stacked_area` (per variable);
 * `map`: the shared map-view settings for the diagnostic maps (§7.14b), including `extents_along_river_km` and `river_km_labels`;
 * `figure` (`x_limits`, `y_limits`, fonts), measurement tolerances, `hooks`.
+
+`variables` accepts canonical names, Matlab aliases, and registered raw NetCDF names through the §7.9 registry.
 
 **Inspect**: parse the river-km file → `cache/inputs/river_km_<hash>.nc`; detect the river provider from the tags (§4.5); read the region polygons.
 
@@ -1679,7 +1689,7 @@ Codes are stable, documented, and tested one by one. **E** = error, **W** = warn
 | V-TIME-010 | E | Requested time not available within the tolerance (lists the nearest) |
 | V-TIME-011 | W | Requested time hits a corrupt output (`on_corrupt_output` decides) |
 | V-TIME-012 | E | `times.axis: morphological` requested for a simulation without morphology (no `morft`) |
-| V-VAR-001 | E | Unknown variable (with "did you mean") |
+| V-VAR-001 | E | Unknown variable (suggest up to three canonical names when close matches exist) |
 | V-VAR-002 | E | Variable missing in some sub-runs |
 | V-VAR-003 | E | Fraction or layer index out of range |
 | V-VAR-004 | E | Variable has dimensions other than those declared in its `VariableSpec` |
@@ -2030,7 +2040,7 @@ Typed `MorphologyModel` (`.mor`) and `SedimentModel` (`.sed`), if specification 
 | 1.7 | Status | `simulation/status.py` (`.dia` tails), path-level status inspection, stale-time configuration, JSON/CSV serializers | Synthetic SMT/plain-FM states are correct, including `not_started`; corrupt counts stay unknown until WP 2.2. Read-only r209 is `finished` with no issues; bounded status scan is 27.371 s (433.548 s serial baseline) |
 | 1.8 | Store | `store/layout.py`, `guard.py`, `atomic.py`, `fingerprint.py`; input-snapshot test helper | Guard refuses unmarked or forbidden roots; atomic writes tested |
 | 1.9 | Labels | `labels/*` + CSVs seeded from Matlab | en/nl/es complete; templates; units |
-| 1.10 | Variables | `variables/registry.py` with the v1 variables, aliases, "did you mean" | Registry docs generated |
+| 1.10 | Variables | `variables/registry.py` with metadata for every v1 raw/derived quantity, canonical names, aliases, NetCDF candidates, dimensions, units, label keys, and V-VAR-001 suggestions | Alias/candidate lookup and unknown-name suggestions are tested; generated `docs/variables.md` matches the registry |
 | 1.11 | CLI part 1 | `info`, `variables`, `schema`, `validate`, `init` | Commands work on the synthetic case |
 
 The WP 1.2a generator and expected-output deliverables are implemented; their discovery acceptance passes with WP 1.6.
@@ -2274,6 +2284,8 @@ Principles:
 
 ### A.5 Variables (v1)
 
+The complete model-quantity catalog (all v1 raw and derived registry entries, aliases, NetCDF candidates, dimensions, units, and label keys) is generated in [the variable catalogue](./variables.md). The compact table below lists the primary analysis variables; `bed_slope_streamwise` is an SMB analysis-level statistic rather than a model quantity.
+
 | Canonical | Matlab alias | FM NetCDF |
 |-----------|--------------|-----------|
 | `bed_level` | `bl` | `mesh2d_mor_bl` / `mesh2d_flowelem_bl` |
@@ -2292,6 +2304,8 @@ Principles:
 
 | Version | Content |
 |---------|---------|
+| v6.28 | Completed WP 1.10 locally on `feat/variables`: added metadata for all 10 raw and 23 derived v1 quantities, canonical/alias/NetCDF resolution, V-VAR-001 suggestions, generated catalogue docs, and three related label translations; 115 CI-eligible tests, strict mypy, changed-file Ruff/format, and strict MkDocs pass; next handover is WP 1.11 |
+| v6.27 | Started WP 1.10 on `feat/variables`; recorded the metadata-only variable registry, case-insensitive canonical/Matlab/registered-NetCDF lookup, V-VAR-001 suggestions, and the WP 2.2a/b boundary for computation callbacks |
 | v6.26 | Completed WP 1.9 locally on `feat/labels`: added the Matlab-seeded catalog, completed all en/nl/es translations, comparison templates, unit scales, extra dictionaries, and metadata fallback; all 100 CI-eligible tests, strict mypy, Ruff/format, strict MkDocs, and wheel resource checks pass; next handover is WP 1.10 |
 | v6.25 | Completed WP 1.8 locally on `feat/store`: output layout, marked-root write guard, atomic writers, recursive fingerprints, V-OUT-041 checks, input-snapshot helper, and output-store documentation; 82 CI-eligible tests, strict mypy, Ruff/format, and strict MkDocs pass; next handover is WP 1.9 |
 | v1 | First architecture proposal |
