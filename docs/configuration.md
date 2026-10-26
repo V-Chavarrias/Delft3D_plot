@@ -74,6 +74,26 @@ labels or output roots, and matching row counts when both `figure.x_limits` and
 `validate_project_config(config)` runs the static checks on an already
 validated `ProjectConfig`.
 
+## Output locations and safety
+
+Each simulation writes beneath its own `d3dplot/` folder. The base directory is
+chosen in this order:
+
+1. `simulations[*].output_dir`, when set;
+2. `output.root/<simulation label>`, when `output.root` is set;
+3. the simulation folder.
+
+`output.forbidden_roots` lists directories that must not contain generated
+output. Validation reports `V-OUT-041` when a resolved output root is inside
+one of those directories, is not writable, or is an invalid non-empty,
+unmarked folder.
+
+Before a write, the store requires a `.d3dplot-output` marker. It creates this
+marker only in a new or empty output folder; an existing marked folder can be
+reused. Writes are guarded and use same-directory temporary files followed by
+an atomic replacement. See [Output store](./output-store.md) for the marker,
+guard, and fingerprint APIs.
+
 ## Python API
 
 ```python

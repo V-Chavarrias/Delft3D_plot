@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -175,3 +176,38 @@ def test_validate_project_config_accepts_valid_model() -> None:
 
     assert report.is_valid
     assert report.issues == ()
+
+
+@pytest.mark.unit
+def test_v_out_041_rejects_output_roots_inside_forbidden_roots(
+    tmp_path: Path,
+) -> None:
+    protected_root = tmp_path / "protected"
+    data = _minimal_data()
+    data["simulations"][0]["path"] = str(protected_root / "model")
+    data["output"] = {"forbidden_roots": [str(protected_root)]}
+
+    config, report = validate_config(data)
+
+    assert config is not None
+    assert [issue.code for issue in report.errors] == ["V-OUT-041"]
+    assert report.errors[0].location == "simulations[0].path"
+    assert "inside forbidden root" in report.errors[0].message
+
+
+@pytest.mark.unit
+def test_v_out_041_rejects_output_root_that_is_not_writable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import d3dplot.validate.checks.config as config_checks
+
+    monkeypatch.setattr(config_checks.os, "access", lambda _path, _mode: False)
+    data = _minimal_data()
+    data["output"] = {"root": str(tmp_path / "shared")}
+
+    config, report = validate_config(data)
+
+    assert config is not None
+    assert [issue.code for issue in report.errors] == ["V-OUT-041"]
+    assert "not writable" in report.errors[0].message

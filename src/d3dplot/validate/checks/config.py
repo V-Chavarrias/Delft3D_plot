@@ -9,6 +9,8 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from d3dplot.config.project import ProjectConfig
+from d3dplot.store.guard import OutputWriteGuard
+from d3dplot.store.layout import OUTPUT_MARKER_NAME, resolve_output_root
 from d3dplot.validate.report import ValidationIssue, ValidationReport
 
 _ANALYSIS_DISCRIMINATOR_VALUES = {"map2d", "river_km_statistics"}
@@ -119,9 +121,21 @@ def _check_simulation_labels_and_output_roots(
         else:
             seen_labels[simulation.label] = index
 
-        output_root = _resolved_output_root(
-            config, simulation.output_dir, simulation.path, simulation.label
-        )
+        try:
+            output_root = resolve_output_root(
+                simulation.path,
+                simulation.label,
+                project_output_root=config.output.root,
+                simulation_output_dir=simulation.output_dir,
+            )
+        except (OSError, RuntimeError, ValueError) as error:
+            _append_output_root_issue(
+                config,
+                index,
+                f"Could not resolve the output root: {error}",
+                issues,
+            )
+            continue
         output_key = os.path.normcase(str(output_root))
         previous_root = seen_roots.get(output_key)
         if previous_root is not None:
@@ -144,20 +158,75 @@ def _check_simulation_labels_and_output_roots(
         else:
             seen_roots[output_key] = (index, simulation.label)
 
+        problem = _output_root_problem(config, output_root)
+        if problem is not None:
+            _append_output_root_issue(config, index, problem, issues)
 
-def _resolved_output_root(
+
+def _output_root_problem(
     config: ProjectConfig,
-    simulation_output_dir: Path | None,
-    simulation_path: Path,
-    label: str,
-) -> Path:
-    if simulation_output_dir is not None:
-        base = simulation_output_dir
-    elif config.output.root is not None:
-        base = config.output.root / label
+    output_root: Path,
+) -> str | None:
+    try:
+        guard = OutputWriteGuard(output_root, config.output.forbidden_roots)
+        guard.validate_root_location()
+    except RuntimeError as error:
+        return str(error)
+
+    if output_root.exists():
+        if not output_root.is_dir():
+            return f"Output root is not a directory: {output_root}"
+        marker = output_root / OUTPUT_MARKER_NAME
+        if marker.is_symlink():
+            return f"Output marker cannot be a symlink: {marker}"
+        if marker.exists() and not marker.is_file():
+            return f"Output marker is not a regular file: {marker}"
+        try:
+            if not marker.exists() and any(output_root.iterdir()):
+                return f"Refusing non-empty unmarked output root: {output_root}"
+        except OSError as error:
+            return f"Could not inspect output root {output_root}: {error}"
+        writable_location = output_root
     else:
-        base = simulation_path
-    return (base / "d3dplot").expanduser().resolve(strict=False)
+        writable_location = output_root.parent
+        while not writable_location.exists():
+            parent = writable_location.parent
+            if parent == writable_location:
+                break
+            writable_location = parent
+        if not writable_location.is_dir():
+            return f"No existing directory can contain output root {output_root}."
+
+    if not os.access(writable_location, os.W_OK):
+        return f"Output root is not writable: {output_root}"
+    return None
+
+
+def _append_output_root_issue(
+    config: ProjectConfig,
+    index: int,
+    message: str,
+    issues: list[ValidationIssue],
+) -> None:
+    simulation = config.simulations[index]
+    if simulation.output_dir is not None:
+        location = f"simulations[{index}].output_dir"
+    elif config.output.root is not None:
+        location = "output.root"
+    else:
+        location = f"simulations[{index}].path"
+    issues.append(
+        ValidationIssue(
+            code="V-OUT-041",
+            level="error",
+            location=location,
+            message=message,
+            hint=(
+                "Choose a writable output location outside output.forbidden_roots "
+                "and use a new or empty d3dplot folder."
+            ),
+        )
+    )
 
 
 def _check_axis_limit_rows(
