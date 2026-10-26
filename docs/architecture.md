@@ -1,6 +1,6 @@
 # Delft3D_plot (Python): Architecture and Implementation Plan
 
-Status: **v6.8, plan for review.** Only the synthetic test-case generator is implemented ([tools/synthetic_smt](../tools/synthetic_smt/README.md)). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
+Status: **v6.9, plan for review.** Only the synthetic test-case generator is implemented ([tools/synthetic_smt](../tools/synthetic_smt/README.md)). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
 
 Document map:
 * §0 Session handover
@@ -34,7 +34,7 @@ Document map:
 | Item | Location | State |
 |------|----------|-------|
 | Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `main`, conventional commits |
-| Plan (this file) | `docs/architecture.md` | v6.8 |
+| Plan (this file) | `docs/architecture.md` | v6.9 |
 | Licence | `LICENSE` | GPL-3.0 |
 | Synthetic SMT test case generator | `tools/synthetic_smt/` | Implemented and verified (§13.3) |
 | Land-boundary converter (`.mat` cache → `.ldb`) | `tools/mat_to_ldb.py` | Implemented. Used to recreate the Maas land boundary (D45) |
@@ -197,9 +197,10 @@ Status: **A** = agreed with the user; **P** = proposed in this plan and awaiting
 | D47 | **Reusable plot building blocks**: the map view (grid values, extents incl. windows along a river-km file, river-km labels from a possibly different river-km file, land boundaries, tiles, measurements panel) and the line view (lines or stacked areas) are shared by M2D, the SMB diagnostic maps and future analyses (§7.14b) | User; Matlab reuses `fig_M2D` for SMB in-polygon maps | A |
 | D48 | **Agent guidance**: always-on `AGENTS.md` (principles: plan first, read-only P-drive, reuse HYDROLIB-core/dfm_tools, performance, finalisation, names, time, diagnostics), a plotting file instruction, and two skills (`add-analysis-or-option`, `upstream-contribution`) (§13.6) | User: future agent development must follow the plan | A |
 | D49 | The user is a contributor of HYDROLIB-core and dfm_tools. Upstream changes are developed locally in the checkouts; branches, issues and PRs are created when the user decides (§14, skill `upstream-contribution`). Recommended: commit on a **local feature branch** from the start (no access needed); committing on local `main` is possible and can be moved to a branch later | User | A |
-| D50 | **Quantity engine**: one central service resolves requested quantities (raw or derived, e.g. Froude, vorticity), reads each raw input once per (sub-run, time) through the merge plan, computes derived quantities in dependency order, and is the only reader of model output for all analyses (§7.9a). The merge plan includes edges for edge-located inputs | User; Matlab `gdm_read_data_map_simdef` | P |
+| D50 | **Quantity engine**: one central service resolves requested quantities (raw or derived, e.g. Froude, vorticity), reads each raw input once per (sub-run, time) through the merge plan, computes derived quantities in dependency order, and is the only reader of model output for all analyses (§7.9a). The merge plan includes edges for edge-located inputs | User; Matlab `gdm_read_data_map_simdef` | A |
 | D51 | HYDROLIB-core PR 1 scope: **6 `[sediment]` keywords** (`dredgeFile`, `morCFL`, `DzbDtMax`, `morphoPol`, `inMorphoPol`, `upperLimitSSC`) and **3 `ResearchGeometry` keywords** (`circumcenterMethod`, `circumcenterTolerance`, `calculateBedLevelOverNonActiveLinks`); the other missing `[sediment]` keywords will be deprecated and are not added (§14.1) | User; agreed with the HYDROLIB-core maintainer | A |
 | D52 | Second acceptance case: the Rijn **plain FM** run `D16000` (§5.5, §13.4a) | User | A |
+| D53 | **Physical constants from the model**: `g` (MDU `Ag`), `ρ` (MDU `Rhomean`) per simulation, `ρ_s` per sediment fraction (`.sed` `RhoSol`); D-Flow FM defaults when absent; values written to the `.dia` (§7.9a) | User | A |
 
 ## 3. Review of the plan (v6)
 
@@ -734,7 +735,8 @@ Inside an SMT sub-run, relative paths in the MDU are resolved against the sub-ru
 | `output_dir` | `model.output.outputdir` | default `DFM_OUTPUT_<stem>` |
 | `map_file` | `model.output.mapfile` | default `<stem>_map.nc`; partitions `<stem>_<pppp>_map.nc` |
 | `net_file` | `model.geometry.netfile` | |
-| `mor_file`, `sed_file` | `model.sediment.morfile`, `model.sediment.sedfile` | then `.mor` → `MorFac`, `MorStt`; `.sed` → fractions (`Name`, `SedTyp`, `SedDia` or `SedMinDia`/`SedMaxDia`) with the INI parser |
+| `mor_file`, `sed_file` | `model.sediment.morfile`, `model.sediment.sedfile` | then `.mor` → `MorFac`, `MorStt`; `.sed` → per fraction `Name`, `SedTyp`, `SedDia` or `SedMinDia`/`SedMaxDia`, **`RhoSol`** (D53) with the INI parser |
+| `gravity`, `water_density` | `model.physics.ag`, `model.physics.rhomean` | D53; defaults 9.81 and 1000 when absent |
 
 **Output files**:
 * partitioned: `<output_dir>/<stem>_<pppp>_map.nc` with consecutive `pppp`;
@@ -855,7 +857,7 @@ Several plotted quantities are not stored in the map file but computed from one 
 * **Validation.** Requested quantities are resolved during validation: a missing input reports V-VAR-002 with the dependency chain (e.g. `vorticity → mesh2d_u1 missing in sub-runs 3–5`).
 * **Extensible.** Projects can register their own derived quantities through the entry point `d3dplot.quantities` (same mechanism as analyses and hooks), with tests.
 
-**Catalogue of quantities** (all derived quantities of Matlab `D3D_plot`, which M2D and SMB share through `gdm_read_data_map_simdef.m`, its line-profile variant `gdm_read_data_map_ls_simdef.m` and `gdm_read_data_map.m`; definitions taken from the Matlab code). Matlab constants are kept: `g = 9.81 m/s²`, `ρ = 1000 kg/m³`, `ρ_s = 2650 kg/m³`, configurable in `constants:`. Each entry gets a unit test with hand-computed values and, where the synthetic case allows it, an analytic test. Notation: `‖u‖` velocity magnitude, `h` water depth, `F_i` volume fraction of sediment fraction `i`, `D_i` its diameter.
+**Catalogue of quantities** (all derived quantities of Matlab `D3D_plot`, which M2D and SMB share through `gdm_read_data_map_simdef.m`, its line-profile variant `gdm_read_data_map_ls_simdef.m` and `gdm_read_data_map.m`; definitions taken from the Matlab code). **Physical constants are read from the model of each simulation, not hard-coded** (D53): gravity `g` from MDU `[physics] Ag` (HYDROLIB-core `physics.ag`), water density `ρ` from MDU `[physics] Rhomean` (`physics.rhomean`), sediment density `ρ_s,i` **per fraction** from the `.sed` file (`RhoSol` of each `[Sediment]` block). When a keyword is absent, the D-Flow FM default applies (HYDROLIB-core defaults: `Ag = 9.81`, `Rhomean = 1000`). The values used are written to the `.dia` file. Matlab hard-codes `g = 9.81`, `ρ = 1000`, `ρ_s = 2650`; both real runs have `Ag = 9.813` (§5), so Matlab comparisons of g-dependent quantities use a relative tolerance of 1e-3. Each entry gets a unit test with hand-computed values and, where the synthetic case allows it, an analytic test. Notation: `‖u‖` velocity magnitude, `h` water depth, `F_i` volume fraction of sediment fraction `i`, `D_i` its diameter.
 
 *Raw quantities with aliases* (registry entries of kind `raw`; Matlab short names from `D3D_var_num2str.m`):
 
@@ -879,7 +881,7 @@ Several plotted quantities are not stored in the map file but computed from one 
 | `froude_number` | `Fr`, `fr` (`gdm_read_data_map_Fr`) | `velocity_magnitude`, `water_depth` | `‖u‖ / sqrt(g·h)`; NaN where `h < dry_depth_m` (default 0.01 m; Matlab has no threshold) | v1 |
 | `specific_discharge` | `qsp` (`gdm_read_data_map_q`) | `velocity_magnitude`, `water_depth` | `‖u‖·h` (m²/s) | v1 |
 | `energy_head` | `E` (`gdm_read_data_map_E`) | `water_level`, `velocity_magnitude` | `η + ‖u‖²/(2g)` (m) | v1 |
-| `shields_number` | `ShieldsD` (`gdm_read_data_map_ShieldsD`) | `bed_shear_stress`; if absent `velocity_magnitude`, `chezy` | `θ = τ_b / (g·ρ·R)`, `R = (ρ_s − ρ)/ρ`; without `τ_b`: `τ_b = ρ·(g/C²)·‖u‖²` | v1 |
+| `shields_number_times_diameter` | `ShieldsD` (`gdm_read_data_map_ShieldsD`) | `bed_shear_stress`; if absent `velocity_magnitude`, `chezy`; `g`, `ρ`, `ρ_s,i` | `θ_i·D_i = τ_b / (g·ρ·R_i)` (m), `R_i = (ρ_s,i − ρ)/ρ`; without `τ_b`: `τ_b = ρ·(g/C²)·‖u‖²`. Matlab's formula has no diameter, hence the name. One value per fraction (component dimension) when `RhoSol` differs between fractions, one value otherwise. Requires a `.sed` file | v1 |
 | `velocity_direction` | `udir` (`gdm_read_data_map_udir`) | `mesh2d_ucx`, `mesh2d_ucy` | direction of the depth-averaged velocity (degrees; convention to be taken from the Matlab reader and documented) | v1 |
 | `velocity_vector` | `uv` | `mesh2d_ucx`, `mesh2d_ucy` | two components; M2D arrows | v1 |
 | `velocity_magnitude_layer_mean` | `umag` with `layer` (`gdm_read_data_map_umag`) | `mesh2d_ucmag` per layer | arithmetic mean over the selected layers (Matlab behaviour; not thickness-weighted) | later (3D) |
@@ -1737,8 +1739,9 @@ Generator: `tools/synthetic_smt/` ([README](../tools/synthetic_smt/README.md)). 
 ### 13.4a Acceptance case 2: Rijn plain FM run (`D16000`)
 
 * Input: §5.5 (read-only); `output.root` local; `forbidden_roots` contains the project folder.
-* Analyses: `map2d` of `water_level`, `water_depth`, `velocity_magnitude`, and derived `froude_number` and `vorticity`, all 109 times, with comparisons `value` and `difference_time`; windows along a river-km file of the Rijntakken (with track) if one is available; `river_km_statistics` of `water_level` and `froude_number` on a summer-bed polygon of the Rijn (to be provided, §17).
-* No Matlab reference yet: checks are the engine values against direct NetCDF reads, the time-block parallelism (serial == parallel), the performance (§7.22), and a visual review.
+* Scope (user): **`map2d` only**; the check is that M2D figures are generated. No `river_km_statistics`, no river-km windows or labels.
+* Analyses: `map2d` of `water_level`, `water_depth`, `velocity_magnitude`, and derived `froude_number` (with `g` from `Ag = 9.813`) and `vorticity`, all 109 times, comparisons `value` and `difference_time`, full-model extent plus one explicit extent.
+* Checks: the expected PNGs exist (one per variable × comparison × time × extent) and are non-empty; engine values equal direct NetCDF reads; serial == parallel (time blocks); performance (§7.22); visual review. No Matlab reference.
 
 ### 13.5 CI
 
@@ -1935,7 +1938,7 @@ Typed `MorphologyModel` (`.mor`) and `SedimentModel` (`.sed`), if specification 
 |----|---------|-----------|
 | 2.1 | Inspect phase: partition identity, merge plan(s) + `grid.nc`, topology signatures, reference sub-run selection (§7.6, §9.3) | Values equal dfm_tools on the synthetic case; `corrupt_partition` handled; a fixture with changed topology produces two plans. (local) `r209` merge plan built |
 | 2.2 | `MapReader` (faces and edges), quality checks, `times.nc`, `TimeAxis` (merge, duplicates, tz, selection, matching) | Synthetic `time_axis.csv` reproduced; V-OUT-030/031, V-TIME-* tested |
-| 2.2a | **Quantity engine** (§7.9a): raw/derived registry, dependency resolution, read-once memory cache, grid geometry in `grid.nc`, edge merge plan, and all quantities marked "v1" in the catalogue of §7.9a (Froude, specific discharge, energy head, Shields number, velocity direction and vector, water-level rate, vorticity, total sediment thickness, morphological volume, sediment transport magnitude (per fraction and summed), bed-load transport magnitude, mean grain sizes, grain-size percentiles); entry point `d3dplot.quantities`. **Generator extension**: the synthetic case gets `mesh2d_ucx`/`ucy` and `mesh2d_u1` (edges) with an analytic vorticity, `mesh2d_czs`, `mesh2d_thlyr`, `mesh2d_sxtot`/`sytot` and `mesh2d_sbcx`/`sbcy` per fraction, and `.sed` diameters, plus expected values | Each raw input read once per (sub-run, time) even when requested by several quantities and analyses (counting test); every v1 quantity equals its hand-computed / analytic value (vorticity also across partition boundaries); missing input → V-VAR-002 with the dependency chain; (local) values on `r209` and Rijn `D16000` equal direct NetCDF reads |
+| 2.2a | **Quantity engine** (§7.9a): raw/derived registry, dependency resolution, read-once memory cache, grid geometry in `grid.nc`, edge merge plan, and all quantities marked "v1" in the catalogue of §7.9a (Froude, specific discharge, energy head, Shields number, velocity direction and vector, water-level rate, vorticity, total sediment thickness, morphological volume, sediment transport magnitude (per fraction and summed), bed-load transport magnitude, mean grain sizes, grain-size percentiles); entry point `d3dplot.quantities`. **Generator extension**: the synthetic case gets `mesh2d_ucx`/`ucy` and `mesh2d_u1` (edges) with an analytic vorticity, `mesh2d_czs`, `mesh2d_thlyr`, `mesh2d_sxtot`/`sytot` and `mesh2d_sbcx`/`sbcy` per fraction, and `.sed` diameters and `RhoSol` (one fraction with a different value, to test per-fraction densities); the MDU gets `Ag = 9.813` and `Rhomean = 1000` (as the real runs), plus expected values | Each raw input read once per (sub-run, time) even when requested by several quantities and analyses (counting test); every v1 quantity equals its hand-computed / analytic value (vorticity also across partition boundaries); missing input → V-VAR-002 with the dependency chain; (local) values on `r209` and Rijn `D16000` equal direct NetCDF reads |
 | 2.3 | Execution: tasks, planner (one `ProcessTask` per simulation × sub-run for all analyses, D27), fingerprints and skipping, serial/process executors, worker init, logging queue, run summary, **diagnostic file** (D41), sharding | Parallel-equivalence and resumability tests pass; the `.dia` of a synthetic run lists the selected times, the resolved duplicates and the masked corrupt outputs of `corrupt_partition` |
 
 ### 15.4 Phase 3: `map2d`
@@ -2017,14 +2020,15 @@ Resolved with the user (v6.1–v6.3):
 * D24 and D27–D40 agreed; D27 refined to time blocks so plain FM simulations also run in parallel (v6.7);
 * HYDROLIB-core PR 1 scope agreed with the maintainer: 6 `[sediment]` + 3 `ResearchGeometry` keywords (D51);
 * second acceptance case: Rijn plain FM run `D16000` (D52, §5.5);
-* all Matlab derived quantities catalogued (§7.9a).
+* all Matlab derived quantities catalogued (§7.9a); quantity engine agreed (D50);
+* constants `g`, `ρ` from the MDU and `ρ_s` per fraction from the `.sed` (D53);
+* Rijn case: only check that M2D figures are generated (§13.4a);
 * the Matlab reference run of the synthetic case is done (the generator needed explicit `statis_plot` and empty `rkm_track`);
 * upstream changes are developed locally; the user is a contributor (D49). A local feature branch is recommended, local `main` is possible (skill `upstream-contribution`);
 * agent guidance files (D48, §13.6).
 
 Still open:
-1. **Quantity engine** (D50, §7.9a): agreement needed before Phase 2, and confirmation of the proposed phase (v1 / later) of each quantity in the catalogue of §7.9a.
-2. **Rijn acceptance case** (§13.4a): which river-km file and summer-bed polygon of the Rijn should be used for iver_km_statistics and the map windows?
+1. **Phases of the quantities** (§7.9a): confirm the proposed v1 / later split of the catalogue (the engine itself, D50, is agreed).
 
 Scheduling (no decision needed): the HYDROLIB-core change (WP 0.1, §14.1) is done as the first task of Phase 1, on a local branch, because reading the MDU (WP 1.5) depends on it. The merge plan (D21) is agreed in general terms (v6.6).
 
@@ -2190,6 +2194,7 @@ Principles:
 | v5 | Answers on measurements, `r209` findings, synthetic SMT case specification and generator |
 | v6 | Thorough review against real data (merge plan, tolerant MDU parsing, corrupt partitions, time zones, duplicate morphological times, float64, task granularity, path lengths); `.ldb`-only land boundaries; independent review (14 issues fixed: inspect phase, recursive fingerprints, topology signatures, deterministic sharding and geometry, derived-statistic definitions, verified versions); consolidated, self-contained plan with handover, file formats, validation catalogue and work packages |
 | v6.1 | User answers: last duplicate and masking of corrupt output, both written to a new per-run diagnostic file (`.dia`); `.ldb` read with HYDROLIB-core; contextily cache replaces `earth_tiles`; uv and float64 agreed; HYDROLIB-core keyword contribution analysed (`ResearchFMModel` fails only on 7 keywords) |
+| v6.9 | Constants from the model (D53): `Ag`, `Rhomean` from the MDU, `RhoSol` per fraction from the `.sed`; Shields per fraction; Rijn case limited to M2D figures; D50 agreed |
 | v6.8 | HYDROLIB-core PR 1 reduced to the agreed 6 `[sediment]` + 3 `ResearchGeometry` keywords (D51); catalogue of all Matlab derived quantities with definitions and phases (§7.9a); Rijn plain FM run as reference and acceptance case 2 (§5.5, §13.4a, D52); DIMR with several components, `StartDateTime`, V-TIME-012 |
 | v6.7 | Detailed HYDROLIB-core plan (§14.1): spec comparison shows 22 missing standard [sediment] keywords, PR 1 completes the section; D27 agreed and refined to time blocks; parallelism for plain FM vs SMT (§7.13); plain FM synthetic variants planned (WP 1.2a) |
 | v6.6 | Merge plan agreed in general terms; D27 explained; HYDROLIB-core change scheduled as first task of Phase 1 |
