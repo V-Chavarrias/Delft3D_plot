@@ -94,7 +94,12 @@ strict = true
 testpaths = ["tests"]
 addopts = ["-ra", "--strict-config", "--strict-markers"]
 markers = [
+    "unit: fast tests of isolated functions",
+    "integration: tests that exercise components with generated or sample data",
+    "mpl: tests that compare generated figures with image baselines",
+    "slow: tests that take substantially longer than unit tests",
     "requireslocaldata: tests that require project data available only on the developer's machine",
+    "acceptance: end-to-end tests of user-visible workflows",
 ]
 
 [tool.coverage.run]

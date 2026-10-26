@@ -31,7 +31,7 @@ jobs:
       - name: Type-check
         run: uv run --no-sync mypy src/d3dplot
       - name: Test
-        run: uv run --no-sync pytest
+        run: uv run --no-sync pytest -m "not requireslocaldata"
 
   docs:
     name: Build documentation

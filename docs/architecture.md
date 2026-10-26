@@ -1,6 +1,6 @@
 # Delft3D_plot (Python): Architecture and Implementation Plan
 
-Status: **v6.14, WP 1.1 implemented locally; remote CI pending.** The package skeleton and synthetic SMT generator are in place; analysis functionality is not yet implemented. See [the synthetic SMT generator](https://github.com/V-Chavarrias/Delft3D_plot/blob/main/tools/synthetic_smt/README.md). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
+Status: **v6.15, WP 1.2 complete locally; WP 1.1 remote CI pending.** The package skeleton, session-scoped synthetic-case fixture, and generator are in place; analysis functionality is not yet implemented. See [the synthetic SMT generator](https://github.com/V-Chavarrias/Delft3D_plot/blob/main/tools/synthetic_smt/README.md). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
 
 Document map:
 * §0 Session handover
@@ -33,8 +33,8 @@ Document map:
 
 | Item | Location | State |
 |------|----------|-------|
-| Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `feat/repository-skeleton`, local and unpushed |
-| Plan (this file) | `docs/architecture.md` | v6.14 |
+| Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `feat/synthetic-case-fixture`, local and unpushed |
+| Plan (this file) | `docs/architecture.md` | v6.15 |
 | Licence | `LICENSE` | GPL-3.0 |
 | Synthetic SMT test case generator | `tools/synthetic_smt/` | Implemented and verified (§13.3) |
 | Land-boundary converter (`.mat` cache → `.ldb`) | `tools/mat_to_ldb.py` | Implemented. Used to recreate the Maas land boundary (D45) |
@@ -43,6 +43,7 @@ Document map:
 | HYDROLIB-core modification | §14.1 | Local commit `54011e0d` on `feat/mdu_morphology_keywords`; implementation and verification complete, not pushed or proposed upstream |
 | Python environment | `.venv/` (uv, Python 3.12) | Git-ignored. dfm_tools and HYDROLIB-core are installed editable from the local checkouts |
 | Package `d3dplot` | `pyproject.toml`, `src/d3dplot/` | Skeleton implemented (WP 1.1); analysis functionality pending |
+| Synthetic-case pytest fixture | `tests/conftest.py` | Session-scoped fixture generates and verifies in pytest's temporary folder (WP 1.2) |
 | CI and documentation site | `.github/workflows/ci.yml`, `mkdocs.yml` | Configured; local checks pass, remote CI not run |
 | Matlab reference results of the synthetic case | `data_local/synthetic_smt_01/simulations/r00*/mat`, `fig` | **Done** (2026-10-26): r001 37 mat + 1071 PNG, r002 37 mat + 858 PNG. Protected: `generate.py --force` refuses to delete them without `--discard-matlab-reference` |
 | Agent guidance for development | `AGENTS.md`, `.github/instructions/plotting.instructions.md`, `.github/skills/{add-analysis-or-option,upstream-contribution}` | Done (§13.6) |
@@ -104,10 +105,11 @@ APIs the design relies on (check them first when upgrading):
 ### 0.4 Where to continue
 
 1. **WP 0.1** (§15.1a, §14.1) is complete locally on HYDROLIB-core branch `feat/mdu_morphology_keywords`, commit `54011e0d`. The full test suite and read-only MDU checks pass; no upstream PR or release exists yet. See [upstream.md](./upstream.md).
-2. **WP 1.1** (§15.2) is implemented locally on branch `feat/repository-skeleton`. Editable installation, smoke test, Ruff, mypy, pre-commit config validation, and strict docs build pass on Windows/Python 3.12; the Windows/Linux GitHub Actions matrix is configured but has not run remotely.
-3. Next, implement **WP 1.2**: add the synthetic-case pytest fixture in `tests/conftest.py`; follow with WP 1.2a, the plain FM generator variants.
-4. Set d3dplot's minimum HYDROLIB-core version to the first upstream release containing WP 0.1; do not guess or pin an unreleased version.
-5. The Matlab reference results of the synthetic case exist: add the Matlab comparison tests (WP 5.2) as soon as the cache is produced (from Phase 3).
+2. **WP 1.1** (§15.2) is complete locally on branch `feat/repository-skeleton`, commit `29b08d3`. Editable installation, smoke test, Ruff, mypy, pre-commit config validation, and strict docs build pass on Windows/Python 3.12; the Windows/Linux GitHub Actions matrix is configured but has not run remotely.
+3. **WP 1.2** is complete locally on branch `feat/synthetic-case-fixture`: `synthetic_case` generates and verifies once per test session in `tmp_path_factory`; its integration test confirms model and expected-result files. The CI-eligible suite passes (2 tests, 18.85 s).
+4. Next, implement **WP 1.2a**: add the `fm_partitioned` and `fm_single` plain-FM variants to the generator.
+5. Set d3dplot's minimum HYDROLIB-core version to the first upstream release containing WP 0.1; do not guess or pin an unreleased version.
+6. The Matlab reference results of the synthetic case exist: add the Matlab comparison tests (WP 5.2) as soon as the cache is produced (from Phase 3).
 
 ---
 
@@ -1696,7 +1698,7 @@ pytest markers: `unit`, `integration`, `mpl`, `slow`, `requireslocaldata`, `acce
 
 ### 13.3 Synthetic SMT case (implemented)
 
-Generator: `tools/synthetic_smt/` ([README](https://github.com/V-Chavarrias/Delft3D_plot/blob/main/tools/synthetic_smt/README.md)). Run with `.venv\Scripts\python.exe tools\synthetic_smt\generate.py --force`; the output goes to `data_local/synthetic_smt_01/` (about 87 MB, git-ignored). It verifies itself with HYDROLIB-core, dfm_tools, rasterio, geopandas and scipy. A pytest fixture will generate it into a temporary folder. No frozen copy is committed (D19).
+Generator: `tools/synthetic_smt/` ([README](https://github.com/V-Chavarrias/Delft3D_plot/blob/main/tools/synthetic_smt/README.md)). Run with `.venv\Scripts\python.exe tools\synthetic_smt\generate.py --force`; the output goes to `data_local/synthetic_smt_01/` (about 87 MB, git-ignored). It verifies itself with HYDROLIB-core, dfm_tools, rasterio, geopandas and scipy. The session-scoped `synthetic_case` fixture generates it into pytest's temporary directory for integration tests (WP 1.2). No frozen copy is committed (D19).
 
 **Model**:
 * a 10 km meandering channel (sine-generated, EPSG:28992-like coordinates, km 10–20);
@@ -2234,6 +2236,7 @@ Principles:
 | v6.12 | Added D56 and the non-recursive `iniFieldFile` type fix to WP 0.1 after reproducing a `DiskOnlyFileModel`/`IniFieldModel` mismatch on synthetic and real MDUs; user approved the scope extension |
 | v6.13 | WP 0.1 complete locally in HYDROLIB-core commit `54011e0d`; recorded upstream status and the pending minimum release; next handover is Phase 1 |
 | v6.14 | WP 1.1 package skeleton, dependency lock, CI/docs setup, contributor guide and smoke test implemented locally; local checks pass and remote CI remains pending |
+| v6.15 | WP 1.2 session-scoped synthetic-case fixture and integration smoke test implemented; full generator self-check runs once per pytest session; handover moves to WP 1.2a |
 | v6.10 | All catalogue quantities in v1 except `morphodynamic_celerity` (D54): 3D layers, residence times (`.sub` via HYDROLIB-core), section quantities (API), new WP 2.2b, V-VAR-006; no open questions |
 | v6.9 | Constants from the model (D53): `Ag`, `Rhomean` from the MDU, `RhoSol` per fraction from the `.sed`; Shields per fraction; Rijn case limited to M2D figures; D50 agreed |
 | v6.8 | HYDROLIB-core PR 1 reduced to the agreed 6 `[sediment]` + 3 `ResearchGeometry` keywords (D51); catalogue of all Matlab derived quantities with definitions and phases (§7.9a); Rijn plain FM run as reference and acceptance case 2 (§5.5, §13.4a, D52); DIMR with several components, `StartDateTime`, V-TIME-012 |
