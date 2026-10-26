@@ -1,6 +1,6 @@
 # Delft3D_plot (Python): Architecture and Implementation Plan
 
-Status: **v6.10, ready for execution.** Only the synthetic test-case generator is implemented ([tools/synthetic_smt](../tools/synthetic_smt/README.md)). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
+Status: **v6.11, ready for execution.** Only the synthetic test-case generator is implemented ([tools/synthetic_smt](../tools/synthetic_smt/README.md)). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
 
 Document map:
 * §0 Session handover
@@ -34,7 +34,7 @@ Document map:
 | Item | Location | State |
 |------|----------|-------|
 | Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `main`, conventional commits |
-| Plan (this file) | `docs/architecture.md` | v6.10 |
+| Plan (this file) | `docs/architecture.md` | v6.11 |
 | Licence | `LICENSE` | GPL-3.0 |
 | Synthetic SMT test case generator | `tools/synthetic_smt/` | Implemented and verified (§13.3) |
 | Land-boundary converter (`.mat` cache → `.ldb`) | `tools/mat_to_ldb.py` | Implemented. Used to recreate the Maas land boundary (D45) |
@@ -102,7 +102,7 @@ APIs the design relies on (check them first when upgrading):
 
 ### 0.4 Where to continue
 
-1. The plan has been reviewed with the user (v6.10); §17 has no open questions. New questions go to §17.
+1. The plan has been reviewed with the user (v6.11); §17 has no open questions. New questions go to §17.
 2. **WP 0.1** (§15.1a, §14.1): the HYDROLIB-core MDU keyword change, on a local branch. It is the first task of Phase 1, because reading the MDU (WP 1.5) depends on it.
 3. Start **Phase 1** (§15.2): repository skeleton (`pyproject.toml`, `src/d3dplot`, CI, docs), then the work packages in order.
 4. The Matlab reference results of the synthetic case exist: add the Matlab comparison tests (WP 5.2) as soon as the cache is produced (from Phase 3).
@@ -201,7 +201,8 @@ Status: **A** = agreed with the user; **P** = proposed in this plan and awaiting
 | D51 | HYDROLIB-core PR 1 scope: **6 `[sediment]` keywords** (`dredgeFile`, `morCFL`, `DzbDtMax`, `morphoPol`, `inMorphoPol`, `upperLimitSSC`) and **3 `ResearchGeometry` keywords** (`circumcenterMethod`, `circumcenterTolerance`, `calculateBedLevelOverNonActiveLinks`); the other missing `[sediment]` keywords will be deprecated and are not added (§14.1) | User; agreed with the HYDROLIB-core maintainer | A |
 | D52 | Second acceptance case: the Rijn **plain FM** run `D16000` (§5.5, §13.4a) | User | A |
 | D53 | **Physical constants from the model**: `g` (MDU `Ag`), `ρ` (MDU `Rhomean`) per simulation, `ρ_s` per sediment fraction (`.sed` `RhoSol`); D-Flow FM defaults when absent; values written to the `.dia` (§7.9a) | User | A |
-| D54 | **All quantities of the §7.9a catalogue are in v1**, including the 3D ones (layer mean, chloride mass, residence times, vertical selections), the stream functions and the section quantities (API only until PRF/HIS). Exception: `morphodynamic_celerity`, because ECT is not ported or coupled for now | User | A |
+| D54 | **All quantities of the §7.9a catalogue are in v1**, including the 3D ones (layer mean, chloride mass, residence times, vertical selections), and the stream functions. Exceptions: `morphodynamic_celerity` (ECT is not ported or coupled for now) and the section quantities, which belong to PRF (D55) | User | A |
+| D55 | **Reading along a line (plot type PRF) is a second phase.** v1 reads quantities on the whole grid only (faces, edges internally). The engine already takes a `Sampling` argument (§7.9b) so that line sampling, the section quantities and the PRF analysis can be added later without changing the engine, the store or the analyses of v1 | User | A |
 
 ## 3. Review of the plan (v6)
 
@@ -534,7 +535,7 @@ What it tests: plain FM discovery (DIMR with several components), `StartDateTime
 | Grid object, topology, plotting helpers, rasterising | xugrid `Ugrid2d`, `UgridDataset`, `ugrid.rasterize` | |
 | Regridding between simulations | xugrid regridders (`CentroidLocatorRegridder`, `OverlapRegridder`) | Only when grids differ |
 | Layers, depth average, z-coordinates (3D, v1, D54) | dfm_tools `reconstruct_zw_zcc`, `get_Dataset_atdepths` | Needed by the 3D quantities of §7.9a and the vertical selections |
-| Faces crossed by a section polyline | dfm_tools `polyline_mapslice` | Section quantities (§7.9a) |
+| Faces crossed by a line (PRF, later) | dfm_tools `polyline_mapslice` | `LineSampling` (§7.9b) |
 | D-WAQ substance file (`.sub`) | HYDROLIB-core `SubstanceModel` | Decay rates for residence times (§7.9a) |
 | Coastlines (optional) | dfm_tools `plot_coastlines` | |
 
@@ -899,17 +900,18 @@ Several plotted quantities are not stored in the map file but computed from one 
 | `mean_grain_size_arithmetic` | `dm` (`gdm_read_data_map_mean_grain_size`) | `layer_fraction`, `.sed` diameters | `d_m = Σ_i F_i·D_i` (m) | v1 |
 | `mean_grain_size_geometric` | `dg` (same file) | `layer_fraction`, `.sed` diameters | `d_g = d_0·2^{Σ_i F_i·log2(D_i/d_0)}`, `d_0 = 10⁻³ m` | v1 |
 | `grain_size_percentile` | `d10`, `d50`, `d90` (profile reader `gdm_read_data_map_ls_grainsize`) | `layer_fraction`, `.sed` diameters | percentile of the grain-size distribution (interpolation rule to be taken from Matlab) | v1 |
-| `velocity_parallel`, `velocity_perpendicular` | `vpara`, `vperp` (profile reader) | `velocity_vector`, a section polyline | projection on the section direction / its normal, on the faces crossed by the section (dfm_tools `polyline_mapslice`) | v1 (section quantity) |
-| `discharge` | `Q` (profile reader `gdm_read_data_map_ls_Q`) | `velocity_perpendicular`, `water_depth` along a section polyline | `Σ u_⊥·h·Δs` over the crossed faces (m³/s) | v1 (section quantity) |
+| `velocity_parallel`, `velocity_perpendicular` | `vpara`, `vperp` (profile reader) | `velocity_vector`, a section polyline | projection on the section direction / its normal, on the faces crossed by the section (dfm_tools `polyline_mapslice`) | later (PRF, D55) |
+| `discharge` | `Q` (profile reader `gdm_read_data_map_ls_Q`) | `velocity_perpendicular`, `water_depth` along a section polyline | `Σ u_⊥·h·Δs` over the crossed faces (m³/s) | later (PRF, D55) |
 | `chloride_mass` | `clm2` (`gdm_read_data_map_sal_mass`) | `sal`, `mesh2d_flowelem_zw` | `Σ_k (Cl_k/1000)·Δz_k`, `Cl = sal2cl(sal)` (port of the small Matlab `sal2cl`, formula and reference documented) | v1 (3D) |
 | `residence_time_max` / `_depth_average` / `_surface` | `T_max`, `T_da`, `T_surf` (`gdm_read_data_map_T_max`) | `mesh2d_cTR<i>`, `mesh2d_dTR<i>`, `zw`, decay rate `RcDecTR<i>` from the substance file (`.sub`, read with HYDROLIB-core `hydrolib.core.dflowfm.substance.models.SubstanceModel`; positive in the file, a decay in the formula) | `T = ln(C_d/C_c)/r`, with Matlab's clipping rules; depth average, surface layer, or max over layers. Requires a `.sub` file (V-VAR-002 otherwise) | v1 (3D) |
 | `morphodynamic_celerity` | `*cel_morpho*` (`gdm_read_data_map_cel_morpho`, `call_ECT`) | `velocity_magnitude`, `water_depth`, `chezy`, active layer, fractions, transport parameters | eigenvalues of the morphodynamic system (ECT) | later (D54: ECT, 27 Matlab files, is not ported or coupled for now) |
 
 *Selections that work like derived quantities* (applied by the engine to any 3D input, §7.9): `vertical: {depth_average: {z_range}}` = `Σ v_k Δz_k / Σ Δz_k` with `Δz` from `mesh2d_flowelem_zw`, layers outside `z_range` masked (Matlab `depth_average`, `depth_average_limits`); `vertical: {elevation: z}` = linear interpolation of the profile at elevation `z` using `mesh2d_flowelem_zc` (Matlab `elevation`). v1 (D54); `zw`/`zc` are read when written, otherwise reconstructed with dfm_tools `reconstruct_zw_zcc`.
 
-"v1" quantities are implemented in WP 2.2a (2D) and WP 2.2b (3D and section quantities); `morphodynamic_celerity` is added later through the same registry (D54).
+"v1" quantities are implemented in WP 2.2a (2D) and WP 2.2b (3D); `morphodynamic_celerity` (D54) and the section quantities (D55) are added later through the same registry.
 
-**Section quantities** (`velocity_parallel`, `velocity_perpendicular`, `discharge`) need a section polyline (`.pli`, HYDROLIB-core `PolyFile`) and are evaluated on the faces crossed by it. In v1 they are computed by the engine and available through the Python API (`d3dplot.quantities`, a table per time); figures of them come with the PRF/HIS analyses (§15.7). They are not map quantities: requesting them in `map2d` or `river_km_statistics` is a validation error (V-VAR-006).
+**Section quantities** (`velocity_parallel`, `velocity_perpendicular`, `discharge`) only exist along a line. They are registered with `location: line` and come with PRF (D55, §7.9b). In v1 requesting them is a validation error (V-VAR-006).
+
 **Edge-located inputs** (e.g. `mesh2d_u1`): the merge plan (§7.6) also has an **edge part**. Owned edges per partition are those whose owning face (first of `mesh2d_edge_faces`) is owned by the partition. Their global positions are matched by edge mid-point coordinates against the merged grid (KD-tree, 1 mm, one-to-one, error on ambiguity). Coverage is checked as for faces (V-OUT-020).
 
 **Two levels of "derived"** (not to be confused):
@@ -917,6 +919,19 @@ Several plotted quantities are not stored in the map file but computed from one 
 * **analysis-level** post-processing: computed by an analysis from its own processed results, e.g. SMB `bed_slope_streamwise` from segment means, or values × width (§8.2).
 
 **Sharing between analyses.** The process stage runs **one `ProcessTask` per (simulation × sub-run) for all analyses together** (D27, revised). The planner collects the requests of all analyses for that sub-run, the engine reads each raw input once, and each analysis then reduces the arrays in memory (M2D writes face values, SMB computes segment statistics). The `bed_level` needed by both M2D and SMB is therefore read once.
+
+### 7.9b Sampling: extension point for reading along a line (PRF, D55)
+
+Matlab `D3D_plot` has the plot type **PRF**: quantities read along a line (a `.pli` polyline or a river-km track), plotted against the distance along the line, per time or as a space-time plot, including 3D vertical sections. PRF is **not in v1**, but the v1 architecture is built so that it can be added as an ordinary analysis:
+
+* **Engine requests carry a sampling.** Every request is `(quantity, selection, sampling)` at a (sub-run, time). `Sampling` is a small protocol: `kind`, `fingerprint()`, `prepare(grid, merge_plan) → SamplingPlan` (built once per merge plan in a `GeometryTask` and cached under `cache/geometry/`, like the SMB region membership), and `apply(global_array, plan) → array`. v1 implements only `GridSampling` (all faces; edges for edge-located inputs), the default, so M2D and SMB never mention it.
+* **PRF adds `LineSampling(polyline, spacing_m=None)`**: the faces crossed by the line and the crossing segments with their lengths and directions, from dfm_tools `polyline_mapslice`, read with HYDROLIB-core `PolyFile`. Values are still read through the merge plan for the whole grid and then sampled, so reading stays centralised (§7.9a) and the raw-read-once rule still holds when M2D, SMB and PRF run in the same task.
+* **Registry.** `VariableSpec.location` is `face`, `edge` or `line`. `line` quantities (section quantities of §7.9a) receive the `SamplingPlan` (segment directions, lengths) in their `compute` context. The validator rejects a `line` quantity without a `LineSampling` (V-VAR-006).
+* **Store.** PRF writes its own files per (analysis, simulation, time) with a `distance` coordinate (and `layer`/`z` for vertical sections), next to the M2D and SMB files (§9.5); fingerprints include the sampling fingerprint, so reprocessing and skipping work as in v1.
+* **Plotting.** PRF profiles use `LineView` (x = distance or river km) and `SpaceTimeView`; vertical sections need a new `SectionView` (§7.14b). Measurements along a line reuse the profile measurements of SMB (§7.15). Finalisation and hooks are the common ones (§7.14a).
+* **Configuration.** A future `profile` analysis takes `lines` (paths to `.pli` files or river-km tracks) and the usual options (`variables`, `times`, `comparisons`, `x_limits`, `hooks`, …); no v1 option needs to change.
+
+**v1 test of the extension point** (WP 2.2b): a test registers a dummy sampling (a fixed list of faces) and a dummy `line` quantity, and checks that the engine applies it and that the fingerprint changes with the sampling. This keeps the protocol honest without implementing PRF.
 
 ### 7.10 Cache store and reprocessing
 
@@ -1620,7 +1635,7 @@ Codes are stable, documented, and tested one by one. **E** = error, **W** = warn
 | V-VAR-003 | E | Fraction or layer index out of range |
 | V-VAR-004 | E | Variable has dimensions other than those declared in its `VariableSpec` |
 | V-VAR-005 | E | After selection, a variable keeps more than one extra dimension (SMB allows one `component` dimension) |
-| V-VAR-006 | E | A section quantity (§7.9a) requested in a map or segment analysis |
+| V-VAR-006 | E | A `line` quantity (section quantity, §7.9a) requested without a line sampling; in v1 always an error, because PRF comes later (D55) |
 | V-RKM-001 | E | River-km file unreadable or wrong format |
 | V-RKM-002 | E | Rijntakken tags without a `track`; or several generic branches without `branches` |
 | V-RKM-003 | E | Duplicate km in a branch |
@@ -1945,7 +1960,7 @@ Typed `MorphologyModel` (`.mor`) and `SedimentModel` (`.sed`), if specification 
 | 2.1 | Inspect phase: partition identity, merge plan(s) + `grid.nc`, topology signatures, reference sub-run selection (§7.6, §9.3) | Values equal dfm_tools on the synthetic case; `corrupt_partition` handled; a fixture with changed topology produces two plans. (local) `r209` merge plan built |
 | 2.2 | `MapReader` (faces and edges), quality checks, `times.nc`, `TimeAxis` (merge, duplicates, tz, selection, matching) | Synthetic `time_axis.csv` reproduced; V-OUT-030/031, V-TIME-* tested |
 | 2.2a | **Quantity engine** (§7.9a): raw/derived registry, dependency resolution, read-once memory cache, grid geometry in `grid.nc`, edge merge plan, and all 2D quantities marked "v1" in the catalogue of §7.9a (Froude, specific discharge, energy head, Shields number, velocity direction and vector, water-level rate, vorticity, stream functions, total sediment thickness, morphological volume, sediment transport magnitude (per fraction and summed), bed-load transport magnitude, mean grain sizes, grain-size percentiles); entry point `d3dplot.quantities`. **Generator extension**: the synthetic case gets `mesh2d_ucx`/`ucy` and `mesh2d_u1` (edges) with an analytic vorticity, `mesh2d_czs`, `mesh2d_thlyr`, `mesh2d_sxtot`/`sytot` and `mesh2d_sbcx`/`sbcy` per fraction, and `.sed` diameters and `RhoSol` (one fraction with a different value, to test per-fraction densities); the MDU gets `Ag = 9.813` and `Rhomean = 1000` (as the real runs), plus expected values | Each raw input read once per (sub-run, time) even when requested by several quantities and analyses (counting test); every v1 quantity equals its hand-computed / analytic value (vorticity also across partition boundaries); missing input → V-VAR-002 with the dependency chain; (local) values on `r209` and Rijn `D16000` equal direct NetCDF reads |
-| 2.2b | **3D and section quantities** (§7.9a, D54): layer dimension in `VariableSpec`, `zw`/`zc` (read or dfm_tools `reconstruct_zw_zcc`), vertical selections (`depth_average` with `z_range`, `elevation`), `velocity_magnitude_layer_mean`, `chloride_mass` (`sal2cl`), residence times (`.sub` with HYDROLIB-core `SubstanceModel`), section quantities (`velocity_parallel`/`_perpendicular`, `discharge`, dfm_tools `polyline_mapslice`) in the Python API. **Generator extension**: a 3D variant of the plain FM synthetic case (sigma layers; `mesh2d_ucmag` per layer, `mesh2d_sa1`, `mesh2d_cTR1`/`mesh2d_dTR1`, `mesh2d_flowelem_zw`/`zc`; a `.sub` with `RcDecTR1`) and a section `.pli`, with analytic expected values | Every 3D quantity and vertical selection equals its analytic value; `discharge` through a section equals the imposed discharge of the synthetic case; section quantity in `map2d` → V-VAR-006 |
+| 2.2b | **3D quantities and sampling protocol** (§7.9a, §7.9b, D54, D55): layer dimension in `VariableSpec`, `zw`/`zc` (read or dfm_tools `reconstruct_zw_zcc`), vertical selections (`depth_average` with `z_range`, `elevation`), `velocity_magnitude_layer_mean`, `chloride_mass` (`sal2cl`), residence times (`.sub` with HYDROLIB-core `SubstanceModel`); the `Sampling` protocol with `GridSampling` only (§7.9b, D55). **Generator extension**: a 3D variant of the plain FM synthetic case (sigma layers; `mesh2d_ucmag` per layer, `mesh2d_sa1`, `mesh2d_cTR1`/`mesh2d_dTR1`, `mesh2d_flowelem_zw`/`zc`; a `.sub` with `RcDecTR1`), with analytic expected values | Every 3D quantity and vertical selection equals its analytic value; the dummy-sampling test of §7.9b passes; a section quantity in `map2d` → V-VAR-006 |
 | 2.3 | Execution: tasks, planner (one `ProcessTask` per simulation × sub-run for all analyses, D27), fingerprints and skipping, serial/process executors, worker init, logging queue, run summary, **diagnostic file** (D41), sharding | Parallel-equivalence and resumability tests pass; the `.dia` of a synthetic run lists the selected times, the resolved duplicates and the masked corrupt outputs of `corrupt_partition` |
 
 ### 15.4 Phase 3: `map2d`
@@ -1980,7 +1995,7 @@ Typed `MorphologyModel` (`.mor`) and `SedimentModel` (`.sed`), if specification 
 
 ### 15.7 Later
 
-HIS, PRF, M1D, HFM and GRD analyses (PRF/HIS also plot the section quantities of §7.9a); 3D-specific views (vertical profiles, vertical sections); `morphodynamic_celerity` with a port of ECT (D54); Delft3D4; more figure formats; full SLURM support; MAT v7.3 measurements; model − measurement maps.
+**PRF** (reading along a line, D55: `LineSampling`, section quantities, `profile` analysis, `SectionView`, §7.9b); HIS, M1D, HFM and GRD analyses; 3D-specific views (vertical profiles, vertical sections); `morphodynamic_celerity` with a port of ECT (D54); Delft3D4; more figure formats; full SLURM support; MAT v7.3 measurements; model − measurement maps.
 
 ### 15.8 Working conventions for implementation sessions
 
@@ -2030,7 +2045,8 @@ Resolved with the user (v6.1–v6.3):
 * all Matlab derived quantities catalogued (§7.9a); quantity engine agreed (D50);
 * constants `g`, `ρ` from the MDU and `ρ_s` per fraction from the `.sed` (D53);
 * Rijn case: only check that M2D figures are generated (§13.4a);
-* all quantities in v1 except `morphodynamic_celerity` (D54);
+* all quantities in v1 except `morphodynamic_celerity` (D54) and the section quantities;
+* reading along a line (PRF) is a second phase; the architecture keeps an extension point (D55, §7.9b);
 * the Matlab reference run of the synthetic case is done (the generator needed explicit `statis_plot` and empty `rkm_track`);
 * upstream changes are developed locally; the user is a contributor (D49). A local feature branch is recommended, local `main` is possible (skill `upstream-contribution`);
 * agent guidance files (D48, §13.6).
@@ -2201,6 +2217,7 @@ Principles:
 | v5 | Answers on measurements, `r209` findings, synthetic SMT case specification and generator |
 | v6 | Thorough review against real data (merge plan, tolerant MDU parsing, corrupt partitions, time zones, duplicate morphological times, float64, task granularity, path lengths); `.ldb`-only land boundaries; independent review (14 issues fixed: inspect phase, recursive fingerprints, topology signatures, deterministic sharding and geometry, derived-statistic definitions, verified versions); consolidated, self-contained plan with handover, file formats, validation catalogue and work packages |
 | v6.1 | User answers: last duplicate and masking of corrupt output, both written to a new per-run diagnostic file (`.dia`); `.ldb` read with HYDROLIB-core; contextily cache replaces `earth_tiles`; uv and float64 agreed; HYDROLIB-core keyword contribution analysed (`ResearchFMModel` fails only on 7 keywords) |
+| v6.11 | Reading along a line (PRF) moved to a second phase (D55); section quantities later; `Sampling` extension point (§7.9b) tested in WP 2.2b |
 | v6.10 | All catalogue quantities in v1 except `morphodynamic_celerity` (D54): 3D layers, residence times (`.sub` via HYDROLIB-core), section quantities (API), new WP 2.2b, V-VAR-006; no open questions |
 | v6.9 | Constants from the model (D53): `Ag`, `Rhomean` from the MDU, `RhoSol` per fraction from the `.sed`; Shields per fraction; Rijn case limited to M2D figures; D50 agreed |
 | v6.8 | HYDROLIB-core PR 1 reduced to the agreed 6 `[sediment]` + 3 `ResearchGeometry` keywords (D51); catalogue of all Matlab derived quantities with definitions and phases (§7.9a); Rijn plain FM run as reference and acceptance case 2 (§5.5, §13.4a, D52); DIMR with several components, `StartDateTime`, V-TIME-012 |
