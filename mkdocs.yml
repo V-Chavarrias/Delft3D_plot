@@ -13,6 +13,7 @@ nav:
   - Home: index.md
   - Architecture: architecture.md
   - Configuration: configuration.md
+  - Command line: cli.md
   - Output store: output-store.md
   - Labels: labels.md
   - Variables: variables.md

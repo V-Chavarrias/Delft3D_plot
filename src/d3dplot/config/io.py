@@ -17,15 +17,20 @@ TextWriter: TypeAlias = Callable[[Path, str], None]
 
 def load_config(path: str | Path) -> ProjectConfig:
     """Load and validate a YAML or JSON project configuration."""
+    data = load_config_data(path)
     config_path = Path(path)
-    text = config_path.read_text(encoding="utf-8")
-    if config_path.suffix.lower() == ".json":
-        data = json.loads(text)
-    else:
-        data = yaml.safe_load(text)
     if not isinstance(data, dict):
         raise ValueError(f"configuration root must be a mapping: {config_path}")
     return ProjectConfig.model_validate(data)
+
+
+def load_config_data(path: str | Path) -> object:
+    """Parse YAML or JSON configuration data without validating its schema."""
+    config_path = Path(path)
+    text = config_path.read_text(encoding="utf-8")
+    if config_path.suffix.lower() == ".json":
+        return json.loads(text)
+    return yaml.safe_load(text)
 
 
 def dump_config(config: ProjectConfig) -> str:

@@ -22,6 +22,7 @@ from d3dplot.config import (
     dump_config,
     dump_json_config,
     load_config,
+    load_config_data,
     write_resolved_config,
 )
 from d3dplot.config.selections import TimeRange
@@ -77,6 +78,17 @@ def test_json_round_trip(tmp_path: Path) -> None:
     config_path.write_text(dump_json_config(config), encoding="utf-8")
 
     assert load_config(config_path) == config
+
+
+@pytest.mark.unit
+def test_load_config_data_preserves_non_mapping_root(tmp_path: Path) -> None:
+    config_path = tmp_path / "project.yaml"
+    config_path.write_text("- not-a-mapping\n", encoding="utf-8")
+
+    assert load_config_data(config_path) == ["not-a-mapping"]
+
+    with pytest.raises(ValueError, match="root must be a mapping"):
+        load_config(config_path)
 
 
 @pytest.mark.unit

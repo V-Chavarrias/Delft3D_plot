@@ -22,6 +22,7 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Visualization",
 ]
+
 dependencies = [
     "dfm_tools>=0.47.0",
     "geopandas>=1.1.0",
@@ -41,6 +42,9 @@ dependencies = [
     "xarray>=2024.7.0",
     "xugrid>=0.15.3",
 ]
+
+[project.scripts]
+d3dplot = "d3dplot.cli:main"
 
 [project.optional-dependencies]
 tiles = [

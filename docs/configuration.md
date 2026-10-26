@@ -3,6 +3,8 @@
 Project files are validated with Pydantic v2 models. Unknown keys and invalid
 values are rejected. YAML is loaded with `yaml.safe_load`; JSON files are also
 supported. Dates and ISO-8601 datetimes are accepted as time selections.
+The [command-line interface](./cli.md) provides schema export and validation
+against discovered simulation output.
 
 ## Example
 
