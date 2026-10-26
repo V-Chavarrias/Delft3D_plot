@@ -1,6 +1,6 @@
 # Delft3D_plot (Python): Architecture and Implementation Plan
 
-Status: **v6.3, plan for review.** Only the synthetic test-case generator is implemented ([tools/synthetic_smt](../tools/synthetic_smt/README.md)). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
+Status: **v6.4, plan for review.** Only the synthetic test-case generator is implemented ([tools/synthetic_smt](../tools/synthetic_smt/README.md)). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
 
 Document map:
 * §0 Session handover
@@ -34,7 +34,7 @@ Document map:
 | Item | Location | State |
 |------|----------|-------|
 | Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `main`, conventional commits |
-| Plan (this file) | `docs/architecture.md` | v6.3 |
+| Plan (this file) | `docs/architecture.md` | v6.4 |
 | Licence | `LICENSE` | GPL-3.0 |
 | Synthetic SMT test case generator | `tools/synthetic_smt/` | Implemented and verified (§13.3) |
 | Land-boundary converter (`.mat` cache → `.ldb`) | `tools/mat_to_ldb.py` | Implemented. Used to recreate the Maas land boundary (D45) |
@@ -43,7 +43,8 @@ Document map:
 | HYDROLIB-core modification | plan in §14.1 | **Planned, not started** |
 | Python environment | `.venv/` (uv, Python 3.12) | Git-ignored. dfm_tools and HYDROLIB-core are installed editable from the local checkouts |
 | Package `d3dplot` | — | **Not started** (Phase 1, §15) |
-| Matlab reference results of the synthetic case | `data_local/synthetic_smt_01/simulations/r00*/mat`, `fig` | **Pending**: the user runs `scripts/main_plot_synthetic.m` |
+| Matlab reference results of the synthetic case | `data_local/synthetic_smt_01/simulations/r00*/mat`, `fig` | **Done** (2026-10-26): r001 37 mat + 1071 PNG, r002 37 mat + 858 PNG. Protected: `generate.py --force` refuses to delete them without `--discard-matlab-reference` |
+| Agent guidance for development | `AGENTS.md`, `.github/instructions/plotting.instructions.md`, `.github/skills/{add-analysis-or-option,upstream-contribution}` | Done (§13.6) |
 
 Workspace (`Delft3D_plot.code-workspace`) with sibling checkouts used as reference and dependencies:
 
@@ -104,7 +105,7 @@ APIs the design relies on (check them first when upgrading):
 1. **Review this plan** with the user. Resolve §17 where possible.
 2. **WP 0.1** (§15.1a, §14.1): the HYDROLIB-core MDU keyword contribution. It is a prerequisite of WP 1.5 and can run in parallel with WP 1.1–1.4.
 3. Start **Phase 1** (§15.2): repository skeleton (`pyproject.toml`, `src/d3dplot`, CI, docs), then the work packages in order.
-4. When the user has run the Matlab script on the synthetic case, add the Matlab comparison tests (WP-T3).
+4. The Matlab reference results of the synthetic case exist: add the Matlab comparison tests (WP 5.2) as soon as the cache is produced (from Phase 3).
 
 ---
 
@@ -194,6 +195,8 @@ Status: **A** = agreed with the user; **P** = proposed in this plan and awaiting
 | D45 | The Maas land boundary is recreated from the Matlab cache `j21_ldb.mat` as `.ldb` with `tools/mat_to_ldb.py`, into `data_local/maas/j21_ldb.ldb`. The original polyline names are not in the `.mat`, so blocks are named `L000001…` | User: "recreate it from the mat file"; the source `.ldb` is unknown | A |
 | D46 | **Common figure finalisation** for every figure of every analysis (present and future): one function applies fonts and sizes, legend/labels language, user hooks (Matlab `function_handles`), metadata, saving through the writer registry, and closing (§7.14a) | User; Matlab repeats this per figure function (`apply_adhoc_functions`, `fig_print_close`) | A |
 | D47 | **Reusable plot building blocks**: the map view (grid values, extents incl. windows along a river-km file, river-km labels from a possibly different river-km file, land boundaries, tiles, measurements panel) and the line view (lines or stacked areas) are shared by M2D, the SMB diagnostic maps and future analyses (§7.14b) | User; Matlab reuses `fig_M2D` for SMB in-polygon maps | A |
+| D48 | **Agent guidance**: always-on `AGENTS.md` (principles: plan first, read-only P-drive, reuse HYDROLIB-core/dfm_tools, performance, finalisation, names, time, diagnostics), a plotting file instruction, and two skills (`add-analysis-or-option`, `upstream-contribution`) (§13.6) | User: future agent development must follow the plan | A |
+| D49 | The user is a contributor of HYDROLIB-core and dfm_tools. Upstream changes are made on **local branches** in the checkouts for now; issues/PRs only when the user decides | User | A |
 
 ## 3. Review of the plan (v6)
 
@@ -1629,11 +1632,26 @@ GitHub Actions on push and pull request:
 
 Nightly: benchmarks and slow tests.
 
+### 13.6 Agent guidance for development (D48)
+
+Future development with AI agents must follow this plan. The guidance is split by when it applies:
+
+| File | Kind | Loaded | Content |
+|------|------|--------|---------|
+| `AGENTS.md` (root) | always-on instructions (open standard; read by Copilot, Claude, Codex) | every task | plan first (§0, §2); never write on `p:\`; read-only inputs; reuse HYDROLIB-core/dfm_tools before writing code and fix upstream; performance rules (merge plan, one open per sub-run, draw-once, caching, float32 storage); figure finalisation; option names; time handling; `.dia` messages; build/test commands; commit conventions |
+| `.github/instructions/plotting.instructions.md` | file instruction (`applyTo` plotting and analyses code) | when editing plots | finalisation as the only exit, hooks, shared views, draw-once, option and label rules |
+| `.github/skills/add-analysis-or-option/` | skill (with `references/naming-checklist.md`) | on demand / `/add-analysis-or-option` | steps to port a Matlab tag or add a view, variable or option: reference, reuse search, design in the plan, implementation, tests incl. synthetic case and Matlab comparison, benchmarks |
+| `.github/skills/upstream-contribution/` | skill | on demand | local branch workflow for HYDROLIB-core and dfm_tools (D49), conventions of each repository, verification from d3dplot, recording in §14 |
+
+These are for **developers**. The user-facing skills of §11 (`d3dplot-create-input`, …) are a separate deliverable shipped with the package (WP 5.4).
+
+Maintenance: when a decision in §2 changes a rule, update `AGENTS.md` or the instruction in the same commit.
+
 ---
 
 ## 14. Upstream contributions
 
-Develop each item first behind an adapter in `d3dplot`, with tests. Propose it upstream when stable, then switch to the upstream version and pin the minimum version. Track the status in `docs/upstream.md`. The HYDROLIB-core MDU change is the exception: the tool reads the MDU with HYDROLIB-core directly (D22), so that change comes first (§14.1).
+Upstream changes are made by the user (a contributor of both repositories) on **local branches** in `c:\checkouts\HYDROLIB-core` and `c:\checkouts\dfm_tools` (D49); issues and pull requests follow when the user decides. Workflow: skill `upstream-contribution` (§13.6). Develop each item first behind an adapter in `d3dplot`, with tests. Propose it upstream when stable, then switch to the upstream version and pin the minimum version. Track the status in `docs/upstream.md`. The HYDROLIB-core MDU change is the exception: the tool reads the MDU with HYDROLIB-core directly (D22), so that change comes first (§14.1).
 
 | Repository | Contribution | Why | Priority |
 |------------|--------------|-----|----------|
@@ -1661,7 +1679,7 @@ Develop each item first behind an adapter in `d3dplot`, with tests. Propose it u
 * HYDROLIB-core uses poetry, black, isort, pytest and commitizen (`docs/guides/contributing.md`);
 * contributions go through a fork of `Deltares/HYDROLIB-core` under the user's GitHub account, unless the user has write access.
 
-**Step 1: issue** (on `Deltares/HYDROLIB-core`):
+**Step 1: issue** (on `Deltares/HYDROLIB-core`; deferred while the change stays local, D49):
 * title: *"MDU: add missing [sediment] morphology keywords and accept deprecated [geometry] circumcenter keywords"*;
 * content: the table of §5.4 (keywords, spec type/default/status, link to `mdu.json` at commit `a4d5827`); the error message seen; references #648/#788 (precedents) and #931 (deprecated keywords);
 * scope: PR 1 below. PR 2 (moving three standard keywords out of the research model) is mentioned as a follow-up, because it touches the public API.
@@ -1838,12 +1856,14 @@ Resolved with the user (v6.1–v6.3):
 * distribution on PyPI as `delft3d-plot` (D44);
 * hooks for every figure through a common finalisation (D46); shared map/line building blocks (D47);
 * SMB stacked areas and diagnostic maps are planned (§8.2);
-* D24 and D27–D40 agreed.
+* D24 and D27–D40 agreed;
+* the Matlab reference run of the synthetic case is done (the generator needed explicit `statis_plot` and empty `rkm_track`);
+* upstream changes stay on local branches; the user is a contributor (D49);
+* agent guidance files (D48, §13.6).
 
 Still open:
-1. **Matlab reference run of the synthetic case**: pending. Run `data_local/synthetic_smt_01/scripts/main_plot_synthetic.m` with Matlab `D3D_plot` and report errors, if any.
-2. **Merge plan** (D21): explained in plain words at the start of §7.6. Agreement needed before Phase 2.
-3. **HYDROLIB-core contribution** (§14.1): who opens the issue and PR (the user's account, through a fork)? When should WP 0.1 start?
+1. **Merge plan** (D21): explained in plain words at the start of §7.6. Agreement needed before Phase 2.
+2. **HYDROLIB-core contribution** (§14.1): when should WP 0.1 start (local branch, D49)?
 ## 18. Glossary
 
 | Term | Meaning |
@@ -2004,5 +2024,6 @@ Principles:
 | v5 | Answers on measurements, `r209` findings, synthetic SMT case specification and generator |
 | v6 | Thorough review against real data (merge plan, tolerant MDU parsing, corrupt partitions, time zones, duplicate morphological times, float64, task granularity, path lengths); `.ldb`-only land boundaries; independent review (14 issues fixed: inspect phase, recursive fingerprints, topology signatures, deterministic sharding and geometry, derived-statistic definitions, verified versions); consolidated, self-contained plan with handover, file formats, validation catalogue and work packages |
 | v6.1 | User answers: last duplicate and masking of corrupt output, both written to a new per-run diagnostic file (`.dia`); `.ldb` read with HYDROLIB-core; contextily cache replaces `earth_tiles`; uv and float64 agreed; HYDROLIB-core keyword contribution analysed (`ResearchFMModel` fails only on 7 keywords) |
+| v6.4 | Agent guidance (`AGENTS.md`, plotting instruction, two skills); Matlab reference run of the synthetic case done; local upstream branches (user is contributor) |
 | v6.3 | Common figure finalisation with hooks for all figures (D46); shared plot building blocks for M2D and SMB diagnostic maps, windows along a river-km file separate from the label file (D47); SMB lines vs stacked areas for multi-component variables; SMB diagnostic maps (`segment_map`, `segment_membership`); float32 cache (D26); D24, D27–D40 agreed |
 | v6.2 | MDU read with HYDROLIB-core `ResearchFMModel` after modifying HYDROLIB-core (detailed plan §14.1, cross-checked with the official `mdu.json`); Maas `.ldb` recreated from the `.mat` (`tools/mat_to_ldb.py`); PyPI distribution as `delft3d-plot`; plain-language explanation of the merge plan |
