@@ -1,6 +1,6 @@
 # Delft3D_plot (Python): Architecture and Implementation Plan
 
-Status: **v6.18; plain-FM generator variants are implemented locally, with their discovery acceptance pending WP 1.6 and WP 1.1 remote CI pending. WP 1.3 is complete locally on `feat/config-models`; plugin config integration is deferred to the analysis registry (D59).** The package skeleton, configuration system, synthetic case, and generator are in place; analysis functionality is not yet implemented. See [the synthetic case generator](https://github.com/V-Chavarrias/Delft3D_plot/blob/main/tools/synthetic_smt/README.md). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
+Status: **v6.20; plain-FM generator variants are implemented locally, with their discovery acceptance pending WP 1.6 and WP 1.1 remote CI pending. WP 1.3 is complete on `feat/config-models`; WP 1.4 is complete locally on `feat/validation-framework`. Plugin config integration is deferred to the analysis registry (D59).** The package skeleton, configuration system, validation framework, synthetic case, and generator are in place; analysis functionality is not yet implemented. See [the synthetic case generator](https://github.com/V-Chavarrias/Delft3D_plot/blob/main/tools/synthetic_smt/README.md). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
 
 Document map:
 * §0 Session handover
@@ -33,8 +33,8 @@ Document map:
 
 | Item | Location | State |
 |------|----------|-------|
-| Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `feat/config-models`, local and unpushed |
-| Plan (this file) | `docs/architecture.md` | v6.18 |
+| Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `feat/validation-framework`, local and unpushed |
+| Plan (this file) | `docs/architecture.md` | v6.20 |
 | Licence | `LICENSE` | GPL-3.0 |
 | Synthetic SMT and plain FM test case generator | `tools/synthetic_smt/` | Implemented and verified locally (§13.3) |
 | Land-boundary converter (`.mat` cache → `.ldb`) | `tools/mat_to_ldb.py` | Implemented. Used to recreate the Maas land boundary (D45) |
@@ -44,6 +44,7 @@ Document map:
 | Python environment | `.venv/` (uv, Python 3.12) | Git-ignored. dfm_tools and HYDROLIB-core are installed editable from the local checkouts |
 | Package `d3dplot` | `pyproject.toml`, `src/d3dplot/` | Skeleton (WP 1.1) and built-in configuration system (WP 1.3) implemented; analysis functionality pending |
 | Configuration design | §2 decisions D57–D59 | Nested `times` object and shared `map.render`; WP 1.3 complete locally; plugin config integration deferred to the analysis registry |
+| Validation framework | `src/d3dplot/validate/` | WP 1.4 complete locally: report serialization and static V-CFG-001..004 checks |
 | Synthetic-case pytest fixture | `tests/conftest.py` | Session-scoped fixture generates and verifies in pytest's temporary folder (WP 1.2) |
 | CI and documentation site | `.github/workflows/ci.yml`, `mkdocs.yml` | Configured; local checks pass, remote CI not run |
 | Matlab reference results of the synthetic case | `data_local/synthetic_smt_01/simulations/r00*/mat`, `fig` | **Done** (2026-10-26): r001 37 mat + 1071 PNG, r002 37 mat + 858 PNG. Protected: `generate.py --force` refuses to delete them without `--discard-matlab-reference` |
@@ -112,7 +113,8 @@ APIs the design relies on (check them first when upgrading):
 5. **WP 1.3** is complete locally on `feat/config-models`: Pydantic models for the built-in analyses, safe YAML/JSON IO, `--set` overrides, resolved-config writer, and JSON Schema. Use nested `times: {at, axis, tolerance}` (D57) and the shared `map.render` option (D58). Plugin config discovery and schema support are deferred until the `d3dplot.analyses` registry is implemented (D59). The 12 focused configuration tests, 14-test CI-eligible suite, Ruff, strict mypy, lock check, pre-commit validation, and strict documentation build passed on Windows/Python 3.12.
 6. Set d3dplot's minimum HYDROLIB-core version to the first upstream release containing WP 0.1; do not guess or pin an unreleased version.
 7. The Matlab reference results of the synthetic case exist: add the Matlab comparison tests (WP 5.2) as soon as the cache is produced (from Phase 3).
-8. Next, implement WP 1.4: the validation report, stable validation codes, and static configuration checks.
+8. **WP 1.4** is complete locally on `feat/validation-framework`: structured issues, text/JSON reports, Pydantic error conversion, and static V-CFG-002..004 checks. All 24 CI-eligible tests, Ruff, strict mypy, lock check, pre-commit validation, and strict documentation build passed on Windows/Python 3.12.
+9. Next, implement WP 1.5: typed model-input adapters for MDU, `.mor`, `.sed`, and DIMR.
 
 ---
 
@@ -214,6 +216,7 @@ Status: **A** = agreed with the user; **P** = proposed in this plan and awaiting
 | D57 | Time selection uses one nested `times` object: `at` selects `all`, `last`, explicit times, indices, or a range; `axis` selects hydrodynamic or morphological time; `tolerance` controls matching. Measurement-specific tolerances remain scoped to their measurement settings | User selected the §10.2 nested YAML shape over the separate Appendix A names | A |
 | D58 | The map rendering mode is `map.render` in the shared `MapViewConfig`; `figure` contains global figure styling and output settings | User selected the shared map-settings path over `figure.render` | A |
 | D59 | WP 1.3 validates and exports schemas for the built-in analyses only. Plugin config discovery, validation, and schema integration are delivered with the `d3dplot.analyses` entry-point registry | Keep WP 1.3 bounded and define the plugin config contract alongside the analysis registry | A |
+| D60 | When both are configured as lists, `figure.x_limits` and `figure.y_limits` must have the same number of rows (V-CFG-004) | User selected row-count validation for the two per-figure axis-limit lists | A |
 
 ## 3. Review of the plan (v6)
 
@@ -1509,7 +1512,7 @@ ProjectConfig
 ├─ paths: {mappings: {"p:\\": "/p/"}}
 ├─ execution: {executor: serial|processes|slurm, workers?, shard?, slurm: {…}}
 ├─ labels: {vertical_datum: "+NAP", extra_dictionaries: []}
-├─ figure: {font_size, font_family, size_cm, dpi, formats: [png], hooks_mode: per_image | rebuild}   (defaults for all figures)
+├─ figure: {font_size, font_family, size_cm, dpi, formats: [png], hooks_mode: per_image | rebuild, x_limits, y_limits}   (defaults for all figures)
 ├─ hooks: ["module:function", …]                (applied to every figure; §7.21)
 ├─ reprocess / replot: if_changed | never | always
 ├─ on_corrupt_output: mask | error | skip         (default mask; every masking goes to the diagnostic file)
@@ -1526,6 +1529,7 @@ MapViewConfig (shared by map2d and the SMB diagnostic maps, §7.14b)
 
 * All models use `extra="forbid"`.
 * Defaults live in the models; global options are inherited by analyses unless overridden.
+* When both effective `figure.x_limits` and `figure.y_limits` are lists, their row counts must match (D60).
 * `d3dplot schema > d3dplot.schema.json` exports a JSON schema for editor autocompletion.
 * WP 1.3 currently accepts the two built-in analysis discriminators only. Third-party plugin models will be discovered, validated, and included in the schema when the `d3dplot.analyses` registry is implemented (D59).
 
@@ -1631,7 +1635,7 @@ Codes are stable, documented, and tested one by one. **E** = error, **W** = warn
 | V-CFG-001 | E | Unknown option, wrong type or value (pydantic) |
 | V-CFG-002 | E | `reference_simulation` not found |
 | V-CFG-003 | E | Duplicate simulation labels or output folders |
-| V-CFG-004 | E | Lists of different length where they must match |
+| V-CFG-004 | E | Effective `figure.x_limits` and `figure.y_limits` are both lists but have different row counts (D60) |
 | V-SIM-001 | E | Folder missing, or no model found |
 | V-SIM-002 | E | Several candidate MDUs |
 | V-SIM-010 | E | SMT sub-run numbering has gaps |
@@ -1978,7 +1982,7 @@ Typed `MorphologyModel` (`.mor`) and `SedimentModel` (`.sed`), if specification 
 | 1.2 | Synthetic case as a test fixture | `tests/conftest.py`: session fixture adding `tools/synthetic_smt` to `sys.path` and generating into `tmp_path_factory`; marker `requireslocaldata` | Integration tests can use `synthetic_case` |
 | 1.2a | **Plain FM variants in the generator** (§13.3): `fm_partitioned` (one MDU at the root with `dimr_config.xml`, output in `DFM_OUTPUT_<stem>/`, 3 partitions, ~40 map times so that time blocks are exercised), `fm_single` (non-partitioned, `OutputDir` set explicitly), both without `smt.yml`; expected time axis and SMB statistics | Discovery classifies them as FM with one sub-run; the same tests as for SMT pass on them |
 | 1.3 | Configuration | Built-in `config/*` models (nested `times` and shared `map.render`, D57–D59), YAML IO, `--set` overrides, resolved-config writer, JSON schema; plugin config support deferred to the analysis registry | Round trip YAML ↔ models; unknown keys rejected; schema exported |
-| 1.4 | Validation framework | `validate/report.py`, codes, text/JSON output, static checks V-CFG-* | Each code has a test |
+| 1.4 | Validation framework | `validate/report.py`, `validate/checks/config.py`, V-CFG-001..004, text/JSON output, static configuration checks | Each code has a test; reference selection, duplicate labels/output roots, and effective x/y limit row counts are reported |
 | 1.5 | Model input | `model_input/*` (`MduInfo` on `ResearchFMModel(recurse=False)`; `.mor`, `.sed` with the INI parser; DIMR) | Synthetic MDU/`.mor`/`.sed` parsed; V-MDU-001 lists unknown keywords. (local) real `r209` files parsed with the HYDROLIB-core branch of WP 0.1 |
 | 1.6 | Discovery | `simulation/discover.py`, `subrun.py`, partition file discovery, V-SIM-*, V-OUT-001..003 | All synthetic variants classified correctly |
 | 1.7 | Status | `simulation/status.py` (`.dia` tails), json/csv writers | States of all synthetic variants correct. (local) `r209` finished |
@@ -2261,6 +2265,8 @@ Principles:
 | v6.16 | Added 40-time `fm_partitioned` and `fm_single` plain-FM cases, expected time axis/SMB statistics and generator checks; discovery acceptance remains for WP 1.6; next handover is WP 1.3 |
 | v6.17 | Resolved configuration-path conflicts with user decisions D57–D58: nested `times: {at, axis, tolerance}` and shared `map.render`; WP 1.3 started on `feat/config-models` |
 | v6.18 | Completed WP 1.3 locally: built-in configuration models and IO, documented model defaults and actual package layout, deferred plugin config integration to the analysis registry (D59), and added the configuration page to MkDocs navigation; next handover is WP 1.4 |
+| v6.19 | Started WP 1.4 on `feat/validation-framework`; specified V-CFG-004 as matching list row counts for x/y figure limits (D60) |
+| v6.20 | Completed WP 1.4 locally: structured validation issues and text/JSON reports, V-CFG-001..004 with static reference, duplicate-root/label, and effective x/y limit checks; 24 CI-eligible tests and all configured checks pass; next handover is WP 1.5 |
 | v6.10 | All catalogue quantities in v1 except `morphodynamic_celerity` (D54): 3D layers, residence times (`.sub` via HYDROLIB-core), section quantities (API), new WP 2.2b, V-VAR-006; no open questions |
 | v6.9 | Constants from the model (D53): `Ag`, `Rhomean` from the MDU, `RhoSol` per fraction from the `.sed`; Shields per fraction; Rijn case limited to M2D figures; D50 agreed |
 | v6.8 | HYDROLIB-core PR 1 reduced to the agreed 6 `[sediment]` + 3 `ResearchGeometry` keywords (D51); catalogue of all Matlab derived quantities with definitions and phases (§7.9a); Rijn plain FM run as reference and acceptance case 2 (§5.5, §13.4a, D52); DIMR with several components, `StartDateTime`, V-TIME-012 |

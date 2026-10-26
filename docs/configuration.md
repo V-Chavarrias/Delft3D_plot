@@ -57,15 +57,32 @@ analyses. Plugin configuration models will be discovered and included in
 validation and JSON Schema when the planned `d3dplot.analyses` registry is
 implemented.
 
+## Static validation
+
+`d3dplot.validate.validate_config(data)` accepts parsed configuration data and
+returns `(project_config, report)`. Pydantic errors become `V-CFG-001` issues
+and return `None` for the project; otherwise, the validated project is returned
+along with static checks for the reference simulation, duplicate simulation
+labels or output roots, and matching row counts when both `figure.x_limits` and
+`figure.y_limits` are configured as lists. Use `report.is_valid`,
+`report.to_text()`, or `report.to_json()` to inspect the result.
+`validate_project_config(config)` runs the static checks on an already
+validated `ProjectConfig`.
+
 ## Python API
 
 ```python
 from d3dplot import load_config
 from d3dplot.config import apply_overrides, dump_config
+from d3dplot.validate import validate_config
 
 config = load_config("project.yaml")
 config = apply_overrides(config, ["analyses[0].figure.dpi=300"])
 yaml_text = dump_config(config)
+
+validated_config, report = validate_config(config.model_dump(mode="python"))
+if not report.is_valid:
+    print(report.to_text())
 ```
 
 Override values are parsed as YAML, so booleans, numbers, lists, dates, and
