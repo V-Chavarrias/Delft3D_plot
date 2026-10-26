@@ -1,6 +1,6 @@
 # Delft3D_plot (Python): Architecture and Implementation Plan
 
-Status: **v6.11, ready for execution.** Only the synthetic test-case generator is implemented ([tools/synthetic_smt](../tools/synthetic_smt/README.md)). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
+Status: **v6.13, WP 0.1 complete locally; upstream release pending.** Only the synthetic test-case generator is implemented ([tools/synthetic_smt](../tools/synthetic_smt/README.md)). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
 
 Document map:
 * §0 Session handover
@@ -34,13 +34,13 @@ Document map:
 | Item | Location | State |
 |------|----------|-------|
 | Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `main`, conventional commits |
-| Plan (this file) | `docs/architecture.md` | v6.11 |
+| Plan (this file) | `docs/architecture.md` | v6.13 |
 | Licence | `LICENSE` | GPL-3.0 |
 | Synthetic SMT test case generator | `tools/synthetic_smt/` | Implemented and verified (§13.3) |
 | Land-boundary converter (`.mat` cache → `.ldb`) | `tools/mat_to_ldb.py` | Implemented. Used to recreate the Maas land boundary (D45) |
 | Generated synthetic case | `data_local/synthetic_smt_01/` | Git-ignored; regenerate with the generator |
 | Recreated Maas land boundary | `data_local/maas/j21_ldb.ldb` (55.7 MB) | Git-ignored. 174 220 polylines, 2 343 057 points; read by HYDROLIB-core in 22 s, identical to the `.mat` |
-| HYDROLIB-core modification | plan in §14.1 | **Planned, not started** |
+| HYDROLIB-core modification | §14.1 | Local commit `54011e0d` on `feat/mdu_morphology_keywords`; implementation and verification complete, not pushed or proposed upstream |
 | Python environment | `.venv/` (uv, Python 3.12) | Git-ignored. dfm_tools and HYDROLIB-core are installed editable from the local checkouts |
 | Package `d3dplot` | — | **Not started** (Phase 1, §15) |
 | Matlab reference results of the synthetic case | `data_local/synthetic_smt_01/simulations/r00*/mat`, `fig` | **Done** (2026-10-26): r001 37 mat + 1071 PNG, r002 37 mat + 858 PNG. Protected: `generate.py --force` refuses to delete them without `--discard-matlab-reference` |
@@ -102,9 +102,9 @@ APIs the design relies on (check them first when upgrading):
 
 ### 0.4 Where to continue
 
-1. The plan has been reviewed with the user (v6.11); §17 has no open questions. New questions go to §17.
-2. **WP 0.1** (§15.1a, §14.1): the HYDROLIB-core MDU keyword change, on a local branch. It is the first task of Phase 1, because reading the MDU (WP 1.5) depends on it.
-3. Start **Phase 1** (§15.2): repository skeleton (`pyproject.toml`, `src/d3dplot`, CI, docs), then the work packages in order.
+1. **WP 0.1** (§15.1a, §14.1) is complete locally on HYDROLIB-core branch `feat/mdu_morphology_keywords`, commit `54011e0d`. The full test suite and read-only MDU checks pass; no upstream PR or release exists yet. See [upstream.md](./upstream.md).
+2. Next, start **Phase 1** (§15.2): repository skeleton (`pyproject.toml`, `src/d3dplot`, CI, docs), then the work packages in order.
+3. Set d3dplot's minimum HYDROLIB-core version to the first upstream release containing this commit; do not guess or pin an unreleased version.
 4. The Matlab reference results of the synthetic case exist: add the Matlab comparison tests (WP 5.2) as soon as the cache is produced (from Phase 3).
 
 ---
@@ -203,6 +203,7 @@ Status: **A** = agreed with the user; **P** = proposed in this plan and awaiting
 | D53 | **Physical constants from the model**: `g` (MDU `Ag`), `ρ` (MDU `Rhomean`) per simulation, `ρ_s` per sediment fraction (`.sed` `RhoSol`); D-Flow FM defaults when absent; values written to the `.dia` (§7.9a) | User | A |
 | D54 | **All quantities of the §7.9a catalogue are in v1**, including the 3D ones (layer mean, chloride mass, residence times, vertical selections), and the stream functions. Exceptions: `morphodynamic_celerity` (ECT is not ported or coupled for now) and the section quantities, which belong to PRF (D55) | User | A |
 | D55 | **Reading along a line (plot type PRF) is a second phase.** v1 reads quantities on the whole grid only (faces, edges internally). The engine already takes a `Sampling` argument (§7.9b) so that line sampling, the section quantities and the PRF analysis can be added later without changing the engine, the store or the analyses of v1 | User | A |
+| D56 | `Geometry.inifieldfile` accepts a `DiskOnlyFileModel` as well as `IniFieldModel` when `recurse=False`, preserving path-only loading and allowing `ResearchFMModel(path, recurse=False)` to load MDUs that reference an initial-fields file | Reproduced on the synthetic MDU and real `r209` before the new keywords are reached; user approved this WP 0.1 scope expansion on 2026-10-26 | A |
 
 ## 3. Review of the plan (v6)
 
@@ -1799,6 +1800,7 @@ Upstream changes are made by the user (a contributor of both repositories) local
 | Repository | Contribution | Why | Priority |
 |------------|--------------|-----|----------|
 | HYDROLIB-core | **MDU keywords**: add 6 morphology keywords to `[sediment]` and 3 deprecated/research keywords to `ResearchGeometry` (detailed plan §14.1; scope agreed with the maintainer, D51) | `ResearchFMModel` must read real morphological MDUs (D22) | **High, first** (prerequisite of WP 1.5) |
+| HYDROLIB-core | Support non-recursive `[geometry]` `iniFieldFile` loading by accepting `DiskOnlyFileModel` alongside `IniFieldModel` (§14.1, D56) | `ResearchFMModel(path, recurse=False)` previously failed on synthetic and `r209` MDUs before keyword validation | Completed locally; upstream release still required |
 | HYDROLIB-core | Move the standard keywords `ncCompression`, `wriMap_trachytopes`, `tStartTlfsmo` from the research model to the standard model (§14.1, PR 2) | Spec conformity | Medium |
 | HYDROLIB-core | Opt-in lenient loading (unknown keywords → warnings), contributing to #931 | Future kernel keywords | Low (discuss with maintainers) |
 | HYDROLIB-core | `MorphologyModel` (`.mor`) and `SedimentModel` (`.sed`) | Typed access to MorFac, MorStt, fractions | High |
@@ -1813,11 +1815,15 @@ Upstream changes are made by the user (a contributor of both repositories) local
 | D-Flow FM (report) | Corrupt `time`/values in partition 0021 of `r209` sub-run 0 | Data quality | To decide with the user (§17) |
 
 
-### 14.1 Plan: HYDROLIB-core MDU keywords (detailed; not started)
+### 14.1 Plan: HYDROLIB-core MDU keywords (detailed; WP 0.1 complete locally)
 
 #### Goal and scope
 
 **Goal**: `ResearchFMModel(path, recurse=False)` loads the real `r209` MDU, and every MDU using standard morphology keywords, without errors. Every keyword keeps the official name, type, default and description of the MDU specification.
+
+WP 0.1 fixes non-recursive loading of `[geometry]` `iniFieldFile`: when `recurse=False`, the existing path converter returns `DiskOnlyFileModel`, which `Geometry.inifieldfile` now accepts alongside `IniFieldModel`. Recursive loading remains unchanged.
+
+**Local status (2026-10-26)**: implemented and committed in HYDROLIB-core as `54011e0d` on `feat/mdu_morphology_keywords`. The full non-local test suite passes (3,343 passed, 10 skipped, 2 xfailed); Black and isort checks pass. Read-only loading succeeds for r209 sub-runs 0, 1, and 194 and Rijn D16000 with `recurse=False`, preserving each `iniFieldFile` as a relative `DiskOnlyFileModel` path. The synthetic generator's self-check passes, and focused regressions cover `FMModel` and `ResearchFMModel` with `iniFieldFile`. No push or PR has been made; the first published HYDROLIB-core version containing this change is not yet known. See [upstream.md](./upstream.md).
 
 **Reference**: `Deltares/Delft3DFM.File.Specifications`, `specifications/dflowfm/mdu.json` at commit `a4d5827` (2026-10-26). The repository needs a GitHub login; it was read through the GitHub API.
 
@@ -1825,13 +1831,15 @@ Upstream changes are made by the user (a contributor of both repositories) local
 * `[sediment]`: the spec has 31 keywords; HYDROLIB-core `Sediment` has 3 (`Sedimentmodelnr`, `MorFile`, `SedFile`), `ResearchSediment` 4 research keywords. 22 standard keywords are missing in HYDROLIB-core. **Most of them will be deprecated in D-Flow FM soon** (user, 2026-10-26), so only the morphology keywords below are added.
 * `[geometry]`: the deprecated `circumcenterMethod`/`circumcenterTolerance` (in both real MDUs) and the research keyword `calculateBedLevelOverNonActiveLinks` (in the Rijn MDU, §5.5) are missing.
 * Real MDUs: `ResearchFMModel` fails on `r209` (7 keywords) and on the Rijn `RIJN.mdu` (3 keywords, all in `[geometry]`).
+* Non-recursive loading (fixed in WP 0.1): before the fix, `ResearchFMModel(..., recurse=False)` failed when `Geometry.inifieldfile` received a `DiskOnlyFileModel` that its annotation rejected. This blocked D22 and real-MDU verification. The related open issue [Deltares/HYDROLIB-core#1188](https://github.com/Deltares/HYDROLIB-core/issues/1188) concerns migrating the deprecated keyword to `extForceFileNew`, not this path-only type mismatch; no matching PR was found.
 
-**Scope of PR 1** (agreed with the HYDROLIB-core maintainer, D51):
+**Scope of PR 1** (keyword set agreed with the HYDROLIB-core maintainer, D51; `iniFieldFile` loading fix added by D56):
 
 | Part | Class | Keywords | Why |
 |------|-------|----------|-----|
 | A | `Sediment` (standard) | `dredgeFile`, `morCFL`, `DzbDtMax`, `morphoPol`, `inMorphoPol`, `upperLimitSSC` | Standard keywords used by morphological models; the other 16 missing `[sediment]` keywords will be deprecated and are **not** added |
 | B | `ResearchGeometry` | `circumcenterMethod`, `circumcenterTolerance` (deprecated), `calculateBedLevelOverNonActiveLinks` (research) | Existing convention: deprecated and research keywords live in the research classes (`research/models.py`, comment `DEPRECATED_KEYWORD` for the deprecated ones, default `None`, as `s1incinterval`) |
+| C | `Geometry` | `[geometry]` `iniFieldFile` accepts `DiskOnlyFileModel` when `recurse=False` | Required for path-only MDU loading; recursive parsing as `IniFieldModel` is unchanged (D56) |
 | — | not in PR 1 | `[geometry]` `zLayerGrowthFactor`, `bedLevMode`; moving `stretchCoef`, `ncCompression`, `wriMap_trachytopes`, `tStartTlfsmo` from research to standard | PR 2: different sections; moving keywords changes the public API |
 
 **Part A: fields added to `Sediment`** (`hydrolib/core/dflowfm/mdu/models.py`). Attribute = lower-case key; alias = spec spelling; types follow existing HYDROLIB-core patterns (`intbool` → `bool`, `path` → file model, `intenum` → `int` validated against the spec values):
@@ -1877,29 +1885,32 @@ Each field gets a `Comments` entry. Types, defaults and descriptions are re-read
   1. `ResearchFMModel` loads the 3 part-B keywords with the right values; `FMModel` still rejects them;
   2. a new `ResearchFMModel()` saved to file does not contain them;
   3. MDU test files containing exactly the keyword sets that failed in `r209` and in `RIJN.mdu` (synthetic values, §5.4, §5.5) load with `ResearchFMModel`.
+* `tests/dflowfm/test_mdu.py` and `test_research.py`: `iniFieldFile` loads as a `DiskOnlyFileModel` with `recurse=False` in both `FMModel` and `ResearchFMModel`; the existing recursive `IniFieldModel` behavior remains covered.
 
 **Step 2: implementation**:
 * `Sediment`: part-A fields and their `Comments`; an `inMorphoPol` validator (or `Literal[0, 1]`, whichever matches neighbouring code); `parse_file_model_paths`-style validator if the class needs it for `morphoPol` (check how `Geometry` does it).
 * `ResearchGeometry`: part-B fields and `Comments`.
+* `Geometry.inifieldfile`: accept `DiskOnlyFileModel` alongside `IniFieldModel` so `recurse=False` can preserve the path without parsing the `.ini`; keep recursive parsing unchanged.
 * Nothing changes in `ResearchSediment`/`ResearchFMModel` (they inherit).
 
-**Step 3: documentation**: `docs/reference/dflowfm/mdu/fm-model-attributes-detailed.md` (new `Sediment` attributes) and `docs/reference/dflowfm/mdu/research.md` if it lists `ResearchGeometry` attributes. Changelog via commitizen.
+**Step 3: documentation**: `docs/reference/dflowfm/mdu/fm-model-attributes-detailed.md` (new `Sediment` attributes and the `Geometry.inifieldfile` union type) and `docs/reference/dflowfm/mdu/research.md` if it lists `ResearchGeometry` attributes. Changelog via commitizen.
 
 **Step 4: checks**: `black .`, `isort .`, full `pytest`, locally with Python 3.12; CI later runs 3.10–3.14 on Windows/Ubuntu/macOS and SonarCloud.
 
 **Step 5: verification from d3dplot** (the editable install follows the checked-out branch), read-only on the P-drive:
 * `ResearchFMModel(<r209>\output\{0,1,194}\dflowfm.mdu, recurse=False)` loads; `sediment.morphopol` points to the `.pol`; `sediment.morcfl`, `sediment.dzbdtmax`, `geometry.research_circumcentermethod` have the file's values;
 * `ResearchFMModel(<Rijn D16000>\RIJN.mdu, recurse=False)` loads (§5.5);
-* the synthetic case MDUs still load.
+* the synthetic case MDUs load with `recurse=False`.
 
 **Step 6: commits** (local), conventional, with the Copilot trailer:
-1. `test(mdu): add tests for morphology keywords in [sediment] and research keywords in [geometry]`
+1. `test(mdu): cover morphology keywords, research geometry, and non-recursive iniFieldFile`
 2. `feat(mdu): add dredgeFile, morCFL, DzbDtMax, morphoPol, inMorphoPol and upperLimitSSC to [sediment]`
 3. `feat(research): accept circumcenterMethod, circumcenterTolerance and calculateBedLevelOverNonActiveLinks in [geometry]`
-4. `docs(mdu): list the new [sediment] attributes`
+4. `fix(mdu): support non-recursive iniFieldFile loading`
+5. `docs(mdu): document morphology keywords and non-recursive iniFieldFile`
 
 **Step 7: when the user has push access** (D49): push the branch, open an issue (title: "MDU: morphology keywords missing in [sediment]; circumcenter and calculateBedLevelOverNonActiveLinks rejected in [geometry]"; body: the tables above, the error messages, links to #648, #788, #931), open a draft PR with `Closes #<issue>`; maintainers squash-merge with `Refs: #<issue>`.
-**Done when**: all new and existing HYDROLIB-core tests pass locally; step 5 passes; plan §0.1 and §14 updated (branch name, status "local").
+**Done when**: all new and existing HYDROLIB-core tests pass locally; step 5 passes, including `recurse=False` on synthetic, `r209`, and Rijn MDUs; plan §0.1 and §14 updated (branch name, status "local").
 
 **Effort estimate**: about half a day.
 
@@ -2218,6 +2229,8 @@ Principles:
 | v6 | Thorough review against real data (merge plan, tolerant MDU parsing, corrupt partitions, time zones, duplicate morphological times, float64, task granularity, path lengths); `.ldb`-only land boundaries; independent review (14 issues fixed: inspect phase, recursive fingerprints, topology signatures, deterministic sharding and geometry, derived-statistic definitions, verified versions); consolidated, self-contained plan with handover, file formats, validation catalogue and work packages |
 | v6.1 | User answers: last duplicate and masking of corrupt output, both written to a new per-run diagnostic file (`.dia`); `.ldb` read with HYDROLIB-core; contextily cache replaces `earth_tiles`; uv and float64 agreed; HYDROLIB-core keyword contribution analysed (`ResearchFMModel` fails only on 7 keywords) |
 | v6.11 | Reading along a line (PRF) moved to a second phase (D55); section quantities later; `Sampling` extension point (§7.9b) tested in WP 2.2b |
+| v6.12 | Added D56 and the non-recursive `iniFieldFile` type fix to WP 0.1 after reproducing a `DiskOnlyFileModel`/`IniFieldModel` mismatch on synthetic and real MDUs; user approved the scope extension |
+| v6.13 | WP 0.1 complete locally in HYDROLIB-core commit `54011e0d`; recorded upstream status and the pending minimum release; next handover is Phase 1 |
 | v6.10 | All catalogue quantities in v1 except `morphodynamic_celerity` (D54): 3D layers, residence times (`.sub` via HYDROLIB-core), section quantities (API), new WP 2.2b, V-VAR-006; no open questions |
 | v6.9 | Constants from the model (D53): `Ag`, `Rhomean` from the MDU, `RhoSol` per fraction from the `.sed`; Shields per fraction; Rijn case limited to M2D figures; D50 agreed |
 | v6.8 | HYDROLIB-core PR 1 reduced to the agreed 6 `[sediment]` + 3 `ResearchGeometry` keywords (D51); catalogue of all Matlab derived quantities with definitions and phases (§7.9a); Rijn plain FM run as reference and acceptance case 2 (§5.5, §13.4a, D52); DIMR with several components, `StartDateTime`, V-TIME-012 |
