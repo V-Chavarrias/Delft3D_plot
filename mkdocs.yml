@@ -1,0 +1,30 @@
+site_name: Delft3D_plot
+site_description: Postprocess and plot D-Flow FM and SMT simulation results.
+repo_url: https://github.com/V-Chavarrias/Delft3D_plot
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - search.highlight
+    - search.suggest
+
+nav:
+  - Home: index.md
+  - Architecture: architecture.md
+  - Upstream contributions: upstream.md
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths:
+            - src
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - pymdownx.details
+  - pymdownx.superfences

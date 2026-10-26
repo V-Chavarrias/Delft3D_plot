@@ -1,0 +1,110 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "delft3d-plot"
+version = "0.1.0"
+description = "Postprocess and plot D-Flow FM and SMT simulation results."
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+keywords = ["Delft3D", "D-Flow FM", "SMT", "post-processing", "plotting"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Visualization",
+]
+dependencies = [
+    "dfm_tools>=0.47.0",
+    "geopandas>=1.1.0",
+    "hydrolib-core>=1.5.0",
+    "matplotlib>=3.10.7",
+    "netCDF4>=1.7.5",
+    "numpy>=2.0",
+    "pandas>=2.2.2",
+    "pydantic>=2.5,<3",
+    "pyogrio>=0.12.0",
+    "PyYAML>=6.0.2,<7",
+    "rasterio>=1.4",
+    "rich>=13",
+    "scipy>=1.13.0",
+    "shapely>=2.1.1",
+    "typer>=0.12",
+    "xarray>=2024.7.0",
+    "xugrid>=0.15.3",
+]
+
+[project.optional-dependencies]
+tiles = [
+    "contextily>=1.7.1",
+    "rioxarray>=0.15",
+]
+movies = [
+    "imageio>=2.37",
+    "imageio-ffmpeg>=0.6",
+]
+dev = [
+    "commitizen>=4,<5",
+    "hypothesis>=6",
+    "mypy>=1.13,<2",
+    "pre-commit>=4,<5",
+    "pytest>=9,<10",
+    "pytest-benchmark>=5,<6",
+    "pytest-cov>=7,<8",
+    "pytest-mpl>=0.17,<1",
+    "pytest-xdist>=3,<4",
+    "ruff>=0.11,<1",
+]
+docs = [
+    "mkdocs-material>=9.5,<10",
+    "mkdocstrings[python]>=0.28,<1",
+]
+
+[project.urls]
+Documentation = "https://v-chavarrias.github.io/Delft3D_plot/"
+Repository = "https://github.com/V-Chavarrias/Delft3D_plot"
+Issues = "https://github.com/V-Chavarrias/Delft3D_plot/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/d3dplot"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["B", "E", "F", "I", "UP"]
+
+[tool.mypy]
+python_version = "3.11"
+mypy_path = "src"
+files = ["src/d3dplot"]
+strict = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-config", "--strict-markers"]
+markers = [
+    "requireslocaldata: tests that require project data available only on the developer's machine",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["d3dplot"]
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+version = "0.1.0"
+tag_format = "v$version"
+version_files = ["pyproject.toml:project.version"]
+changelog_file = "CHANGELOG.md"
+update_changelog_on_bump = true

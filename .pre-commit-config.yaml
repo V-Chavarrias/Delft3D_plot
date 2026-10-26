@@ -1,0 +1,39 @@
+default_install_hook_types: [pre-commit, commit-msg]
+fail_fast: true
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-toml
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: uv run --no-sync ruff check
+        language: system
+        types: [python]
+        files: ^(src|tests)/
+      - id: ruff-format
+        name: ruff format
+        entry: uv run --no-sync ruff format
+        language: system
+        types: [python]
+        files: ^(src|tests)/
+      - id: mypy
+        name: mypy
+        entry: uv run --no-sync mypy src/d3dplot
+        language: system
+        pass_filenames: false
+        always_run: true
+
+  - repo: https://github.com/commitizen-tools/commitizen
+    rev: v4.7.1
+    hooks:
+      - id: commitizen
+        stages: [commit-msg]
