@@ -1,6 +1,6 @@
 # Delft3D_plot (Python): Architecture and Implementation Plan
 
-Status: **v6.2, plan for review.** Only the synthetic test-case generator is implemented ([tools/synthetic_smt](../tools/synthetic_smt/README.md)). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
+Status: **v6.3, plan for review.** Only the synthetic test-case generator is implemented ([tools/synthetic_smt](../tools/synthetic_smt/README.md)). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
 
 Document map:
 * §0 Session handover
@@ -34,7 +34,7 @@ Document map:
 | Item | Location | State |
 |------|----------|-------|
 | Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `main`, conventional commits |
-| Plan (this file) | `docs/architecture.md` | v6 |
+| Plan (this file) | `docs/architecture.md` | v6.3 |
 | Licence | `LICENSE` | GPL-3.0 |
 | Synthetic SMT test case generator | `tools/synthetic_smt/` | Implemented and verified (§13.3) |
 | Land-boundary converter (`.mat` cache → `.ldb`) | `tools/mat_to_ldb.py` | Implemented. Used to recreate the Maas land boundary (D45) |
@@ -170,28 +170,30 @@ Status: **A** = agreed with the user; **P** = proposed in this plan and awaiting
 | D21 | **Model output is read through a per-simulation merge plan**. dfm_tools/xugrid build the merged grid once (§7.6) | Measured: 75 s vs 1 s per `r209` sub-run (§5.3) | P |
 | D22 | **The MDU is read with HYDROLIB-core `ResearchFMModel(path, recurse=False)`**, after HYDROLIB-core is modified to accept the missing keywords (§14.1). `.mor`/`.sed` are read with HYDROLIB-core's INI parser until HYDROLIB-core has typed models for them | User: "read the mdu with the right file in hydrolibcore and modify the file to accept morphopol and the other flags"; reuse (R3) | A (v6.2; replaces "tolerant parser") |
 | D23 | **Corrupt or inconsistent partitions are detected**. `time`/`morft` come from the partition majority. Affected faces are **masked** (NaN) and every masking is written to the diagnostic file (D41) | `r209` sub-run 0, partition 0021 is corrupt (§5.2); user | A |
-| D24 | Times are stored internally as time-zone-aware UTC and shown in the model time zone. Cache file names use the hydrodynamic time | xarray drops the offset; morphological time is not unique (§7.8) | P |
+| D24 | Times are stored internally as time-zone-aware UTC and shown in the model time zone. Cache file names use the hydrodynamic time | xarray drops the offset; morphological time is not unique (§7.8); user: time zones must be handled | A |
 | D25 | When several outputs share a morphological time, select the **last** one, and write the choice to the diagnostic file (D41) | Morphological time repeats during spin-up (§7.8); user | A |
-| D26 | Cache values in **float64** by default (float32 optional) | Exact comparison with Matlab and analytic results; size is small | A |
-| D27 | Process tasks per (simulation × sub-run), each writing one file per time step | Amortises opening a sub-run (§7.13) | P |
+| D26 | Cache values in **float32** by default (`output.dtype: float64` optional). Computations (selections, SMB statistics, differences) are done in float64 in memory; only the stored values are float32 | User: faster reading and writing, enough for visualisation. float32 has ~7 significant digits: 1 mm on a bed level of 1 000 m | A (v6.3; replaces float64) |
+| D27 | Process tasks per (simulation × sub-run), each writing one file per time step | Amortises opening a sub-run (§7.13) | A |
 | D28 | Environment and packaging with **uv** + `pyproject.toml` (hatchling) | Already used, fast, pip-compatible; GDAL via rasterio wheels | A |
-| D29 | Draw-once plotting with matplotlib `PolyCollection` directly; xugrid only for grid objects and rasterising | Speed (§7.14) | P |
-| D30 | Windows path length: keep paths short and warn above 240 characters | P-drive paths are long; Windows MAX_PATH is 260 | P |
-| D31 | No dask in the processing path. Parallelism only at task level, with single-threaded libraries in workers | Avoids nested parallelism and memory blow-ups | P |
-| D32 | Configuration: pydantic v2 models; YAML read with `yaml.safe_load`; CLI with typer | Typed, schema export | P |
+| D29 | Draw-once plotting with matplotlib `PolyCollection` directly; xugrid only for grid objects and rasterising | Speed (§7.14) | A |
+| D30 | Windows path length: keep paths short and warn above 240 characters | P-drive paths are long; Windows MAX_PATH is 260 | A |
+| D31 | No dask in the processing path. Parallelism only at task level, with single-threaded libraries in workers | Avoids nested parallelism and memory blow-ups | A |
+| D32 | Configuration: pydantic v2 models; YAML read with `yaml.safe_load`; CLI with typer | Typed, schema export | A |
 | D33 | The CRS comes from the configuration when map files have EPSG 0 | `r209` has EPSG 0 | A (v5) |
-| D34 | Validation includes a read-only **inspect** phase that builds the metadata cache. No value processing before a clean report; runtime-only checks are listed explicitly (§7.4) | "Validate first" needs metadata (independent review) | P |
-| D35 | **Recursive fingerprints** over all result-affecting inputs and upstream artefacts; content hashes for small inputs, stat-based identity for model output (§7.10) | Stale-cache safety (independent review) | P |
-| D36 | Merge plans are validated (partition identity, `globalnr`) and reused only for sub-runs with equal **topology signatures** (§7.6) | Safety for SMT (independent review) | P |
-| D37 | Deterministic sharding with a blake2b digest of canonical task keys | Python `hash()` is randomised | P |
-| D38 | Fixed UTC offsets only (no named time zones with DST); CF numeric UTC on disk | D-Flow FM uses offsets | P |
-| D39 | SMB geometry: boundaries inclusive for regions, shared cut lines to the lower segment; invalid or overlapping segments are errors unless overridden | Determinism (independent review) | P |
-| D40 | Every output path contains its subject (simulation, simulation_vs_reference, or all_simulations) | No two tasks write the same file | P |
+| D34 | Validation includes a read-only **inspect** phase that builds the metadata cache. No value processing before a clean report; runtime-only checks are listed explicitly (§7.4) | "Validate first" needs metadata (independent review) | A |
+| D35 | **Recursive fingerprints** over all result-affecting inputs and upstream artefacts; content hashes for small inputs, stat-based identity for model output (§7.10) | Stale-cache safety (independent review) | A |
+| D36 | Merge plans are validated (partition identity, `globalnr`) and reused only for sub-runs with equal **topology signatures** (§7.6) | Safety for SMT (independent review) | A |
+| D37 | Deterministic sharding with a blake2b digest of canonical task keys | Python `hash()` is randomised | A |
+| D38 | Fixed UTC offsets only (no named time zones with DST); CF numeric UTC on disk | D-Flow FM uses offsets | A |
+| D39 | SMB geometry: boundaries inclusive for regions, shared cut lines to the lower segment; invalid or overlapping segments are errors unless overridden | Determinism (independent review) | A |
+| D40 | Every output path contains its subject (simulation, simulation_vs_reference, or all_simulations) | No two tasks write the same file | A |
 | D41 | **Every run writes a diagnostic file** `logs/d3dplot_<timestamp>.dia` recording what was done: inputs, choices (selected times, duplicates resolved), masked corrupt outputs, reused/rebuilt cache, files written, warnings, errors (§7.19) | User: "make sure a dia file is created with what is being done" | A |
 | D42 | **Background tiles with contextily** (as recommended by dfm_tools, which deprecated its own `plot_background`) and contextily's persistent on-disk cache (`tiles_cache_dir`). This replaces Matlab's `earth_tiles` cache (`plotMapTiles`) | User; dfm_tools | A |
 | D43 | Land boundaries `.ldb` have the `.pli`/`.pol` (Tekal) format and are read with HYDROLIB-core `PolyFile` | User; verified (§3 F6) | A |
 | D44 | **Distribution on PyPI** as `delft3d-plot` (import name `d3dplot`), published from GitHub Actions with PyPI Trusted Publishing on version tags. The names `delft3d-plot`, `d3dplot` and `delft3dplot` were free on PyPI on 2026-10-25 | User | A |
 | D45 | The Maas land boundary is recreated from the Matlab cache `j21_ldb.mat` as `.ldb` with `tools/mat_to_ldb.py`, into `data_local/maas/j21_ldb.ldb`. The original polyline names are not in the `.mat`, so blocks are named `L000001…` | User: "recreate it from the mat file"; the source `.ldb` is unknown | A |
+| D46 | **Common figure finalisation** for every figure of every analysis (present and future): one function applies fonts and sizes, legend/labels language, user hooks (Matlab `function_handles`), metadata, saving through the writer registry, and closing (§7.14a) | User; Matlab repeats this per figure function (`apply_adhoc_functions`, `fig_print_close`) | A |
+| D47 | **Reusable plot building blocks**: the map view (grid values, extents incl. windows along a river-km file, river-km labels from a possibly different river-km file, land boundaries, tiles, measurements panel) and the line view (lines or stacked areas) are shared by M2D, the SMB diagnostic maps and future analyses (§7.14b) | User; Matlab reuses `fig_M2D` for SMB in-polygon maps | A |
 
 ## 3. Review of the plan (v6)
 
@@ -206,7 +208,7 @@ This round re-checked every earlier decision against real data (`r209`, read-onl
 | F5 | Morphological time is constant during spin-up: synthetic case exactly; `r209` 0 → 11.5 s while the hydrodynamic time advances 86 400 s | Selecting by morphological time is ambiguous | D25, §7.8 |
 | F6 | HYDROLIB-core `PolyFile` reads `.ldb`: about 7.7 s per 10⁶ points (`j21` land boundary: 2.5·10⁶ points ≈ 20 s); a NumPy reader takes 0.7 s | Acceptable once; cache the parsed result | D20, §7.16 |
 | F7 | `r209` map files: EPSG 0; MDU `RefDate = 20121231` while the map time units say 2021-02-08; "Computation finished" only in partition `.dia` files; repeated boundary time between sub-runs | Already in v5 | §5 |
-| F8 | float32 was proposed for the cache. A comparison with Matlab (double) and with analytic results needs float64; the cache is tiny compared with model output | — | D26 |
+| F8 | float32 vs float64 cache. v6 chose float64 for exact comparisons; v6.3 (user) returns to **float32** for speed, with float64 computation in memory. Tests compare with tolerances (§13.2) | Comparisons use tolerances, not equality | D26 |
 | F9 | One process task per time step would open a sub-run once per time step (costly even with a merge plan) | — | D27 |
 | F10 | Deep output paths under long P-drive paths can exceed Windows' 260-character limit | — | D30 |
 | F11 | Measurements: `.ldb` only for land boundaries (user) | — | D20 |
@@ -622,8 +624,11 @@ src/d3dplot/
 │  ├─ fingerprint.py        canonical JSON + blake2b; file attribute access
 │  └─ cache.py              read/write grid, times, data files; open as xugrid
 ├─ plotting/
-│  ├─ templates.py          MapTemplate, LineTemplate (draw once, update data)
-│  ├─ map.py, profile.py, space_time.py, time_series.py
+│  ├─ finalize.py           finalize_figure: style, language, hooks, metadata, save, close (§7.14a)
+│  ├─ views/                MapView, MapDecorations, ExtentSet, MeasurementPanel, LineView (lines/stacked areas), SpaceTimeView (§7.14b)
+│  ├─ templates.py          draw-once groups on top of the views
+│  ├─ style.py              fonts, sizes, colour orders
+│  ├─ map.py, profile.py, space_time.py, time_series.py   analysis-specific compositions of the views
 │  ├─ decorations.py        land boundaries, river-km labels, tiles, colour bars
 │  ├─ writers.py            writer registry (PNG; metadata in text chunks)
 │  └─ movie.py
@@ -845,7 +850,7 @@ d3dplot/
 
 * `<selection>` is a short readable label (`all`, `layer-top`, `fraction-3`, `depth-average`). The full selection is in the file attributes.
 * Data files contain only values (`face` or `segment × statistic`); `store.open()` re-attaches the grid.
-* Encoding: **float64** (D26), zlib level 4, CF attributes. Optional `cache.dtype: float32`.
+* Encoding: **float32** (D26), zlib level 4, CF attributes, `_FillValue` NaN. Optional `output.dtype: float64`. Values are computed in float64 and rounded only when written; coordinates, areas and times stay float64.
 
 **Fingerprint** (global attribute `d3dplot_fingerprint`, plus a readable attribute `d3dplot_parameters` with the canonical JSON).
 
@@ -980,6 +985,43 @@ Every task key contains the subject (and the reference label for simulation diff
 * **Figure file names**: `<variable>_<comparison>_<yyyymmddTHHMMSS>_c<k>_e<k>.png`, inside the `<subject>` folder (§7.10). Short, to stay under the path-length limit (§7.18).
 * **Measurement artists may change between times**: different raster grids or tiles, polygon sets, or source types. Each measurement artist has a **compatibility key**: type, grid transform and shape (rasters), or the hash of the polygon ids (polygons). Within a group, the artist is updated in place only when the key of the next time equals the current one; otherwise it is removed and rebuilt. Tests alternate grids and polygon sets.
 
+### 7.14a Common figure finalisation (D46)
+
+Every figure of every analysis, present and future, ends in **one function**, `plotting.finalize.finalize_figure(fig, context, style, hooks, writer)`. Analyses never save or close figures themselves. Matlab repeats this in each figure function (`apply_adhoc_functions(in_p)` in 20 functions, then `fig_print_close`).
+
+Steps, in this order:
+1. **Style**: font family and sizes (`figure.font_size`, `figure.font_family`; tick, label, title and legend sizes derived from it), figure size (`figure.size_cm`), line widths. Applied to all axes, colour bars and legends of the figure.
+2. **Language**: axis labels, colour-bar labels, titles and legend entries come from the label builder (§7.20) in `language`.
+3. **Hooks** (Matlab `function_handles`): every hook in `hooks` is called as `hook(fig, context)` (§7.21). Hooks may add or change artists. They run after the tool has drawn everything and **after** the style step, so a hook's changes are not overwritten, and before saving.
+4. **Metadata**: tool version, configuration hash, figure fingerprint (including the hook source hashes) and task key, written by the writer.
+5. **Save** through the writer registry (§7.14): each format in `figure.formats` (PNG in v1), resolution `figure.dpi`; atomic write; overwrite policy `replot`.
+6. **Close or keep**: in a draw-once group, the figure is kept for the next image and only the data change (§7.14); the finalisation then re-applies only steps 3–5. Otherwise it is closed.
+7. **Diagnostic file**: one `** INFO` line per saved figure group (count, folder), errors with the hook name.
+
+Draw-once and hooks: a hook can change anything, so after hooks the figure is no longer a clean template. Policy `hooks_mode`:
+* `per_image` *(default)*: before calling hooks, the template state is snapshotted (artists list); after saving, the artists added by hooks are removed and changed properties restored. Hooks thus see each image fresh.
+* `rebuild`: the figure is rebuilt for every image (slow, always correct).
+
+A test runs a hook that adds a line and changes the title and checks that every saved image contains exactly one such line.
+
+### 7.14b Reusable plot building blocks (D47)
+
+Analyses compose figures from shared blocks. New analyses (HIS, PRF, …) use the same blocks.
+
+| Block | Draws | Used by |
+|-------|-------|---------|
+| `MapView` | face values of a grid (`PolyCollection`, or raster mode), colour map and limits, colour bar | M2D; SMB `segment_map`/`segment_membership`; future GRD, HFM |
+| `MapDecorations` | land boundaries (`.ldb`), river-km labels, background tiles, fixed weirs, polygons (regions, cut lines) | every `MapView` |
+| `ExtentSet` | the list of plot windows: full model, explicit `extents`, and **windows along a river-km file** (`extents_along_river_km: {file, window_x_m, window_y_m}`, one window per point) | every `MapView` |
+| `MeasurementPanel` | second map panel with measurements (§7.15) | M2D (later others) |
+| `LineView` | lines with styles per simulation/time/region, or **stacked areas** for multi-component data; measurements as lines/markers; x-limits sets | SMB views; future HIS, PRF |
+| `SpaceTimeView` | km × time colour plot | SMB `space_time`; future M1D, PRF |
+| `finalize_figure` | §7.14a | all |
+
+**River-km files in maps are independent of each other**: the windows (`extents_along_river_km.file`, Matlab `fpath_rkm_plot_along`), the labels (`river_km_labels.file`, Matlab `fpath_rkm_disp`) and the SMB segment definition (`river_km.file`, Matlab `fpath_rkm`) can be three different files, all in the fixed format (§9.1). In the Maas case they are `rkm_3km_lr.csv`, `rkm_1km_lr.csv` and `rkm.csv`.
+
+The map settings form one configuration block, `MapViewConfig` (§10.1), used as `map:` in `map2d` and in `river_km_statistics` (for its diagnostic maps). The same extents, labels and land boundaries therefore produce the same windows in both analyses, and the visible-face subsets (`extent_<hash>.nc`) are computed once and shared.
+
 ### 7.15 Measurements
 
 **Kinds**:
@@ -1090,12 +1132,15 @@ Every task key contains the subject (and the reference label for simulation diff
   * unknown variables fall back to the NetCDF `long_name`/`units` with a warning;
   * users can add `labels.extra_dictionaries`.
 
-### 7.21 Hooks
+### 7.21 Hooks (Matlab `function_handles`)
 
-* `hooks: ["package.module:function", …]` per analysis, called as `hook(figure, axes, context)` after drawing and before saving.
-* `context`: analysis, variable, comparison, time, extent, simulations, labels, river-km provider.
-* The hook source hash is part of the figure fingerprint.
-* Generic hooks shipped with the tool: `d3dplot.hooks:legend_horizontal`.
+* Available for **every figure of every analysis** (present and future), because they run in the common finalisation (§7.14a).
+* Configuration, at three levels, combined in this order: project (`hooks`, all figures), analysis (`analyses[i].hooks`), and view (e.g. `views: {profile: {hooks: […]}}`, Matlab `p_single_function_handles`). `hooks_replace: true` at a lower level replaces instead of extends.
+* A hook is an importable `"package.module:function"` string, so it works from YAML and in worker processes. Python scripts may also pass callables; they must be importable (module-level functions) for the process executor.
+* Signature `hook(fig, context)`. `context` (a read-only dataclass) holds what Matlab passed in `in_p`: analysis, view, comparison, variable, simulation(s), time(s) (UTC and display), extent, axes handles by role (`context.axes["model"]`, `["measurements"]`, `["colorbar"]`), the plotted data, labels, language, river-km provider and the output path.
+* A failing hook: the figure is not saved, the error (with hook name and traceback) goes to the diagnostic file and the run summary; other figures continue.
+* The hook names and source hashes are part of the figure fingerprint.
+* Generic hooks shipped with the tool: `d3dplot.hooks:legend_horizontal`, `d3dplot.hooks:add_polylines` (draw `.pli`/`.ldb` files with a style).
 * Project-specific hooks (e.g. `add_structures_rkm`) live in the user's own package.
 
 ### 7.22 Performance targets (acceptance case 1, Windows laptop, P-drive)
@@ -1115,7 +1160,7 @@ Every task key contains the subject (and the reference label for simulation diff
 **Configuration** (main fields; full names in Appendix A):
 * `variables`, `times` (+ `time_axis`, `time_tolerance`), `vertical`, `fractions`;
 * `comparisons` (§7.12);
-* `figure`: `color_limits`, `extents`, `extents_along_river_km`, `river_km_labels`, `land_boundaries`, `background_tiles`, `aspect`, `colormap`, `render`, `size_cm`, `dpi`;
+* `figure` (fonts, size, dpi, hooks via finalisation §7.14a) and `map` (the shared map view §7.14b: `color_limits`, `extents`, `extents_along_river_km`, `river_km_labels`, `land_boundaries`, `background_tiles`, `aspect`, `colormap`, `render`);
 * `measurements`, `movie`, `export`, `hooks`.
 
 **Prepare**:
@@ -1150,8 +1195,9 @@ Images = times × extents × colour-limit sets. Differences between simulations 
 * `region_groups`, `region_differences`;
 * `river_km`: `file`, `sets` (`name → [km]`), `track`, `branches`, `half_width_m`;
 * `statistics`, `views`, `comparisons`, `time_series_locations_km`;
-* `multiply_by_width`, `time_averages`, `diagnostics`;
-* `figure` (`x_limits`, `y_limits`), measurement tolerances, `hooks`.
+* `multiply_by_width`, `time_averages`, `diagnostics: [segment_map, segment_membership]`, `display: auto | lines | stacked_area` (per variable);
+* `map`: the shared map-view settings for the diagnostic maps (§7.14b), including `extents_along_river_km` and `river_km_labels`;
+* `figure` (`x_limits`, `y_limits`, fonts), measurement tolerances, `hooks`.
 
 **Inspect**: parse the river-km file → `cache/inputs/river_km_<hash>.nc`; detect the river provider from the tags (§4.5); read the region polygons.
 
@@ -1160,7 +1206,9 @@ Images = times × extents × colour-limit sets. Differences between simulations 
 2. Compute region membership (boundary inclusive, §4.5) on face centres → `geometry/region_<name>.nc`.
 3. Assign faces to segments (shared cut lines → lower index) → `geometry/segments_<region>_<set>.nc` (§9.6). Coverage and overlap checks; a diagnostic figure if requested.
 
-**Process** (`ProcessTask` per simulation × sub-run): for each time, variable, region and km set, read the global face values and keep the faces with a segment index ≥ 0 and finite values. Compute **all** statistics per segment, vectorised with `numpy` `bincount`-style reductions on the segment index. Write `data/river_km_statistics/<region>/<set>/<variable>/<time>.nc`, holding `values(segment, statistic)` with coordinates `km_centre`, `km_edge_start/end`, `segment_length_m`.
+**Process** (`ProcessTask` per simulation × sub-run): for each time, variable, region and km set, read the global face values and keep the faces with a segment index ≥ 0 and finite values. Compute **all** statistics per segment, vectorised with `numpy` `bincount`-style reductions on the segment index. Write `data/river_km_statistics/<region>/<set>/<variable>/<time>.nc`, holding `values(segment, statistic[, component])` with coordinates `km_centre`, `km_edge_start/end`, `segment_length_m`.
+
+**Multi-dimensional variables** (Matlab `var_idx` with several indices, e.g. `Fak` or `stot` per sediment fraction): when the selection keeps one extra dimension (`fractions: [1, 2, …]` or `"all"`, without `sum_fractions`), the statistics are computed **per component**, and the data file has the extra dimension `component` (with the fraction names from the `.sed` file as labels). At most one extra dimension is kept; more is a validation error (V-VAR-005). The NaN/Inf exclusion is applied per component.
 
 **Post-process** (plot stage, from the cache). Definitions follow Matlab: `gdm_create_mat_SMB_postprocess.m`, `pp_sb_tim_ave_01.m`, `gdm_compute_cumulative.m`.
 
@@ -1189,6 +1237,18 @@ Each definition gets a small numeric unit test with hand-computed values.
 
 * Groupings: `per_simulation`, `all_simulations`, and region groups (several regions in one figure).
 * `x_limits` rows: one figure per row; line templates are reused.
+* **Line or area** (`display`, per variable): `lines` (one line per simulation/time/region), `stacked_area` (components stacked, as Matlab `do_area`, e.g. fractions of a sediment transport or composition) or `auto` *(default)*: `stacked_area` when the variable has a `component` dimension, otherwise `lines`. In `stacked_area` mode each figure shows one simulation and one time (or one km for `time_series`), the components in a fixed colour order with a legend of fraction names. Differences in time or between simulations are drawn per component as lines, because stacking differences is misleading. Measurements are drawn as lines on top. This is built on the shared line view (§7.14b).
+
+**Diagnostic maps** (`diagnostics`, Matlab `do_plot_inpolygon` and `do_plot_inpoly`), drawn with the shared map view (§7.14b), so they get the same land boundaries, river-km labels, tiles, hooks and finalisation as M2D maps:
+
+| Diagnostic | Content | Extents | Matlab |
+|------------|---------|---------|--------|
+| `segment_map` | faces coloured by the km centre of the segment they belong to (region ∩ segment); faces in no segment transparent; region outline and cut lines on top | full model **and** every window of `map.extents_along_river_km` | `gdm_plot_SMB` → `fig_M2D` (`inpoly`, `inpoly_<k>`) |
+| `segment_membership` | one figure per segment: the faces of that segment highlighted, region outline, title with the km | window around the segment (bounding box + margin) | `gdm_create_mat_SMB` → `fig_inpoly` |
+
+* Diagnostics are produced once per simulation × region × km set from `geometry/segments_*.nc` (prepare stage output), not per time.
+* Faces counted twice or regions not covered (V-SMB-011/013) are highlighted in `segment_map`.
+* Matlab skips the diagnostic when several regions are grouped; here they are drawn per region.
 
 **Edge cases**:
 * Segments with no faces → NaN, with count 0.
@@ -1256,7 +1316,7 @@ global:      Conventions "CF-1.8", d3dplot_kind "river_km_profiles", region, sou
 
 ```
 dimensions: face
-variables:  values(face) float64, _FillValue NaN, units, long_name
+variables:  values(face) float32 (D26), _FillValue NaN, units, long_name
 attributes: d3dplot_fingerprint, d3dplot_parameters (JSON), d3dplot_version, d3dplot_cache_schema,
             time (ISO with offset), time_utc (CF numeric), morph_time (ISO with offset), subrun, local_index,
             variable, selection, grid_file "../../../../grid.nc" (relative), plan (merge plan id)
@@ -1296,13 +1356,23 @@ ProjectConfig
 ├─ time_zone: "+01:00" | null                     (default: from the map time units)
 ├─ language: en | nl | es
 ├─ series: "01"                                   (figure sub-folder)
-├─ output: {root?, forbidden_roots[], dtype: float64}
+├─ output: {root?, forbidden_roots[], dtype: float32 | float64}   (default float32, D26)
 ├─ paths: {mappings: {"p:\\": "/p/"}}
 ├─ execution: {executor: serial|processes|slurm, workers?, shard?, slurm: {…}}
 ├─ labels: {vertical_datum: "+NAP", extra_dictionaries: []}
+├─ figure: {font_size, font_family, size_cm, dpi, formats: [png], hooks_mode: per_image | rebuild}   (defaults for all figures)
+├─ hooks: ["module:function", …]                (applied to every figure; §7.21)
 ├─ reprocess / replot: if_changed | never | always
 ├─ on_corrupt_output: mask | error | skip         (default mask; every masking goes to the diagnostic file)
 └─ analyses: [Map2DConfig | RiverKmStatisticsConfig | plugin configs]
+     each with: figure (overrides), hooks, and — where maps are drawn — map: MapViewConfig
+MapViewConfig (shared by map2d and the SMB diagnostic maps, §7.14b)
+├─ color_limits, colormap, render, aspect
+├─ extents: [[xmin, xmax, ymin, ymax], …]       (null = full model)
+├─ extents_along_river_km: {file, window_x_m, window_y_m}   (Matlab fpath_rkm_plot_along, rkm_tol_x/y)
+├─ river_km_labels: {file, color}                (Matlab fpath_rkm_disp; may differ from the file above)
+├─ land_boundaries: [*.ldb]
+└─ background_tiles: {provider, …} | false
 ```
 
 * All models use `extra="forbid"`.
@@ -1326,7 +1396,7 @@ analyses:
     comparisons: [value, difference_time]
     measurements:
       bed_level: {catalogue: 'p:\…\12_2D_measurements\2D_measurements_02.csv', time_tolerance: 60 days, color_limits_from_measurements: true}
-    figure:
+    map:
       color_limits: {bed_level: {difference_time: [null, [-1, 1]]}}
       extents_along_river_km: {file: 'p:\…\01_rkm\rkm_3km_lr.csv', window_x_m: 1500, window_y_m: 1500}
       river_km_labels: {file: 'p:\…\01_rkm\rkm_1km_lr.csv'}
@@ -1428,6 +1498,7 @@ Codes are stable, documented, and tested one by one. **E** = error, **W** = warn
 | V-VAR-002 | E | Variable missing in some sub-runs |
 | V-VAR-003 | E | Fraction or layer index out of range |
 | V-VAR-004 | E | Variable has dimensions other than those declared in its `VariableSpec` |
+| V-VAR-005 | E | After selection, a variable keeps more than one extra dimension (SMB allows one `component` dimension) |
 | V-RKM-001 | E | River-km file unreadable or wrong format |
 | V-RKM-002 | E | Rijntakken tags without a `track`; or several generic branches without `branches` |
 | V-RKM-003 | E | Duplicate km in a branch |
@@ -1470,7 +1541,7 @@ Codes are stable, documented, and tested one by one. **E** = error, **W** = warn
 
 | Layer | Content | Data | When |
 |-------|---------|------|------|
-| Unit | Config, overrides, validation codes, INI adapters, time handling (tz, duplicates, matching), variable registry, labels (all keys, UTF-8), fingerprints, write guard, atomic writes, river-km parsing and providers, geometry algorithm (hypothesis property tests: segments partition the axis, angles, cutoffs), statistics, measurement filters, `.mat` conversion, sharding | Synthetic in-memory objects | Every commit, Windows + Linux |
+| Unit | **Comparisons of cache values use tolerances** (float32 cache, D26: relative 1e-6, absolute 1e-5 m for levels); Config, overrides, validation codes, INI adapters, time handling (tz, duplicates, matching), variable registry, labels (all keys, UTF-8), fingerprints, write guard, atomic writes, river-km parsing and providers, geometry algorithm (hypothesis property tests: segments partition the axis, angles, cutoffs), statistics, measurement filters, `.mat` conversion, sharding | Synthetic in-memory objects | Every commit, Windows + Linux |
 | Integration | Full runs of `map2d` and `river_km_statistics` on the **synthetic SMT case** (§13.3) and its variants. Results compared with `expected/` | Generated in a session temporary folder (pytest fixture) | Every commit |
 | Merge plan | Python reader == dfm_tools merged values for every variable and time (synthetic); corrupt variant detected and handled per policy | Synthetic | Every commit |
 | Images | pytest-mpl baselines (Linux, fixed fonts); `--fresh-figures` pixel-identical to draw-once | Synthetic | Every commit (Linux) |
@@ -1696,7 +1767,7 @@ Develop each item first behind an adapter in `d3dplot`, with tests. Propose it u
 | WP | Content | Done when |
 |----|---------|-----------|
 | 3.1 | Process (selections, files §9.5) | Values equal the analytic fields |
-| 3.2 | Plot: templates, extents (explicit, along km), visible-face subsets, render modes, comparisons incl. regridding, writer, naming, metadata | Image baselines; `--fresh-figures` identical |
+| 3.2 | Plot: **common finalisation** (§7.14a: style, language, hooks with `hooks_mode`, metadata, writer), **shared views** (§7.14b: `MapView`, `MapDecorations`, `ExtentSet` incl. windows along a river-km file separate from the label file), templates, visible-face subsets, render modes, comparisons incl. regridding, naming | Image baselines; `--fresh-figures` identical; hook test (one added line per image); windows file ≠ labels file test |
 | 3.3 | Overlays: `.ldb` (HYDROLIB-core `PolyFile` + cache), river-km labels, background tiles (contextily + persistent cache, D42) | Shown in the baseline images; tiles test uses a pre-filled cache (no network in CI) |
 | 3.4 | Map measurements: catalogue, rasters (VRT, factor, mosaic, resampling), polygons (filters, id matching), differences, panel, `color_limits_from_measurements` | Synthetic catalogue cases (inside/outside tolerance, cm factor, shifted grid, shuffled polygons) correct |
 | 3.5 | Provenance, `replot`, `plot --set`, movies | Replot reproduces identical images |
@@ -1708,7 +1779,7 @@ Develop each item first behind an adapter in `d3dplot`, with tests. Propose it u
 | 4.1 | River-km file + providers (data files for Rijntakken/Maas, generic), edges, cutoffs, angles, cut lines, polygons, checks | Property tests; Rijntakken track tables tested; synthetic geometry as expected |
 | 4.2 | Regions, segment assignment, coverage/overlap checks, diagnostic plot | `cells_per_segment_250m.csv` reproduced |
 | 4.3 | Process statistics; post-processing (slope, × width, region differences, time averages) | `smb_*.csv` reproduced exactly (incl. NaN/Inf exclusion) |
-| 4.4 | Plots: views, groupings, region groups, `x_limits`, hooks | Image baselines |
+| 4.4 | Plots on the shared views: profile/space-time/time-series views, groupings, region groups, `x_limits`, **lines vs stacked areas** for multi-component variables (`display`), **diagnostic maps** `segment_map` (full model + windows along km) and `segment_membership` on `MapView`; hooks through the finalisation | Image baselines; synthetic `layer_fraction` (3 fractions) gives a stacked-area profile; diagnostic maps reuse the M2D windows |
 | 4.5 | Profile measurements: `.mat` → NetCDF (v5; v7.3 later), matching, plotting | Synthetic `.mat` converted (sorted times, units); measurements drawn at the right times |
 
 ### 15.6 Phase 5: hardening and v1.0
@@ -1754,23 +1825,25 @@ HIS, PRF, M1D, HFM and GRD analyses; 3D (layers, depth average with dfm_tools); 
 
 ## 17. Open questions
 
-Resolved with the user (v6.1–v6.2):
+Resolved with the user (v6.1–v6.3):
 * duplicate morphological times → last, logged (D25);
 * corrupt output → mask, logged (D23);
 * a diagnostic file for every run (D41);
 * `.ldb` = Tekal `.pli`/`.pol` format, read with HYDROLIB-core (D43);
 * the Maas `.ldb` recreated from `j21_ldb.mat` (D45);
 * background tiles with contextily and its cache (D42);
-* uv (D28) and the float64 cache (D26);
+* uv (D28); float32 cache (D26, v6.3);
 * the MDU is read with HYDROLIB-core `ResearchFMModel` after modifying HYDROLIB-core (D22, §14.1);
 * the corrupt `r209` partition has been reported by the user;
-* distribution on PyPI as `delft3d-plot` (D44).
+* distribution on PyPI as `delft3d-plot` (D44);
+* hooks for every figure through a common finalisation (D46); shared map/line building blocks (D47);
+* SMB stacked areas and diagnostic maps are planned (§8.2);
+* D24 and D27–D40 agreed.
 
 Still open:
 1. **Matlab reference run of the synthetic case**: pending. Run `data_local/synthetic_smt_01/scripts/main_plot_synthetic.m` with Matlab `D3D_plot` and report errors, if any.
 2. **Merge plan** (D21): explained in plain words at the start of §7.6. Agreement needed before Phase 2.
-3. **Other proposals** to confirm before implementation: D24, D27, D29–D32, D34–D40 (§2).
-4. **HYDROLIB-core contribution** (§14.1): who opens the issue and PR (the user's account, through a fork)? When should WP 0.1 start?
+3. **HYDROLIB-core contribution** (§14.1): who opens the issue and PR (the user's account, through a fork)? When should WP 0.1 start?
 ## 18. Glossary
 
 | Term | Meaning |
@@ -1831,7 +1904,8 @@ Principles:
 | `fdir_postprocess`, `fdir_mat`, `fdir_fig` | `simulations[k].output_dir`, `output.root` |
 | `simdef_overwrite`, `order_anl`, `do`, `do_p`, `do_mat`, `do_create_mat`, `tim_just_load`, `fig_visible` | removed (CLI stages, executors, fingerprints) |
 | `overwrite` / `fig_overwrite` | `reprocess` / `replot` |
-| `only_adhoc`, `adhoc`, `function_handles` | `hooks` / plugin analyses |
+| `only_adhoc`, `adhoc` | plugin analyses |
+| `function_handles` (all plots), `p_single_function_handles` (one view) | `hooks` at project, analysis or view level (§7.21) |
 | `var` | `variables` |
 | `var_idx` / `sum_var_idx` | `fractions` / `sum_fractions` |
 | `layer`, `depth_average`, `depth_average_limits`, `elevation` | `vertical` |
@@ -1844,7 +1918,7 @@ Principles:
 | `cmap` | `colormap` |
 | `clims_type`, `clims_type_var` | `color_limits_mode: fixed \| {days_since: date}` |
 | `fig_print` | `figure.formats: [png]` |
-| `fig_resolution`, `fig_size`, `font_size` | `figure.dpi`, `figure.size_cm`, `figure.font_size` |
+| `fig_resolution`, `fig_size`, `font_size` | `figure.dpi`, `figure.size_cm`, `figure.font_size` (applied by the common finalisation, §7.14a) |
 | `fig_variable`, `fig_unit` | `display_name`, `display_scale` |
 | `do_movie`, `tim_movie` | `movie: {duration_s}` |
 | `Lref` | `labels.vertical_datum` |
@@ -1893,11 +1967,11 @@ Principles:
 | `do_xvt`, `do_xvt_cel` | `views: [profile_all_times, space_time]` |
 | `do_tv*`, `rkm_plot_tv` | `views: [time_series]`, `time_series_locations_km` |
 | `do_cum` | `views: [cumulative]` |
-| `do_area` | `stacked_fractions` |
+| `do_area` | `display: auto \| lines \| stacked_area` (per variable; auto = stacked area for multi-component variables) |
 | `do_val_B`, `do_val_B_mor` | `multiply_by_width: none \| flow \| morphological` |
 | `detab_ds` | variable `bed_slope_streamwise` |
 | `tim_ave`, `tim_ave_type` | `time_averages: [{name, times, time_axis}]` |
-| `do_plot_inpolygon` | `diagnostics: [polygon_membership]` |
+| `do_plot_inpolygon`, `do_plot_inpoly` | `diagnostics: [segment_map, segment_membership]` |
 | `do_plot_structures` | `structures_overlay` (or a hook) |
 | `plot_val0`, `do_staircase`, `do_marker`, `xdir` | `show_initial`, `staircase`, `markers`, `x_reversed` |
 | `skip_if_not_found` | `on_missing_input: error \| skip` |
@@ -1930,4 +2004,5 @@ Principles:
 | v5 | Answers on measurements, `r209` findings, synthetic SMT case specification and generator |
 | v6 | Thorough review against real data (merge plan, tolerant MDU parsing, corrupt partitions, time zones, duplicate morphological times, float64, task granularity, path lengths); `.ldb`-only land boundaries; independent review (14 issues fixed: inspect phase, recursive fingerprints, topology signatures, deterministic sharding and geometry, derived-statistic definitions, verified versions); consolidated, self-contained plan with handover, file formats, validation catalogue and work packages |
 | v6.1 | User answers: last duplicate and masking of corrupt output, both written to a new per-run diagnostic file (`.dia`); `.ldb` read with HYDROLIB-core; contextily cache replaces `earth_tiles`; uv and float64 agreed; HYDROLIB-core keyword contribution analysed (`ResearchFMModel` fails only on 7 keywords) |
+| v6.3 | Common figure finalisation with hooks for all figures (D46); shared plot building blocks for M2D and SMB diagnostic maps, windows along a river-km file separate from the label file (D47); SMB lines vs stacked areas for multi-component variables; SMB diagnostic maps (`segment_map`, `segment_membership`); float32 cache (D26); D24, D27–D40 agreed |
 | v6.2 | MDU read with HYDROLIB-core `ResearchFMModel` after modifying HYDROLIB-core (detailed plan §14.1, cross-checked with the official `mdu.json`); Maas `.ldb` recreated from the `.mat` (`tools/mat_to_ldb.py`); PyPI distribution as `delft3d-plot`; plain-language explanation of the merge plan |
