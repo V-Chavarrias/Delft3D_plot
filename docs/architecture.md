@@ -1,6 +1,6 @@
 # Delft3D_plot (Python): Architecture and Implementation Plan
 
-Status: **v6.20; plain-FM generator variants are implemented locally, with their discovery acceptance pending WP 1.6 and WP 1.1 remote CI pending. WP 1.3 is complete on `feat/config-models`; WP 1.4 is complete locally on `feat/validation-framework`. Plugin config integration is deferred to the analysis registry (D59).** The package skeleton, configuration system, validation framework, synthetic case, and generator are in place; analysis functionality is not yet implemented. See [the synthetic case generator](https://github.com/V-Chavarrias/Delft3D_plot/blob/main/tools/synthetic_smt/README.md). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
+Status: **v6.22; WP 1.5 is implemented on `feat/model-input`: typed MDU, `.mor`, `.sed`, and DIMR adapters plus V-MDU-001 reporting pass all 31 CI-eligible tests. The local HYDROLIB-core DIMR fix is integrated with WP 0.1 for development; the real r209 DIMR resolves and its model inputs parse read-only in 0.390 s. Strict mypy and MkDocs pass; changed-file Ruff checks pass. Whole-repository Ruff and formatting checks still report unrelated pre-existing issues. Plain-FM discovery remains pending WP 1.6 and WP 1.1 remote CI remains pending. WP 1.3 is complete on `feat/config-models`; WP 1.4 is complete on `feat/validation-framework`. Plugin config integration is deferred to the analysis registry (D59).** The package skeleton, configuration system, validation framework, synthetic case, and generator are in place; analysis functionality is not yet implemented. See [the synthetic case generator](https://github.com/V-Chavarrias/Delft3D_plot/blob/main/tools/synthetic_smt/README.md). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
 
 Document map:
 * §0 Session handover
@@ -33,20 +33,21 @@ Document map:
 
 | Item | Location | State |
 |------|----------|-------|
-| Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `feat/validation-framework`, local and unpushed |
-| Plan (this file) | `docs/architecture.md` | v6.20 |
+| Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `feat/model-input`, local and unpushed |
+| Plan (this file) | `docs/architecture.md` | v6.22 |
 | Licence | `LICENSE` | GPL-3.0 |
 | Synthetic SMT and plain FM test case generator | `tools/synthetic_smt/` | Implemented and verified locally (§13.3) |
 | Land-boundary converter (`.mat` cache → `.ldb`) | `tools/mat_to_ldb.py` | Implemented. Used to recreate the Maas land boundary (D45) |
 | Generated synthetic case | `data_local/synthetic_smt_01/` | Git-ignored; regenerate with the generator |
 | Recreated Maas land boundary | `data_local/maas/j21_ldb.ldb` (55.7 MB) | Git-ignored. 174 220 polylines, 2 343 057 points; read by HYDROLIB-core in 22 s, identical to the `.mat` |
-| HYDROLIB-core modification | §14.1 | Local commit `54011e0d` on `feat/mdu_morphology_keywords`; implementation and verification complete, not pushed or proposed upstream |
-| Python environment | `.venv/` (uv, Python 3.12) | Git-ignored. dfm_tools and HYDROLIB-core are installed editable from the local checkouts |
+| HYDROLIB-core modifications | §14.1–§14.2 | WP 0.1 is committed locally as `54011e0d`; DIMR compatibility fix is on `fix/dimr-parallel-startgroup` and cherry-picked into the integrated local branch |
+| Python environment | `.venv/` (uv, Python 3.12) | Git-ignored. dfm_tools and HYDROLIB-core are installed editable from the local checkouts; HYDROLIB-core is currently on `feat/mdu_morphology_keywords` with WP 0.1 and the DIMR fix |
 | Package `d3dplot` | `pyproject.toml`, `src/d3dplot/` | Skeleton (WP 1.1) and built-in configuration system (WP 1.3) implemented; analysis functionality pending |
 | Configuration design | §2 decisions D57–D59 | Nested `times` object and shared `map.render`; WP 1.3 complete locally; plugin config integration deferred to the analysis registry |
 | Validation framework | `src/d3dplot/validate/` | WP 1.4 complete locally: report serialization and static V-CFG-001..004 checks |
+| Model-input adapters | `src/d3dplot/model_input/` | WP 1.5 implemented locally; MDU, `.mor`, `.sed`, DIMR, V-MDU-001, and real r209 read-only validation complete |
 | Synthetic-case pytest fixture | `tests/conftest.py` | Session-scoped fixture generates and verifies in pytest's temporary folder (WP 1.2) |
-| CI and documentation site | `.github/workflows/ci.yml`, `mkdocs.yml` | Configured; local checks pass, remote CI not run |
+| CI and documentation site | `.github/workflows/ci.yml`, `mkdocs.yml` | Strict docs and changed-file checks pass; whole-repository Ruff/format checks report unrelated existing issues; remote CI not run |
 | Matlab reference results of the synthetic case | `data_local/synthetic_smt_01/simulations/r00*/mat`, `fig` | **Done** (2026-10-26): r001 37 mat + 1071 PNG, r002 37 mat + 858 PNG. Protected: `generate.py --force` refuses to delete them without `--discard-matlab-reference` |
 | Agent guidance for development | `AGENTS.md`, `.github/instructions/plotting.instructions.md`, `.github/skills/{add-analysis-or-option,upstream-contribution}` | Done (§13.6) |
 
@@ -114,7 +115,7 @@ APIs the design relies on (check them first when upgrading):
 6. Set d3dplot's minimum HYDROLIB-core version to the first upstream release containing WP 0.1; do not guess or pin an unreleased version.
 7. The Matlab reference results of the synthetic case exist: add the Matlab comparison tests (WP 5.2) as soon as the cache is produced (from Phase 3).
 8. **WP 1.4** is complete locally on `feat/validation-framework`: structured issues, text/JSON reports, Pydantic error conversion, and static V-CFG-002..004 checks. All 24 CI-eligible tests, Ruff, strict mypy, lock check, pre-commit validation, and strict documentation build passed on Windows/Python 3.12.
-9. Next, implement WP 1.5: typed model-input adapters for MDU, `.mor`, `.sed`, and DIMR.
+9. **WP 1.5** is implemented locally on `feat/model-input`: typed MDU, `.mor`, `.sed`, and DIMR adapters, V-MDU-001 reporting, and synthetic tests are complete. All 31 CI-eligible tests pass; strict mypy, strict MkDocs, and changed-file Ruff/format checks pass. The full HYDROLIB-core suite passes with WP 0.1 and the DIMR fix integrated, and real r209 sub-run 0 DIMR resolution plus model-input parsing succeeds read-only in 0.390 s. Whole-repository Ruff and formatting checks report unrelated pre-existing issues; remote CI has not run. Next, continue with WP 1.6.
 
 ---
 
@@ -1828,6 +1829,7 @@ Upstream changes are made by the user (a contributor of both repositories) local
 |------------|--------------|-----|----------|
 | HYDROLIB-core | **MDU keywords**: add 6 morphology keywords to `[sediment]` and 3 deprecated/research keywords to `ResearchGeometry` (detailed plan §14.1; scope agreed with the maintainer, D51) | `ResearchFMModel` must read real morphological MDUs (D22) | **High, first** (prerequisite of WP 1.5) |
 | HYDROLIB-core | Support non-recursive `[geometry]` `iniFieldFile` loading by accepting `DiskOnlyFileModel` alongside `IniFieldModel` (§14.1, D56) | `ResearchFMModel(path, recurse=False)` previously failed on synthetic and `r209` MDUs before keyword validation | Completed locally; upstream release still required |
+| HYDROLIB-core | Accept a DIMR `<parallel>` control containing only its main `<start>` component (§14.2) | Valid one-component DIMR files such as r209 are rejected because `Parallel.startGroup` is required | **High; prerequisite to finish WP 1.5** |
 | HYDROLIB-core | Move the standard keywords `ncCompression`, `wriMap_trachytopes`, `tStartTlfsmo` from the research model to the standard model (§14.1, PR 2) | Spec conformity | Medium |
 | HYDROLIB-core | Opt-in lenient loading (unknown keywords → warnings), contributing to #931 | Future kernel keywords | Low (discuss with maintainers) |
 | HYDROLIB-core | `MorphologyModel` (`.mor`) and `SedimentModel` (`.sed`) | Typed access to MorFac, MorStt, fractions | High |
@@ -1955,6 +1957,16 @@ Typed `MorphologyModel` (`.mor`) and `SedimentModel` (`.sed`), if specification 
 
 * During development d3dplot uses the local HYDROLIB-core branch (editable install).
 * d3dplot's first PyPI release needs a HYDROLIB-core **release** containing PR 1 (PyPI packages cannot depend on git branches); `pyproject.toml` then pins `hydrolib-core >= <that version>` (WP 0.2).
+
+### 14.2 Plan: DIMR parallel control with one component
+
+**Finding (2026-11-15)**: the read-only r209 `dimr_config.xml` contains a single D-Flow FM component and the valid control flow `<control><parallel><start name="FlowFM" /></parallel></control>`. HYDROLIB-core's `Parallel` model requires both `start` and `startGroup`, so `DIMR(path, recurse=False)` raises a validation error for the absent `startGroup`. The DIMR file's own documentation describes `start` as the main component and `startGroup` as the form for additional components. Existing HYDROLIB-core issue #127 concerned generating an empty `control` element and was fixed separately; no matching open issue or pull request was found.
+
+**Scope**: make `Parallel.startGroup` optional while keeping `start` required, and add a regression test that parses a one-component parallel control without changing existing explicit `startGroup` behavior. The d3dplot adapter must continue to use `DIMR(path, recurse=False)` and select the `dflowfm` component.
+
+**Status**: the user selected an upstream fix. It is committed locally on HYDROLIB-core branch `fix/dimr-parallel-startgroup` (`cb4047dc`, with formatter-only cleanup `bd69c4ea`) and cherry-picked onto `feat/mdu_morphology_keywords` for combined testing. The combined HYDROLIB-core suite passes (3,344 passed, 10 skipped, 2 xfailed); the 70 DIMR tests pass, and read-only r209 sub-run 0 DIMR resolution plus MDU/`.mor`/`.sed` parsing succeeds in 0.390 s. Do not push or open a pull request unless asked. No project inputs are modified. WP 1.5 project checks also pass; its d3dplot commit remains.
+
+**Done when**: HYDROLIB-core's DIMR tests pass; d3dplot resolves the r209 DIMR MDU with the local fix; the synthetic one-component DIMR case passes; §0.1 and `docs/upstream.md` record the local branch and commit. The upstream contribution and WP 1.5 validation are complete locally; the d3dplot WP 1.5 commit remains.
 
 ---
 
@@ -2266,6 +2278,8 @@ Principles:
 | v6.17 | Resolved configuration-path conflicts with user decisions D57–D58: nested `times: {at, axis, tolerance}` and shared `map.render`; WP 1.3 started on `feat/config-models` |
 | v6.18 | Completed WP 1.3 locally: built-in configuration models and IO, documented model defaults and actual package layout, deferred plugin config integration to the analysis registry (D59), and added the configuration page to MkDocs navigation; next handover is WP 1.4 |
 | v6.19 | Started WP 1.4 on `feat/validation-framework`; specified V-CFG-004 as matching list row counts for x/y figure limits (D60) |
+| v6.22 | Implemented WP 1.5 locally, including DIMR resolution and parallel-control regression coverage; integrated the local HYDROLIB-core fix with WP 0.1, verified all 31 CI-eligible tests and real r209 input parsing; next handover is WP 1.6 |
+| v6.21 | Started WP 1.5 on `feat/model-input`; added MDU, `.mor`, and `.sed` adapters with V-MDU-001 reporting and synthetic tests; real r209 model inputs passed read-only parsing; identified the HYDROLIB-core DIMR `startGroup` mismatch |
 | v6.20 | Completed WP 1.4 locally: structured validation issues and text/JSON reports, V-CFG-001..004 with static reference, duplicate-root/label, and effective x/y limit checks; 24 CI-eligible tests and all configured checks pass; next handover is WP 1.5 |
 | v6.10 | All catalogue quantities in v1 except `morphodynamic_celerity` (D54): 3D layers, residence times (`.sub` via HYDROLIB-core), section quantities (API), new WP 2.2b, V-VAR-006; no open questions |
 | v6.9 | Constants from the model (D53): `Ag`, `Rhomean` from the MDU, `RhoSol` per fraction from the `.sed`; Shields per fraction; Rijn case limited to M2D figures; D50 agreed |

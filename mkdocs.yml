@@ -13,6 +13,7 @@ nav:
   - Home: index.md
   - Architecture: architecture.md
   - Configuration: configuration.md
+  - Model input: model-input.md
   - Upstream contributions: upstream.md
 
 plugins:
