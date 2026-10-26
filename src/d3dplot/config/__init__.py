@@ -27,6 +27,7 @@ from d3dplot.config.project import (
     SimulationConfig,
 )
 from d3dplot.config.selections import Fractions, Times, Vertical
+from d3dplot.config.status import StatusConfig
 
 __all__ = [
     "AnalysisConfig",
@@ -41,6 +42,7 @@ __all__ = [
     "ProjectConfig",
     "RiverKmStatisticsConfig",
     "SimulationConfig",
+    "StatusConfig",
     "Times",
     "Vertical",
     "apply_overrides",

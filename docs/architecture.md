@@ -33,7 +33,7 @@ Document map:
 
 | Item | Location | State |
 |------|----------|-------|
-| Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `feat/simulation-discovery`, local and unpushed; WP 1.6 is complete |
+| Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `feat/simulation-status`, local and unpushed; WP 1.7 is complete |
 | Plan (this file) | `docs/architecture.md` | v6.23 |
 | Licence | `LICENSE` | GPL-3.0 |
 | Synthetic SMT and plain FM test case generator | `tools/synthetic_smt/` | Implemented and verified locally (§13.3) |
@@ -42,13 +42,14 @@ Document map:
 | Recreated Maas land boundary | `data_local/maas/j21_ldb.ldb` (55.7 MB) | Git-ignored. 174 220 polylines, 2 343 057 points; read by HYDROLIB-core in 22 s, identical to the `.mat` |
 | HYDROLIB-core modifications | §14.1–§14.3 | WP 0.1 (`54011e0d`) and both DIMR fixes (`3e4f7317`, `96d07c87`) are integrated locally on `feat/mdu_morphology_keywords`; the external-library fix is also committed on `fix/dimr-external-libraries` |
 | Python environment | `.venv/` (uv, Python 3.12) | Git-ignored. dfm_tools and HYDROLIB-core are installed editable from the local checkouts; HYDROLIB-core is currently on `feat/mdu_morphology_keywords` with WP 0.1 and the DIMR fix |
-| Package `d3dplot` | `pyproject.toml`, `src/d3dplot/` | WP 1.1–1.6 foundations implemented locally; analysis functionality pending |
+| Package `d3dplot` | `pyproject.toml`, `src/d3dplot/` | WP 1.1–1.7 foundations implemented locally; analysis functionality pending |
 | Configuration design | §2 decisions D57–D59 | Nested `times` object and shared `map.render`; WP 1.3 complete locally; plugin config integration deferred to the analysis registry |
 | Validation framework | `src/d3dplot/validate/` | WP 1.4 complete locally: report serialization and static V-CFG-001..004 checks |
 | Model-input adapters | `src/d3dplot/model_input/` | WP 1.5 implemented locally; MDU, `.mor`, `.sed`, DIMR, V-MDU-001, and real r209 read-only validation complete |
 | Simulation discovery | `src/d3dplot/simulation/` | WP 1.6 implemented locally; synthetic FM/SMT cases pass; real r209 discovery completes read-only in 99.283 s |
+| Simulation status | `src/d3dplot/simulation/status.py` | WP 1.7 implemented locally; synthetic statuses pass; real r209 is finished with no validation issues; bounded status scan 27.371 s |
 | Synthetic-case pytest fixture | `tests/conftest.py` | Session-scoped fixture generates and verifies in pytest's temporary folder (WP 1.2) |
-| CI and documentation site | `.github/workflows/ci.yml`, `mkdocs.yml` | 51 CI-eligible tests, strict mypy, strict docs, and changed-file Ruff/format checks pass; whole-repository Ruff/format checks report unrelated existing issues; remote CI not run |
+| CI and documentation site | `.github/workflows/ci.yml`, `mkdocs.yml` | 69 CI-eligible tests, strict mypy, strict docs, and changed-file Ruff/format checks pass; whole-repository Ruff/format checks report unrelated existing issues; remote CI not run |
 | Matlab reference results of the synthetic case | `data_local/synthetic_smt_01/simulations/r00*/mat`, `fig` | **Done** (2026-10-26): r001 37 mat + 1071 PNG, r002 37 mat + 858 PNG. Protected: `generate.py --force` refuses to delete them without `--discard-matlab-reference` |
 | Agent guidance for development | `AGENTS.md`, `.github/instructions/plotting.instructions.md`, `.github/skills/{add-analysis-or-option,upstream-contribution}` | Done (§13.6) |
 
@@ -117,7 +118,8 @@ APIs the design relies on (check them first when upgrading):
 7. The Matlab reference results of the synthetic case exist: add the Matlab comparison tests (WP 5.2) as soon as the cache is produced (from Phase 3).
 8. **WP 1.4** is complete locally on `feat/validation-framework`: structured issues, text/JSON reports, Pydantic error conversion, and static V-CFG-002..004 checks. All 24 CI-eligible tests, Ruff, strict mypy, lock check, pre-commit validation, and strict documentation build passed on Windows/Python 3.12.
 9. **WP 1.5** is implemented locally on `feat/model-input`: typed MDU, `.mor`, `.sed`, and DIMR adapters, V-MDU-001 reporting, and synthetic tests are complete. All 31 CI-eligible tests pass; strict mypy, strict MkDocs, and changed-file Ruff/format checks pass. The full HYDROLIB-core suite passes with WP 0.1 and the DIMR fixes integrated, and real r209 sub-run 0 DIMR resolution plus model-input parsing succeeds read-only in 0.390 s. Whole-repository Ruff and formatting checks report unrelated pre-existing issues; remote CI has not run. WP 1.6 is complete; see item 10.
-10. **WP 1.6** is complete locally on `feat/simulation-discovery`: plain-FM/SMT discovery, typed V-SIM/V-OUT reporting, and read-only NetCDF header validation are tested. All 51 CI-eligible tests, strict mypy, strict MkDocs, and changed-file Ruff/format checks pass. Real r209 discovery found 195 sub-runs and 8,580 map files with no issues in 99.283 s (<2 min), using D61's bounded I/O thread pool. Do not push or open a pull request unless asked. Next, continue with WP 1.7.
+10. **WP 1.6** is complete locally on `feat/simulation-discovery`: plain-FM/SMT discovery, typed V-SIM/V-OUT reporting, and read-only NetCDF header validation are tested. All 51 CI-eligible tests, strict mypy, strict MkDocs, and changed-file Ruff/format checks pass. Real r209 discovery found 195 sub-runs and 8,580 map files with no issues in 99.283 s (<2 min), using D61's bounded I/O thread pool. Do not push or open a pull request unless asked.
+11. **WP 1.7** is complete locally on `feat/simulation-status`: status inspection includes `not_started` when valid model input has no maps, per-sub-run `.dia` and NetCDF metadata, configurable staleness, and caller-writer JSON/CSV serializers. Corrupt-output counts remain unknown until WP 2.2. The 69 CI-eligible tests, strict mypy, strict MkDocs, and changed-file Ruff/format checks pass. Read-only r209 status is `finished` (195 sub-runs, 44 partitions, 0 validation issues); bounded status detection took 27.371 s, down from 433.548 s serially (15.8×). Discovery took 124.220 s and discovery plus status 151.590 s. Numeric `TStop` comparison uses elapsed seconds, not the decoded CF origin. Next, continue with WP 1.8.
 
 ---
 
@@ -1036,15 +1038,19 @@ The planner reads fingerprints of existing files once per folder at start-up (on
 ### 7.11 Simulation status
 
 * **Detection**, per sub-run (FM: the only one):
-  1. read the **last 4 KB** of every partition `.dia`, or of the main `.dia` when not partitioned. If all contain `Computation finished` → `finished`;
-  2. a controlled-exit message → `interrupted`;
-  3. last map time < `TStop` and files unchanged for `status.stale_after` (default 1 h) → `stopped`;
-  4. otherwise → `running`;
-  5. no map files → `not_started`.
+  1. no map files → `not_started`;
+  2. read the **last 4 KB** of every partition `.dia`, or of the main `.dia` when not partitioned. If all contain `Computation finished` → `finished`;
+  3. a controlled-exit message → `interrupted`;
+  4. last map time < `TStop` and all map/`.dia` files unchanged for `status.stale_after` (default 1 h) → `stopped`;
+  5. otherwise → `running`.
+* For numeric `TStop`, compare the map time coordinate and `TStop` as elapsed seconds after converting their respective units. The map's CF origin may differ from MDU `RefDate` (V-MDU-002), so do not compare decoded absolute instants in this case. Date/time `TStop` values are compared as UTC instants.
+* `inspect_simulation_status(path)` returns the status alongside the discovery report. A valid MDU with missing map output has status `not_started` while the report still contains V-OUT-001; invalid or unselectable model input has no status.
 * **SMT**: `output/work` exists → `running`; otherwise the status of the last sub-run (and a check that all sub-runs are finished).
+* SMT status checks with at least eight sub-runs use the bounded I/O thread pool from discovery; NetCDF4 reads share its access lock.
 * **Storage**:
   * `cache/simulation_status.json` (machine-readable) is trusted on later runs only when final;
   * `tables/simulation_status.csv` (human-readable) is regenerated every run. Columns: `label, path, kind, state, n_subruns, n_partitions, last_output_time, last_morph_time, morfac, corrupt_outputs, checked_at, dflowfm_version`.
+  * `corrupt_outputs` is `null` until output-quality inspection has populated the per-sub-run counts.
   
   The project summary goes to the reference simulation's `tables/`.
 * **Use**: validation warnings, cache trust, reporting.
@@ -1498,9 +1504,10 @@ For SMB: `values(segment, statistic)`, plus `km_centre(segment)`, `km_start(segm
 ### 9.7 Simulation status (`simulation_status.json`)
 
 ```json
-{"label": "r209", "kind": "smt", "state": "finished", "checked_at": "…",
- "subruns": [{"index": 0, "state": "finished", "last_time": "…", "corrupt": [{"partition": 21, "times": [1, 2]}]}],
- "n_partitions": 44, "morfac": 10.0, "tool_version": "…"}
+{"label": "r209", "path": "…", "kind": "smt", "state": "finished", "checked_at": "…",
+ "subruns": [{"index": 0, "state": "finished", "last_time": "…", "last_morph_time": "…", "corrupt": null}],
+ "n_partitions": 44, "morfac": 10.0, "corrupt_outputs": null,
+ "dflowfm_version": "…", "tool_version": "…"}
 ```
 
 ---
@@ -1518,6 +1525,7 @@ ProjectConfig
 ├─ language: en | nl | es
 ├─ series: "01"                                   (figure sub-folder)
 ├─ output: {root?, forbidden_roots[], dtype: float32 | float64}   (default float32, D26)
+├─ status: {stale_after: 1 h}                     (default; threshold for an unchanged incomplete run)
 ├─ paths: {mappings: {"p:\\": "/p/"}}
 ├─ execution: {executor: serial|processes|slurm, workers?, shard?, slurm: {…}}
 ├─ labels: {vertical_datum: "+NAP", extra_dictionaries: []}
@@ -2015,7 +2023,7 @@ Typed `MorphologyModel` (`.mor`) and `SedimentModel` (`.sed`), if specification 
 | 1.4 | Validation framework | `validate/report.py`, `validate/checks/config.py`, V-CFG-001..004, text/JSON output, static configuration checks | Each code has a test; reference selection, duplicate labels/output roots, and effective x/y limit row counts are reported |
 | 1.5 | Model input | `model_input/*` (`MduInfo` on `ResearchFMModel(recurse=False)`; `.mor`, `.sed` with the INI parser; DIMR) | Synthetic MDU/`.mor`/`.sed` parsed; V-MDU-001 lists unknown keywords. (local) real `r209` files parsed with the HYDROLIB-core branch of WP 0.1 |
 | 1.6 | Discovery | `simulation/discover.py`, `subrun.py`, partition file discovery, V-SIM-*, V-OUT-001..003; bounded thread-based validation for large SMT cases (D61) | All synthetic SMT and plain-FM variants classified correctly; 51 CI-eligible tests pass; read-only r209 discovery of 195 sub-runs/8,580 map files completes in <2 min |
-| 1.7 | Status | `simulation/status.py` (`.dia` tails), json/csv writers | States of all synthetic variants correct. (local) `r209` finished |
+| 1.7 | Status | `simulation/status.py` (`.dia` tails), path-level status inspection, stale-time configuration, JSON/CSV serializers | Synthetic SMT/plain-FM states are correct, including `not_started`; corrupt counts stay unknown until WP 2.2. Read-only r209 is `finished` with no issues; bounded status scan is 27.371 s (433.548 s serial baseline) |
 | 1.8 | Store | `store/layout.py`, `guard.py`, `atomic.py`, `fingerprint.py`; input-snapshot test helper | Guard refuses unmarked or forbidden roots; atomic writes tested |
 | 1.9 | Labels | `labels/*` + CSVs seeded from Matlab | en/nl/es complete; templates; units |
 | 1.10 | Variables | `variables/registry.py` with the v1 variables, aliases, "did you mean" | Registry docs generated |
@@ -2296,6 +2304,7 @@ Principles:
 | v6.17 | Resolved configuration-path conflicts with user decisions D57–D58: nested `times: {at, axis, tolerance}` and shared `map.render`; WP 1.3 started on `feat/config-models` |
 | v6.18 | Completed WP 1.3 locally: built-in configuration models and IO, documented model defaults and actual package layout, deferred plugin config integration to the analysis registry (D59), and added the configuration page to MkDocs navigation; next handover is WP 1.4 |
 | v6.19 | Started WP 1.4 on `feat/validation-framework`; specified V-CFG-004 as matching list row counts for x/y figure limits (D60) |
+| v6.24 | Completed WP 1.7 locally: status API and stale-time configuration, `not_started` inspection, caller-writer JSON/CSV serialization, shared NetCDF lock, and bounded sub-run status scan; 69 CI-eligible tests, strict mypy, changed-file Ruff/format, and strict MkDocs pass; read-only r209 is finished, status scan 27.371 s versus 433.548 s serially; next handover is WP 1.8 |
 | v6.23 | Completed WP 1.6 locally: plain-FM/SMT discovery, classic NetCDF header validation, D61's bounded I/O thread pool, and full r209 acceptance (195 sub-runs/8,580 maps in 99.283 s); 51 CI-eligible tests, strict mypy, Ruff/format, and strict MkDocs pass; next handover is WP 1.7 |
 | v6.22 | Implemented WP 1.5 locally, including DIMR resolution and parallel-control regression coverage; integrated the local HYDROLIB-core fix with WP 0.1, verified all 31 CI-eligible tests and real r209 input parsing; next handover is WP 1.6 |
 | v6.21 | Started WP 1.5 on `feat/model-input`; added MDU, `.mor`, and `.sed` adapters with V-MDU-001 reporting and synthetic tests; real r209 model inputs passed read-only parsing; identified the HYDROLIB-core DIMR `startGroup` mismatch |

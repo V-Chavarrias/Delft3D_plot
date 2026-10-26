@@ -14,6 +14,8 @@ reference_simulation: reference
 language: en
 output:
   root: ./postprocessing
+status:
+  stale_after: 1 hour
 analyses:
   - analysis: map2d
     variables: [bed_level]
@@ -34,6 +36,9 @@ analyses:
 to their measurement settings, for example
 `measurements.bed_level.time_tolerance`.
 `duplicate_morphological_times` remains an analysis-level setting.
+`status.stale_after` controls how long output files must remain unchanged before
+an incomplete run is reported as stopped; it defaults to one hour and accepts
+durations such as `30 minutes`.
 
 Map drawing options belong to the shared `map` block. In particular, use
 `map.render` (`polygons`, `raster`, or `auto`) for map rendering. Global figure

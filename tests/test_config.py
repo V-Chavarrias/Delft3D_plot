@@ -15,6 +15,7 @@ from d3dplot.analyses.map2d.config import Map2DConfig
 from d3dplot.analyses.river_km_statistics.config import RiverKmStatisticsConfig
 from d3dplot.config import (
     ProjectConfig,
+    StatusConfig,
     Times,
     apply_overrides,
     config_json_schema,
@@ -86,6 +87,7 @@ def test_defaults_and_global_figure_inheritance() -> None:
     assert default_analysis.times.at == "all"
     assert default_analysis.times.axis == "hydrodynamic"
     assert default_analysis.times.tolerance is None
+    assert default_config.status.stale_after == timedelta(hours=1)
     assert default_config.figure.font_size == 10.0
     assert default_config.figure.font_family == "DejaVu Sans"
     assert default_config.figure.size_cm == (16.0, 10.0)
@@ -133,6 +135,21 @@ def test_defaults_and_global_figure_inheritance() -> None:
     saved = ProjectConfig.model_validate(yaml.safe_load(dump_config(config)))
     saved_analysis = saved.analyses[0]
     assert saved.effective_figure(saved_analysis) == config.effective_figure(analysis)
+
+
+@pytest.mark.unit
+def test_status_stale_after_is_configurable_and_non_negative() -> None:
+    status = StatusConfig.model_validate({"stale_after": "30 minutes"})
+    assert status.stale_after == timedelta(minutes=30)
+
+    data = _minimal_data()
+    data["status"] = {"stale_after": "2 hours"}
+    config = ProjectConfig.model_validate(data)
+    round_trip = ProjectConfig.model_validate(yaml.safe_load(dump_config(config)))
+    assert round_trip.status.stale_after == timedelta(hours=2)
+
+    with pytest.raises(ValidationError, match="stale_after must be non-negative"):
+        StatusConfig.model_validate({"stale_after": "-1 second"})
 
 
 @pytest.mark.unit

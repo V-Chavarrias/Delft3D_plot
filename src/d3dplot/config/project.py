@@ -14,6 +14,7 @@ from d3dplot.analyses.river_km_statistics.config import RiverKmStatisticsConfig
 from d3dplot.config.analysis import AnalysisConfigBase, ProcessingPolicy
 from d3dplot.config.base import ConfigModel, FixedUTCOffset
 from d3dplot.config.figure import FigureConfig
+from d3dplot.config.status import StatusConfig
 
 AnalysisConfig: TypeAlias = Annotated[
     Map2DConfig | RiverKmStatisticsConfig,
@@ -159,6 +160,10 @@ class ProjectConfig(ConfigModel):
     output: OutputConfig = Field(
         default_factory=OutputConfig,
         description="Output location and cache settings.",
+    )
+    status: StatusConfig = Field(
+        default_factory=StatusConfig,
+        description="Policies used when detecting simulation status.",
     )
     paths: PathsConfig = Field(
         default_factory=PathsConfig,

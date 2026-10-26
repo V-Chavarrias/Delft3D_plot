@@ -52,6 +52,25 @@ Classic NetCDF3 headers use SciPy's memory-mapped reader; other NetCDF formats
 use netCDF4, whose native reader access is serialized across discovery threads.
 SMT sub-runs must have the same number of map files.
 
+## Status
+
+`detect_simulation_status(simulation)` reads only the final 4 KiB of each
+partition `.dia` file (or the main `.dia` for an unpartitioned run), plus the
+last `time` and `morft` values from a representative map file. A run is
+finished only when every partition reports `Computation finished`; controlled
+exit messages are reported as interrupted. An incomplete run is reported as
+stopped only when its last output time precedes `TStop` and all output files
+have been unchanged for `status.stale_after` (one hour by default). An SMT
+`output/work` directory takes precedence and means the overall simulation is
+running. For numeric `TStop`, map and MDU times are compared as elapsed
+seconds; their origins can differ. `inspect_simulation_status(path)` returns a
+status with the discovery report, so a valid model input with missing map
+output is `not_started` while retaining the V-OUT-001 validation error.
+
+Status JSON and CSV serializers return text or accept a caller-supplied writer,
+so callers can route file writes through the guarded store. Corrupt-output
+counts remain unknown until the output-quality inspection stage has run.
+
 ## Validation codes
 
 | Code | Meaning |
