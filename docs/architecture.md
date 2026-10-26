@@ -1,6 +1,6 @@
 # Delft3D_plot (Python): Architecture and Implementation Plan
 
-Status: **v6.4, plan for review.** Only the synthetic test-case generator is implemented ([tools/synthetic_smt](../tools/synthetic_smt/README.md)). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
+Status: **v6.6, plan for review.** Only the synthetic test-case generator is implemented ([tools/synthetic_smt](../tools/synthetic_smt/README.md)). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
 
 Document map:
 * §0 Session handover
@@ -34,7 +34,7 @@ Document map:
 | Item | Location | State |
 |------|----------|-------|
 | Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `main`, conventional commits |
-| Plan (this file) | `docs/architecture.md` | v6.4 |
+| Plan (this file) | `docs/architecture.md` | v6.5 |
 | Licence | `LICENSE` | GPL-3.0 |
 | Synthetic SMT test case generator | `tools/synthetic_smt/` | Implemented and verified (§13.3) |
 | Land-boundary converter (`.mat` cache → `.ldb`) | `tools/mat_to_ldb.py` | Implemented. Used to recreate the Maas land boundary (D45) |
@@ -103,7 +103,7 @@ APIs the design relies on (check them first when upgrading):
 ### 0.4 Where to continue
 
 1. **Review this plan** with the user. Resolve §17 where possible.
-2. **WP 0.1** (§15.1a, §14.1): the HYDROLIB-core MDU keyword contribution. It is a prerequisite of WP 1.5 and can run in parallel with WP 1.1–1.4.
+2. **WP 0.1** (§15.1a, §14.1): the HYDROLIB-core MDU keyword change, on a local branch. It is the first task of Phase 1, because reading the MDU (WP 1.5) depends on it.
 3. Start **Phase 1** (§15.2): repository skeleton (`pyproject.toml`, `src/d3dplot`, CI, docs), then the work packages in order.
 4. The Matlab reference results of the synthetic case exist: add the Matlab comparison tests (WP 5.2) as soon as the cache is produced (from Phase 3).
 
@@ -168,13 +168,13 @@ Status: **A** = agreed with the user; **P** = proposed in this plan and awaiting
 | D18 | Measurement time zone: configured, otherwise the model's | User | A |
 | D19 | Synthetic SMT case generated locally; no frozen copy committed | User | A |
 | D20 | **Land boundaries are input as `.ldb` only**. Parsed results are cached | User | A |
-| D21 | **Model output is read through a per-simulation merge plan**. dfm_tools/xugrid build the merged grid once (§7.6) | Measured: 75 s vs 1 s per `r209` sub-run (§5.3) | P |
+| D21 | **Model output is read through a per-simulation merge plan**. dfm_tools/xugrid build the merged grid once (§7.6) | Measured: 75 s vs 1 s per `r209` sub-run (§5.3) | A (general terms, v6.6) |
 | D22 | **The MDU is read with HYDROLIB-core `ResearchFMModel(path, recurse=False)`**, after HYDROLIB-core is modified to accept the missing keywords (§14.1). `.mor`/`.sed` are read with HYDROLIB-core's INI parser until HYDROLIB-core has typed models for them | User: "read the mdu with the right file in hydrolibcore and modify the file to accept morphopol and the other flags"; reuse (R3) | A (v6.2; replaces "tolerant parser") |
 | D23 | **Corrupt or inconsistent partitions are detected**. `time`/`morft` come from the partition majority. Affected faces are **masked** (NaN) and every masking is written to the diagnostic file (D41) | `r209` sub-run 0, partition 0021 is corrupt (§5.2); user | A |
 | D24 | Times are stored internally as time-zone-aware UTC and shown in the model time zone. Cache file names use the hydrodynamic time | xarray drops the offset; morphological time is not unique (§7.8); user: time zones must be handled | A |
 | D25 | When several outputs share a morphological time, select the **last** one, and write the choice to the diagnostic file (D41) | Morphological time repeats during spin-up (§7.8); user | A |
 | D26 | Cache values in **float32** by default (`output.dtype: float64` optional). Computations (selections, SMB statistics, differences) are done in float64 in memory; only the stored values are float32 | User: faster reading and writing, enough for visualisation. float32 has ~7 significant digits: 1 mm on a bed level of 1 000 m | A (v6.3; replaces float64) |
-| D27 | Process tasks per (simulation × sub-run), each writing one file per time step | Amortises opening a sub-run (§7.13) | A |
+| D27 | **Unit of work of the process stage**: one `ProcessTask` per (simulation × sub-run), serving **all analyses** at once. It opens the sub-run's map files once, asks the quantity engine for every quantity any analysis needs at the requested times of that sub-run (each raw variable read once), and lets each analysis reduce the arrays in memory and write its own files (one per analysis, quantity, selection, time). Only outputs whose fingerprint is missing or stale are computed; if nothing is missing for a sub-run, its task is skipped. Tasks run in parallel over sub-runs. Revised in v6.5; originally one task per (simulation × sub-run × analysis) | Avoids reading the same variable once per analysis; amortises opening a sub-run (§7.13, §7.9a) | P (revision) |
 | D28 | Environment and packaging with **uv** + `pyproject.toml` (hatchling) | Already used, fast, pip-compatible; GDAL via rasterio wheels | A |
 | D29 | Draw-once plotting with matplotlib `PolyCollection` directly; xugrid only for grid objects and rasterising | Speed (§7.14) | A |
 | D30 | Windows path length: keep paths short and warn above 240 characters | P-drive paths are long; Windows MAX_PATH is 260 | A |
@@ -196,7 +196,8 @@ Status: **A** = agreed with the user; **P** = proposed in this plan and awaiting
 | D46 | **Common figure finalisation** for every figure of every analysis (present and future): one function applies fonts and sizes, legend/labels language, user hooks (Matlab `function_handles`), metadata, saving through the writer registry, and closing (§7.14a) | User; Matlab repeats this per figure function (`apply_adhoc_functions`, `fig_print_close`) | A |
 | D47 | **Reusable plot building blocks**: the map view (grid values, extents incl. windows along a river-km file, river-km labels from a possibly different river-km file, land boundaries, tiles, measurements panel) and the line view (lines or stacked areas) are shared by M2D, the SMB diagnostic maps and future analyses (§7.14b) | User; Matlab reuses `fig_M2D` for SMB in-polygon maps | A |
 | D48 | **Agent guidance**: always-on `AGENTS.md` (principles: plan first, read-only P-drive, reuse HYDROLIB-core/dfm_tools, performance, finalisation, names, time, diagnostics), a plotting file instruction, and two skills (`add-analysis-or-option`, `upstream-contribution`) (§13.6) | User: future agent development must follow the plan | A |
-| D49 | The user is a contributor of HYDROLIB-core and dfm_tools. Upstream changes are made on **local branches** in the checkouts for now; issues/PRs only when the user decides | User | A |
+| D49 | The user is a contributor of HYDROLIB-core and dfm_tools. Upstream changes are developed locally in the checkouts; branches, issues and PRs are created when the user decides (§14, skill `upstream-contribution`). Recommended: commit on a **local feature branch** from the start (no access needed); committing on local `main` is possible and can be moved to a branch later | User | A |
+| D50 | **Quantity engine**: one central service resolves requested quantities (raw or derived, e.g. Froude, vorticity), reads each raw input once per (sub-run, time) through the merge plan, computes derived quantities in dependency order, and is the only reader of model output for all analyses (§7.9a). The merge plan includes edges for edge-located inputs | User; Matlab `gdm_read_data_map_simdef` | P |
 
 ## 3. Review of the plan (v6)
 
@@ -592,14 +593,16 @@ src/d3dplot/
 ├─ simulation/
 │  ├─ discover.py           folder → FmSimulation | SmtSimulation; MDU selection rules
 │  ├─ subrun.py             SubRun (folder, MduInfo, partitions, output files)
-│  ├─ partitions.py         partition file discovery; MergePlan build/load/verify
-│  ├─ reader.py             MapReader: read(variable, subrun, time_index, selection) → global face array
+│  ├─ partitions.py         partition file discovery; MergePlan (faces and edges) build/load/verify
+│  ├─ reader.py             MapReader: read(raw variable, subrun, time_index) → global face/edge array (only used by the engine)
 │  ├─ timeaxis.py           TimeAxis (merged SMT axis, duplicate handling, selection, matching)
 │  ├─ status.py             SimulationStatus detection (.dia tails, work folder, last time vs TStop)
 │  └─ quality.py            corruption/consistency checks of output (time/morft/values)
 ├─ variables/
-│  ├─ registry.py           VariableSpec registry (names, aliases, NetCDF candidates, dims, units, label key)
-│  ├─ derived.py            derived quantities (mean grain size, Froude, …)
+│  ├─ registry.py           VariableSpec registry: raw and derived specs (names, aliases, NetCDF candidates, inputs, dims, units, label key)
+│  ├─ engine.py             QuantityEngine: dependency graph, read each raw input once, compute derived, per-task memory cache (§7.9a)
+│  ├─ derived/              derived quantities: hydrodynamics.py (Froude, specific discharge, velocity vector),
+│  │                        spatial.py (vorticity, …; uses grid geometry), sediment.py (mean grain size, transport magnitude)
 │  └─ selection.py          fraction/layer/vertical reductions
 ├─ geometry/
 │  ├─ river_km.py           RiverKmFile (fixed format), edges, cut lines, segment polygons (§4.5)
@@ -817,6 +820,41 @@ Raw NetCDF names are always accepted.
 
 **Selection order** for a variable: fraction(s) → bed layer / vertical selection → reduction (sum of fractions, depth average). This yields one value per face per time.
 
+### 7.9a Quantity engine: central reading and derived quantities (D50)
+
+Several plotted quantities are not stored in the map file but computed from one or more stored variables, e.g. the Froude number, the vorticity, the specific discharge or the mean grain size. Matlab does this in one central function, `gdm_read_data_map_simdef.m` (a `switch` over `Fr`, `vorticity`, `qsp`, `dm`, `Ltot`, `stot`, …), used by all tags. The Python tool keeps that idea, as **one engine used by every analysis**:
+
+* **No analysis reads model output directly.** M2D, SMB and every future analysis ask the `QuantityEngine` (`variables/engine.py`) for `(quantity, selection)` pairs at a sub-run and time. Only the engine calls `MapReader` (§7.6).
+* **Registry of quantities.** A `VariableSpec` (§7.9) is either
+  * `raw`: read from `netcdf_candidates`; or
+  * `derived`: `inputs` (other quantity names, raw or derived), `requires` (grid geometry, `.sed` fractions, `.mor` settings, constants), `compute(inputs, context) → array`, `location`, units and label key, and a `version` that enters the fingerprint.
+* **Dependency resolution.** For a request, the engine builds the dependency graph, detects cycles at registration time, and **reads every raw input once** per (sub-run, time), even if several requested quantities or several analyses need it. The arrays live in a per-task memory cache that is cleared after each time.
+* **Where selections apply.** Each derived spec declares `selection: inputs` (default: vertical/fraction selection is applied to the inputs before computing, e.g. Froude from depth-averaged velocity and depth) or `selection: output`.
+* **Grid information** needed by spatial operators (face–edge connectivity, edge lengths and orientation signs, face areas, neighbours) is computed once per merge plan in the inspect phase and stored in `cache/grid.nc` (§9.3). Spatial operators work on **global** arrays, which the merge plan provides, so they are correct across partition boundaries.
+* **Validation.** Requested quantities are resolved during validation: a missing input reports V-VAR-002 with the dependency chain (e.g. `vorticity → mesh2d_u1 missing in sub-runs 3–5`).
+* **Extensible.** Projects can register their own derived quantities through the entry point `d3dplot.quantities` (same mechanism as analyses and hooks), with tests.
+
+**v1 derived quantities** (definitions; each gets a unit test with hand-computed values and an analytic test on the synthetic case):
+
+| Quantity | Matlab | Inputs | Definition |
+|----------|--------|--------|------------|
+| `froude_number` | `Fr` | `velocity_magnitude`, `water_depth` | `‖u‖ / sqrt(g·h)`, NaN where `h < dry_depth_m` (default 0.01 m) |
+| `specific_discharge` | `qsp` | `velocity_magnitude`, `water_depth` | `‖u‖·h` (m²/s) |
+| `vorticity` | `vorticity` (`D3D_vorticity_from_u1`) | `mesh2d_u1` (edge normal velocity), grid geometry | circulation per face: `ω_f = Σ_{e∈f} s_{f,e}·u1_e·L_e / A_f`, with `s` the edge orientation sign, `L` the edge length, `A` the face area |
+| `mean_grain_size_arithmetic` / `_geometric` | `dm` / `dg` | `layer_fraction`, `.sed` diameters | `Σ F_k D_k` / `2^{Σ F_k log2 D_k}` (Matlab definitions, to be confirmed against `gdm_read_data_map_mean_grain_size.m`) |
+| `total_sediment_transport_magnitude` | `stot` | `mesh2d_sxtot`, `mesh2d_sytot` (per fraction) | `sqrt(sx² + sy²)` per fraction (component dimension, §8.2) |
+| `velocity_vector` | `uv` | `mesh2d_ucx`, `mesh2d_ucy` | two components; used by M2D velocity arrows |
+
+Later (same mechanism): streamfunction, Shields number, piezometric head (`E`), total sediment thickness (`Ltot`), morphological area (`ba_mor`).
+
+**Edge-located inputs** (e.g. `mesh2d_u1`): the merge plan (§7.6) also has an **edge part**. Owned edges per partition are those whose owning face (first of `mesh2d_edge_faces`) is owned by the partition. Their global positions are matched by edge mid-point coordinates against the merged grid (KD-tree, 1 mm, one-to-one, error on ambiguity). Coverage is checked as for faces (V-OUT-020).
+
+**Two levels of "derived"** (not to be confused):
+* **face-level** derived quantities: computed by the engine from model output, before any analysis (this section);
+* **analysis-level** post-processing: computed by an analysis from its own processed results, e.g. SMB `bed_slope_streamwise` from segment means, or values × width (§8.2).
+
+**Sharing between analyses.** The process stage runs **one `ProcessTask` per (simulation × sub-run) for all analyses together** (D27, revised). The planner collects the requests of all analyses for that sub-run, the engine reads each raw input once, and each analysis then reduces the arrays in memory (M2D writes face values, SMB computes segment statistics). The `bed_level` needed by both M2D and SMB is therefore read once.
+
 ### 7.10 Cache store and reprocessing
 
 **Output root of a simulation** (precise rule):
@@ -939,7 +977,7 @@ Applied in the plot stage, from cached values:
 | inspect | `InputTask` | each river-km file, `.ldb`, region, catalogue, `.mat` | `cache/inputs/*`, `cache/measurements/profiles/*`, `catalogue_<hash>.csv` |
 | prepare | `GeometryTask` | simulation × region × km set; simulation × extent | `cache/geometry/*` |
 | prepare | `MeasurementWindowTask` | catalogue × extent × plot time (× difference) | `cache/measurements/map2d/*` |
-| process | `ProcessTask` | simulation × **sub-run** × analysis (all requested variables and times of that sub-run) | one data file per (variable, selection, time) |
+| process | `ProcessTask` | simulation × **sub-run**, for **all analyses** together (D27): the quantity engine (§7.9a) reads each raw input once, each analysis reduces in memory | one data file per (analysis, quantity, selection, time) |
 | plot | `PlotGroupTask` | subject (simulation, or simulation vs reference, or all) × variable × comparison × block of times (map2d); view × comparison × variable × region group (SMB) | PNGs |
 | movie | `MovieTask` | sequence of frames | mp4 |
 
@@ -959,7 +997,7 @@ Every task key contains the subject (and the reference label for simulation diff
 * `HDF5_USE_FILE_LOCKING=FALSE` (reading NetCDF4 files on network drives; read-only access);
 * logging through a `QueueHandler` to the main process.
 
-**Sharding**: `--shard i/N` executes only the tasks whose **stable digest** satisfies `int.from_bytes(blake2b(task.key.encode()).digest()[:8], "big") % N == i`. Python's `hash()` is randomised per process and must not be used. Task keys are canonical strings (e.g. `process|map2d|r001|subrun=3`), frozen by tests. This is the building block for SLURM arrays.
+**Sharding**: `--shard i/N` executes only the tasks whose **stable digest** satisfies `int.from_bytes(blake2b(task.key.encode()).digest()[:8], "big") % N == i`. Python's `hash()` is randomised per process and must not be used. Task keys are canonical strings (e.g. `process|r001|subrun=3`), frozen by tests. This is the building block for SLURM arrays.
 
 **Failure handling**: a failing task is logged with its traceback and does not stop other tasks. The run summary lists failures, and the exit code is non-zero if any task failed. A re-run retries only failed or missing outputs.
 
@@ -1172,7 +1210,7 @@ The map settings form one configuration block, `MapViewConfig` (§10.1), used as
 * measurements → windows per (extent, time) (§7.15);
 * tiles per extent (optional).
 
-**Process** (`ProcessTask` per simulation × sub-run): for each requested time in that sub-run and each variable and selection, read the global face array (§7.6) and apply the selection (§7.9). Write `data/map2d/<variable>/<selection>/<time>.nc`.
+**Process** (inside the shared `ProcessTask` per simulation × sub-run, §7.13): for each requested time in that sub-run, the quantity engine (§7.9a) returns the global face array of each requested quantity and selection (raw or derived, e.g. `froude_number`, `vorticity`). M2D writes them to `data/map2d/<variable>/<selection>/<time>.nc`.
 * Variables: `values(face)`.
 * Attributes: fingerprint, hydrodynamic and morphological time (ISO, with offset), sub-run, variable, units, selection.
 
@@ -1209,7 +1247,7 @@ Images = times × extents × colour-limit sets. Differences between simulations 
 2. Compute region membership (boundary inclusive, §4.5) on face centres → `geometry/region_<name>.nc`.
 3. Assign faces to segments (shared cut lines → lower index) → `geometry/segments_<region>_<set>.nc` (§9.6). Coverage and overlap checks; a diagnostic figure if requested.
 
-**Process** (`ProcessTask` per simulation × sub-run): for each time, variable, region and km set, read the global face values and keep the faces with a segment index ≥ 0 and finite values. Compute **all** statistics per segment, vectorised with `numpy` `bincount`-style reductions on the segment index. Write `data/river_km_statistics/<region>/<set>/<variable>/<time>.nc`, holding `values(segment, statistic[, component])` with coordinates `km_centre`, `km_edge_start/end`, `segment_length_m`.
+**Process** (inside the shared `ProcessTask` per simulation × sub-run, §7.13): for each time, variable, region and km set, the quantity engine (§7.9a) returns the global face values (raw or derived, e.g. `froude_number`); SMB keeps the faces with a segment index ≥ 0 and finite values. Compute **all** statistics per segment, vectorised with `numpy` `bincount`-style reductions on the segment index. Write `data/river_km_statistics/<region>/<set>/<variable>/<time>.nc`, holding `values(segment, statistic[, component])` with coordinates `km_centre`, `km_edge_start/end`, `segment_length_m`.
 
 **Multi-dimensional variables** (Matlab `var_idx` with several indices, e.g. `Fak` or `stot` per sediment fraction): when the selection keeps one extra dimension (`fractions: [1, 2, …]` or `"all"`, without `sum_fractions`), the statistics are computed **per component**, and the data file has the extra dimension `component` (with the fraction names from the `.sed` file as labels). At most one extra dimension is kept; more is a validation error (V-VAR-005). The NaN/Inf exclusion is applied per component.
 
@@ -1284,13 +1322,15 @@ The YAML alternative has the same fields plus optional `type`, `crs`, `value_fie
 
 * `grid.nc`: UGRID-1.0 `mesh2d` as written by xugrid (`Ugrid2d.to_dataset()`), plus `mesh2d_flowelem_ba` (face area), `mesh2d_face_x/y` and global attribute `crs` (from the configuration if EPSG 0).
 * `merge_plan.nc`:
-  * dimensions `plan`, `partition`, `owned_face`, `subrun`;
+  * dimensions `plan`, `partition`, `owned_face`, `owned_edge`, `subrun`;
   * `plan_of_subrun(subrun)`;
-  * per plan: `partition_offset(plan, partition)`, `partition_n_owned(plan, partition)`, `owned_local(plan, owned_face)` (local face index in the partition file, 0-based), `global_pos(plan, owned_face)`, `grid_file(plan)`;
+  * per plan, faces: `partition_offset(plan, partition)`, `partition_n_owned(plan, partition)`, `owned_local(plan, owned_face)` (local face index in the partition file, 0-based), `global_pos(plan, owned_face)`, `grid_file(plan)`;
+  * per plan, edges (§7.9a): `edge_partition_offset`, `edge_partition_n_owned`, `edge_owned_local(plan, owned_edge)`, `edge_global_pos(plan, owned_edge)`;
   * `signature(subrun, partition)` (hex string, §7.6);
-  * attributes `n_faces`, `reference_subrun`, `matching` (`globalnr` | `coordinates`).
+  * attributes `n_faces`, `n_edges`, `reference_subrun`, `matching` (`globalnr` | `coordinates`).
   
   Most simulations have a single plan.
+* `grid.nc` also stores the grid geometry for spatial operators (§7.9a): `face_edges(face, max_edges)`, `face_edge_sign(face, max_edges)` (+1/−1 orientation), `edge_length(edge)`, `face_area(face)`.
 
 ### 9.4 River-km profile measurements (canonical NetCDF; recommended input for new data)
 
@@ -1651,7 +1691,7 @@ Maintenance: when a decision in §2 changes a rule, update `AGENTS.md` or the in
 
 ## 14. Upstream contributions
 
-Upstream changes are made by the user (a contributor of both repositories) on **local branches** in `c:\checkouts\HYDROLIB-core` and `c:\checkouts\dfm_tools` (D49); issues and pull requests follow when the user decides. Workflow: skill `upstream-contribution` (§13.6). Develop each item first behind an adapter in `d3dplot`, with tests. Propose it upstream when stable, then switch to the upstream version and pin the minimum version. Track the status in `docs/upstream.md`. The HYDROLIB-core MDU change is the exception: the tool reads the MDU with HYDROLIB-core directly (D22), so that change comes first (§14.1).
+Upstream changes are made by the user (a contributor of both repositories) locally in `c:\checkouts\HYDROLIB-core` and `c:\checkouts\dfm_tools` (D49); branches on GitHub, issues and pull requests follow when the user decides. Recommended: a local feature branch from the start (creating local branches needs no access); work committed on local `main` can still be moved to a branch later (recipe in skill `upstream-contribution`). Workflow: skill `upstream-contribution` (§13.6). Develop each item first behind an adapter in `d3dplot`, with tests. Propose it upstream when stable, then switch to the upstream version and pin the minimum version. Track the status in `docs/upstream.md`. The HYDROLIB-core MDU change is the exception: the tool reads the MDU with HYDROLIB-core directly (D22), so that change comes first (§14.1).
 
 | Repository | Contribution | Why | Priority |
 |------------|--------------|-----|----------|
@@ -1777,14 +1817,15 @@ Upstream changes are made by the user (a contributor of both repositories) on **
 | WP | Content | Done when |
 |----|---------|-----------|
 | 2.1 | Inspect phase: partition identity, merge plan(s) + `grid.nc`, topology signatures, reference sub-run selection (§7.6, §9.3) | Values equal dfm_tools on the synthetic case; `corrupt_partition` handled; a fixture with changed topology produces two plans. (local) `r209` merge plan built |
-| 2.2 | `MapReader`, quality checks, `times.nc`, `TimeAxis` (merge, duplicates, tz, selection, matching) | Synthetic `time_axis.csv` reproduced; V-OUT-030/031, V-TIME-* tested |
-| 2.3 | Execution: tasks, planner, fingerprints and skipping, serial/process executors, worker init, logging queue, run summary, **diagnostic file** (D41), sharding | Parallel-equivalence and resumability tests pass; the `.dia` of a synthetic run lists the selected times, the resolved duplicates and the masked corrupt outputs of `corrupt_partition` |
+| 2.2 | `MapReader` (faces and edges), quality checks, `times.nc`, `TimeAxis` (merge, duplicates, tz, selection, matching) | Synthetic `time_axis.csv` reproduced; V-OUT-030/031, V-TIME-* tested |
+| 2.2a | **Quantity engine** (§7.9a): raw/derived registry, dependency resolution, read-once memory cache, grid geometry in `grid.nc`, edge merge plan, v1 derived quantities (Froude, specific discharge, vorticity, velocity vector, mean grain size, transport magnitude), entry point `d3dplot.quantities`. **Generator extension**: the synthetic case gets `mesh2d_ucx`, `mesh2d_ucy`, `mesh2d_u1` (edge normal velocity) with an analytic vorticity (e.g. solid-body rotation component), and `mesh2d_sxtot`/`sytot` per fraction, plus expected values | Each raw input read once per (sub-run, time) even when requested by several quantities and analyses (counting test); derived values equal analytic ones (vorticity on the interior faces, including across partition boundaries); missing input → V-VAR-002 with the dependency chain |
+| 2.3 | Execution: tasks, planner (one `ProcessTask` per simulation × sub-run for all analyses, D27), fingerprints and skipping, serial/process executors, worker init, logging queue, run summary, **diagnostic file** (D41), sharding | Parallel-equivalence and resumability tests pass; the `.dia` of a synthetic run lists the selected times, the resolved duplicates and the masked corrupt outputs of `corrupt_partition` |
 
 ### 15.4 Phase 3: `map2d`
 
 | WP | Content | Done when |
 |----|---------|-----------|
-| 3.1 | Process (selections, files §9.5) | Values equal the analytic fields |
+| 3.1 | Process through the quantity engine (raw and derived quantities, selections, files §9.5) | Values equal the analytic fields, incl. `froude_number` and `vorticity` |
 | 3.2 | Plot: **common finalisation** (§7.14a: style, language, hooks with `hooks_mode`, metadata, writer), **shared views** (§7.14b: `MapView`, `MapDecorations`, `ExtentSet` incl. windows along a river-km file separate from the label file), templates, visible-face subsets, render modes, comparisons incl. regridding, naming | Image baselines; `--fresh-figures` identical; hook test (one added line per image); windows file ≠ labels file test |
 | 3.3 | Overlays: `.ldb` (HYDROLIB-core `PolyFile` + cache), river-km labels, background tiles (contextily + persistent cache, D42) | Shown in the baseline images; tiles test uses a pre-filled cache (no network in CI) |
 | 3.4 | Map measurements: catalogue, rasters (VRT, factor, mosaic, resampling), polygons (filters, id matching), differences, panel, `color_limits_from_measurements` | Synthetic catalogue cases (inside/outside tolerance, cm factor, shifted grid, shuffled polygons) correct |
@@ -1796,7 +1837,7 @@ Upstream changes are made by the user (a contributor of both repositories) on **
 |----|---------|-----------|
 | 4.1 | River-km file + providers (data files for Rijntakken/Maas, generic), edges, cutoffs, angles, cut lines, polygons, checks | Property tests; Rijntakken track tables tested; synthetic geometry as expected |
 | 4.2 | Regions, segment assignment, coverage/overlap checks, diagnostic plot | `cells_per_segment_250m.csv` reproduced |
-| 4.3 | Process statistics; post-processing (slope, × width, region differences, time averages) | `smb_*.csv` reproduced exactly (incl. NaN/Inf exclusion) |
+| 4.3 | Process statistics through the quantity engine (also for derived quantities, e.g. Froude per segment); post-processing (slope, × width, region differences, time averages) | `smb_*.csv` reproduced exactly (incl. NaN/Inf exclusion); a run with M2D and SMB on `bed_level` reads `mesh2d_mor_bl` once per time |
 | 4.4 | Plots on the shared views: profile/space-time/time-series views, groupings, region groups, `x_limits`, **lines vs stacked areas** for multi-component variables (`display`), **diagnostic maps** `segment_map` (full model + windows along km) and `segment_membership` on `MapView`; hooks through the finalisation | Image baselines; synthetic `layer_fraction` (3 fractions) gives a stacked-area profile; diagnostic maps reuse the M2D windows |
 | 4.5 | Profile measurements: `.mat` → NetCDF (v5; v7.3 later), matching, plotting | Synthetic `.mat` converted (sorted times, units); measurements drawn at the right times |
 
@@ -1805,7 +1846,7 @@ Upstream changes are made by the user (a contributor of both repositories) on **
 | WP | Content |
 |----|---------|
 | 5.1 | Acceptance case 1 on `r209` (§13.4) incl. coordinate-based face matching and performance targets |
-| 5.2 | Matlab comparison on the synthetic case (needs the user's Matlab run) |
+| 5.2 | Matlab comparison on the synthetic case (Matlab results exist since 2026-10-26; extend the Matlab script with derived quantities after WP 2.2a) |
 | 5.3 | SLURM stub (`slurm write`), `--shard` documentation |
 | 5.4 | Documentation (user guide, references, "from Matlab", gallery), agent skills |
 | 5.5 | Release v1.0 on **PyPI** as `delft3d-plot` (D44): GitHub Actions workflow on tags (`v*`) building sdist + wheel with hatchling, publishing with PyPI Trusted Publishing (no tokens); TestPyPI dry run first; GitHub release with the changelog. Requires WP 0.2 |
@@ -1858,12 +1899,14 @@ Resolved with the user (v6.1–v6.3):
 * SMB stacked areas and diagnostic maps are planned (§8.2);
 * D24 and D27–D40 agreed;
 * the Matlab reference run of the synthetic case is done (the generator needed explicit `statis_plot` and empty `rkm_track`);
-* upstream changes stay on local branches; the user is a contributor (D49);
+* upstream changes are developed locally; the user is a contributor (D49). A local feature branch is recommended, local `main` is possible (skill `upstream-contribution`);
 * agent guidance files (D48, §13.6).
 
 Still open:
-1. **Merge plan** (D21): explained in plain words at the start of §7.6. Agreement needed before Phase 2.
-2. **HYDROLIB-core contribution** (§14.1): when should WP 0.1 start (local branch, D49)?
+1. **Quantity engine** (D50, §7.9a) and the revised unit of work of the process stage (D27): agreement needed before Phase 2. Also: which derived quantities beyond the v1 list (§7.9a) are needed first?
+
+Scheduling (no decision needed): the HYDROLIB-core change (WP 0.1, §14.1) is done as the first task of Phase 1, on a local branch, because reading the MDU (WP 1.5) depends on it. The merge plan (D21) is agreed in general terms (v6.6).
+
 ## 18. Glossary
 
 | Term | Meaning |
@@ -1872,7 +1915,9 @@ Still open:
 | Sub-run | One D-Flow FM run within an SMT simulation |
 | Partition | Part of the domain computed by one MPI process; one map file `<stem>_<pppp>_map.nc` |
 | Ghost cell | A face stored in a partition file but owned by another partition (`mesh2d_flowelem_domain ≠ p`) |
-| Merge plan | Per partition: owned local face indices and their position in the merged grid |
+| Merge plan | Per partition: owned local face (and edge) indices and their position in the merged grid |
+| Quantity engine | The single service that reads raw model variables and computes derived quantities for all analyses (§7.9a) |
+| Raw / derived quantity | Stored in the map file / computed from other quantities (e.g. Froude, vorticity) |
 | `morft` | Morphological time in the map file (time units) |
 | MorFac, spin-up | Morphological acceleration factor; initial hydrodynamic period without bed updates (`MorStt`) |
 | River km (rkm) | Chainage along a river axis; fixed-format file `x, y, <km>_<TAG>, km` |
@@ -2024,6 +2069,8 @@ Principles:
 | v5 | Answers on measurements, `r209` findings, synthetic SMT case specification and generator |
 | v6 | Thorough review against real data (merge plan, tolerant MDU parsing, corrupt partitions, time zones, duplicate morphological times, float64, task granularity, path lengths); `.ldb`-only land boundaries; independent review (14 issues fixed: inspect phase, recursive fingerprints, topology signatures, deterministic sharding and geometry, derived-statistic definitions, verified versions); consolidated, self-contained plan with handover, file formats, validation catalogue and work packages |
 | v6.1 | User answers: last duplicate and masking of corrupt output, both written to a new per-run diagnostic file (`.dia`); `.ldb` read with HYDROLIB-core; contextily cache replaces `earth_tiles`; uv and float64 agreed; HYDROLIB-core keyword contribution analysed (`ResearchFMModel` fails only on 7 keywords) |
+| v6.6 | Merge plan agreed in general terms; D27 explained; HYDROLIB-core change scheduled as first task of Phase 1 |
+| v6.5 | Quantity engine for raw and derived quantities (Froude, vorticity, …) shared by all analyses, edge merge plan, one process task per sub-run for all analyses (D50, D27 revised, §7.9a); upstream work on local `main` or branch (D49) |
 | v6.4 | Agent guidance (`AGENTS.md`, plotting instruction, two skills); Matlab reference run of the synthetic case done; local upstream branches (user is contributor) |
 | v6.3 | Common figure finalisation with hooks for all figures (D46); shared plot building blocks for M2D and SMB diagnostic maps, windows along a river-km file separate from the label file (D47); SMB lines vs stacked areas for multi-component variables; SMB diagnostic maps (`segment_map`, `segment_membership`); float32 cache (D26); D24, D27–D40 agreed |
 | v6.2 | MDU read with HYDROLIB-core `ResearchFMModel` after modifying HYDROLIB-core (detailed plan §14.1, cross-checked with the official `mdu.json`); Maas `.ldb` recreated from the `.mat` (`tools/mat_to_ldb.py`); PyPI distribution as `delft3d-plot`; plain-language explanation of the merge plan |

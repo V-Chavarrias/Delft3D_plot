@@ -29,6 +29,7 @@ If a building block is missing upstream and is general, implement it upstream (s
 
 ## 4. Implement
 - Package layout of plan §7.2: `analyses/<name>/{config,process,plot}.py`; register through the `d3dplot.analyses` entry point.
+- New quantities (e.g. a new derived variable) go into the quantity engine registry (`variables/`, plan §7.9a) with `inputs`, `compute`, units, label key and a version; analyses only request quantities from the engine.
 - Time-aware UTC, float64 computation, float32 storage, atomic writes through the store.
 - No `savefig`/`plt.close` outside the finalisation.
 

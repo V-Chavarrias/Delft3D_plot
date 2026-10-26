@@ -5,7 +5,15 @@ argument-hint: "Which repository and what change, e.g. 'HYDROLIB-core: MDU sedim
 ---
 # Contribute to HYDROLIB-core or dfm_tools
 
-The user is a contributor of both repositories and can create branches and pull requests. **For now, changes stay local** (no push, no PR) unless the user asks.
+The user is a contributor of both repositories. **For now, changes stay local** (no push, no PR) unless the user asks.
+
+**Branch or `main`?** Creating a *local* branch needs no access rights; access is only needed to push. Use a local feature branch from the start (step 3): `git pull` on `main` keeps working, several changes stay separate, and the PR is ready when access exists. If work was committed on local `main` anyway, move it later:
+```powershell
+git -C <checkout> switch -c feat/<short_title>      # new branch at the current main, keeps the commits
+git -C <checkout> switch main
+git -C <checkout> reset --hard origin/main          # only after checking `git -C <checkout> log origin/main..feat/<short_title>`
+```
+With uncommitted changes, `git switch -c feat/<short_title>` alone moves them to the new branch. The editable install in d3dplot's `.venv` follows whatever is checked out.
 
 | Repository | Checkout | Remote | Conventions |
 |------------|----------|--------|-------------|

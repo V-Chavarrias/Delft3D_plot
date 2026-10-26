@@ -24,6 +24,10 @@ Use **HYDROLIB-core** for model input (MDU via `ResearchFMModel(path, recurse=Fa
 - Cache derived inputs (`.ldb`, river-km files, geometry) in the store, keyed by fingerprint.
 - Cache values are float32 on disk, computations in float64 (D26).
 
+## Reading model output and derived quantities
+
+Analyses never read model files directly. They request quantities from the **quantity engine** (`variables/engine.py`, plan §7.9a), which reads each raw variable once per sub-run and time and computes derived quantities (Froude, vorticity, …) from a registry. A new quantity is a registry entry (`raw` or `derived` with `inputs` and `compute`), never code inside an analysis.
+
 ## Figures
 
 Every figure goes through `plotting.finalize.finalize_figure` (plan §7.14a): style, language, user hooks, metadata, saving, closing. Never call `savefig`/`plt.close` in analysis code. Build plots from the shared blocks in `plotting/views/` (plan §7.14b). Details: `.github/instructions/plotting.instructions.md`.
