@@ -1,6 +1,6 @@
 # Delft3D_plot (Python): Architecture and Implementation Plan
 
-Status: **v6.16, plain-FM generator variants implemented locally; their discovery acceptance is pending WP 1.6, and WP 1.1 remote CI is pending.** The package skeleton, synthetic case, and generator are in place; analysis functionality is not yet implemented. See [the synthetic case generator](https://github.com/V-Chavarrias/Delft3D_plot/blob/main/tools/synthetic_smt/README.md). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
+Status: **v6.18; plain-FM generator variants are implemented locally, with their discovery acceptance pending WP 1.6 and WP 1.1 remote CI pending. WP 1.3 is complete locally on `feat/config-models`; plugin config integration is deferred to the analysis registry (D59).** The package skeleton, configuration system, synthetic case, and generator are in place; analysis functionality is not yet implemented. See [the synthetic case generator](https://github.com/V-Chavarrias/Delft3D_plot/blob/main/tools/synthetic_smt/README.md). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
 
 Document map:
 * §0 Session handover
@@ -33,8 +33,8 @@ Document map:
 
 | Item | Location | State |
 |------|----------|-------|
-| Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `feat/plain-fm-synthetic-variants`, local and unpushed |
-| Plan (this file) | `docs/architecture.md` | v6.16 |
+| Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `feat/config-models`, local and unpushed |
+| Plan (this file) | `docs/architecture.md` | v6.18 |
 | Licence | `LICENSE` | GPL-3.0 |
 | Synthetic SMT and plain FM test case generator | `tools/synthetic_smt/` | Implemented and verified locally (§13.3) |
 | Land-boundary converter (`.mat` cache → `.ldb`) | `tools/mat_to_ldb.py` | Implemented. Used to recreate the Maas land boundary (D45) |
@@ -42,7 +42,8 @@ Document map:
 | Recreated Maas land boundary | `data_local/maas/j21_ldb.ldb` (55.7 MB) | Git-ignored. 174 220 polylines, 2 343 057 points; read by HYDROLIB-core in 22 s, identical to the `.mat` |
 | HYDROLIB-core modification | §14.1 | Local commit `54011e0d` on `feat/mdu_morphology_keywords`; implementation and verification complete, not pushed or proposed upstream |
 | Python environment | `.venv/` (uv, Python 3.12) | Git-ignored. dfm_tools and HYDROLIB-core are installed editable from the local checkouts |
-| Package `d3dplot` | `pyproject.toml`, `src/d3dplot/` | Skeleton implemented (WP 1.1); analysis functionality pending |
+| Package `d3dplot` | `pyproject.toml`, `src/d3dplot/` | Skeleton (WP 1.1) and built-in configuration system (WP 1.3) implemented; analysis functionality pending |
+| Configuration design | §2 decisions D57–D59 | Nested `times` object and shared `map.render`; WP 1.3 complete locally; plugin config integration deferred to the analysis registry |
 | Synthetic-case pytest fixture | `tests/conftest.py` | Session-scoped fixture generates and verifies in pytest's temporary folder (WP 1.2) |
 | CI and documentation site | `.github/workflows/ci.yml`, `mkdocs.yml` | Configured; local checks pass, remote CI not run |
 | Matlab reference results of the synthetic case | `data_local/synthetic_smt_01/simulations/r00*/mat`, `fig` | **Done** (2026-10-26): r001 37 mat + 1071 PNG, r002 37 mat + 858 PNG. Protected: `generate.py --force` refuses to delete them without `--discard-matlab-reference` |
@@ -108,9 +109,10 @@ APIs the design relies on (check them first when upgrading):
 2. **WP 1.1** (§15.2) is complete locally on branch `feat/repository-skeleton`, commit `29b08d3`. Editable installation, smoke test, Ruff, mypy, pre-commit config validation, and strict docs build pass on Windows/Python 3.12; the Windows/Linux GitHub Actions matrix is configured but has not run remotely.
 3. **WP 1.2** is complete locally on branch `feat/synthetic-case-fixture`: `synthetic_case` generates and verifies once per test session in `tmp_path_factory`; its integration test confirms model and expected-result files. The CI-eligible suite passed (2 tests, 18.85 s).
 4. **WP 1.2a generator deliverables** are implemented locally on branch `feat/plain-fm-synthetic-variants`: `fm_partitioned` and `fm_single` each have one run and 40 map times, with shared expected time-axis and SMB statistics. The generator self-check passes; final discovery acceptance remains pending WP 1.6.
-5. Next, implement **WP 1.3**: configuration models, YAML IO, overrides, resolved-config writer and JSON schema.
+5. **WP 1.3** is complete locally on `feat/config-models`: Pydantic models for the built-in analyses, safe YAML/JSON IO, `--set` overrides, resolved-config writer, and JSON Schema. Use nested `times: {at, axis, tolerance}` (D57) and the shared `map.render` option (D58). Plugin config discovery and schema support are deferred until the `d3dplot.analyses` registry is implemented (D59). The 12 focused configuration tests, 14-test CI-eligible suite, Ruff, strict mypy, lock check, pre-commit validation, and strict documentation build passed on Windows/Python 3.12.
 6. Set d3dplot's minimum HYDROLIB-core version to the first upstream release containing WP 0.1; do not guess or pin an unreleased version.
 7. The Matlab reference results of the synthetic case exist: add the Matlab comparison tests (WP 5.2) as soon as the cache is produced (from Phase 3).
+8. Next, implement WP 1.4: the validation report, stable validation codes, and static configuration checks.
 
 ---
 
@@ -209,6 +211,9 @@ Status: **A** = agreed with the user; **P** = proposed in this plan and awaiting
 | D54 | **All quantities of the §7.9a catalogue are in v1**, including the 3D ones (layer mean, chloride mass, residence times, vertical selections), and the stream functions. Exceptions: `morphodynamic_celerity` (ECT is not ported or coupled for now) and the section quantities, which belong to PRF (D55) | User | A |
 | D55 | **Reading along a line (plot type PRF) is a second phase.** v1 reads quantities on the whole grid only (faces, edges internally). The engine already takes a `Sampling` argument (§7.9b) so that line sampling, the section quantities and the PRF analysis can be added later without changing the engine, the store or the analyses of v1 | User | A |
 | D56 | `Geometry.inifieldfile` accepts a `DiskOnlyFileModel` as well as `IniFieldModel` when `recurse=False`, preserving path-only loading and allowing `ResearchFMModel(path, recurse=False)` to load MDUs that reference an initial-fields file | Reproduced on the synthetic MDU and real `r209` before the new keywords are reached; user approved this WP 0.1 scope expansion on 2026-10-26 | A |
+| D57 | Time selection uses one nested `times` object: `at` selects `all`, `last`, explicit times, indices, or a range; `axis` selects hydrodynamic or morphological time; `tolerance` controls matching. Measurement-specific tolerances remain scoped to their measurement settings | User selected the §10.2 nested YAML shape over the separate Appendix A names | A |
+| D58 | The map rendering mode is `map.render` in the shared `MapViewConfig`; `figure` contains global figure styling and output settings | User selected the shared map-settings path over `figure.render` | A |
+| D59 | WP 1.3 validates and exports schemas for the built-in analyses only. Plugin config discovery, validation, and schema integration are delivered with the `d3dplot.analyses` entry-point registry | Keep WP 1.3 bounded and define the plugin config contract alongside the analysis registry | A |
 
 ## 3. Review of the plan (v6)
 
@@ -524,7 +529,7 @@ Second real case, a **regular (non-SMT) D-Flow FM simulation** (acceptance case 
 | Status | "Computation finished" in the 4 partition `.dia` files, not in `RIJN.dia` (same pattern as `r209`) |
 | HYDROLIB-core | `FMModel` rejects 8 keywords (`[geometry]` 3, `[output]` 5); `ResearchFMModel` rejects only `[geometry]` `calculateBedLevelOverNonActiveLinks`, `circumcenterMethod`, `circumcenterTolerance` → added in PR 1 (§14.1) |
 
-What it tests: plain FM discovery (DIMR with several components), `StartDateTime` handling, time-block parallelism (109 times, §7.13), hexagonal faces, a hydrodynamic-only run (`time_axis: morphological` must be rejected, V-TIME-012), derived quantities from velocity (Froude, vorticity from `mesh2d_u1`).
+What it tests: plain FM discovery (DIMR with several components), `StartDateTime` handling, time-block parallelism (109 times, §7.13), hexagonal faces, a hydrodynamic-only run (`times.axis: morphological` must be rejected, V-TIME-012), derived quantities from velocity (Froude, vorticity from `mesh2d_u1`).
 
 ## 6. Libraries and tools
 
@@ -612,9 +617,11 @@ src/d3dplot/
 ├─ __init__.py              public API: Project, Simulation, analyses, load_config, __version__
 ├─ cli.py                   typer app (§11)
 ├─ config/
+│  ├─ base.py               ConfigModel, fixed-UTC-offset and duration types
 │  ├─ project.py            ProjectConfig, SimulationConfig, OutputConfig, ExecutionConfig, LabelsConfig
+│  ├─ analysis.py           AnalysisConfigBase, shared fields and processing policies
 │  ├─ selections.py         Times, Vertical, Fractions
-│  ├─ figure.py             FigureConfig (color_limits, extents, formats, render, …)
+│  ├─ figure.py             FigureConfig (style, formats, hooks_mode, line limits), MapViewConfig (map settings including render)
 │  ├─ measurements.py       MapMeasurementsConfig, PolygonFilters, ProfileMeasurementsConfig
 │  └─ io.py                 load/save YAML/JSON, resolved config, JSON schema export, --set overrides
 ├─ model_input/
@@ -651,7 +658,7 @@ src/d3dplot/
 │  ├─ mat_convert.py        Matlab .mat → profile NetCDF
 │  └─ match.py              time/location matching
 ├─ analyses/
-│  ├─ base.py               Analysis protocol, registry (entry points "d3dplot.analyses")
+│  ├─ base.py               Analysis protocol and entry-point registry ("d3dplot.analyses"); plugin config models join validation/schema here (D59)
 │  ├─ map2d/                config.py, process.py, plot.py
 │  └─ river_km_statistics/  config.py, geometry.py, process.py, postprocess.py, plot.py
 ├─ comparisons.py           value/difference operators, regridding cache
@@ -816,13 +823,14 @@ The rest of this section specifies how the plan is built, validated and used.
 
 **File names** of cache data and figures: the **hydrodynamic** time in the simulation's offset, `%Y%m%dT%H%M%S`. It is unique per output; morphological time is not (F5). Both times are stored as attributes.
 
-**Selecting times**, on the configured `time_axis` (`hydrodynamic` | `morphological`):
-* `all`, `last`, an explicit list (+ `time_tolerance`), `{indices: […]}` or `{start, end, step}`.
-* For each explicit time, the **candidates** are the outputs within `time_tolerance`. None → V-TIME-010 (error, listing the nearest available times).
+**Selecting times**, on `times.axis` (`hydrodynamic` | `morphological`):
+* The nested `times` object has `at`, `axis` and `tolerance` fields (D57). `at` accepts `all`, `last`, an explicit list, `{indices: […]}` or `{start, end, step}`.
+* In the WP 1.3 models, `at` defaults to `all`, `axis` to `hydrodynamic`, and `tolerance` is unset (`null`). WP 2.2 must define the runtime matching behavior when an explicit selection has no configured tolerance.
+* For each explicit time, the **candidates** are the outputs within `times.tolerance`. None → V-TIME-010 (error, listing the nearest available times).
 * **Duplicates** (one rule for every case): candidates whose times on the selection axis differ by less than `duplicate_tolerance` from the nearest candidate form a duplicate group. Default: 60 s on the morphological axis, 1 s on the hydrodynamic axis. The 60 s default covers the spin-up drift observed in `r209` (11.5 s), while distinct morphological outputs are at least `MorFac × map interval` apart (days in practice). Within a group, the **last** output in hydrodynamic order is selected (agreed: the state after the spin-up of that sub-run). `duplicate_morphological_times: "first"` remains available for comparisons with other tools. Every resolved duplicate is written to the diagnostic file (D41): requested time, candidates with both times, and the chosen output. Boundary duplicates are already removed by §7.7, so this rule only sees distinct outputs.
 * The selected outputs are listed in the run summary with both times, so the choice is visible.
 
-**Matching between simulations** (`time_matching`): `reference` (default; every simulation uses the reference simulation's selected times, matched within `time_tolerance` with the same duplicate rule) or `own`.
+**Matching between simulations** (`time_matching`): `reference` (default; every simulation uses the reference simulation's selected times, matched within `times.tolerance` with the same duplicate rule) or `own`.
 
 **Measurements**:
 * catalogue times carry offsets;
@@ -1111,7 +1119,7 @@ Every task key contains the subject (and the reference label for simulation diff
   * the measurement panel if configured.
 * **Loop**: for each time, `collection.set_array(values[visible])` and update the title; for each colour-limit set, `collection.set_clim(...)` → save.
 * **Line template** (SMB profiles, time series): axes, structures/hooks and measurement artists are created once; only line data change.
-* **Render modes** (`figure.render`):
+* **Render modes** (`map.render`, shared by map2d and river-km diagnostic maps):
   * `polygons`;
   * `raster`: values rasterised on the figure's pixel grid with xugrid, then `imshow`;
   * `auto` *(default)*: raster when faces per screen pixel exceed 1.
@@ -1297,7 +1305,7 @@ The map settings form one configuration block, `MapViewConfig` (§10.1), used as
 ### 8.1 `map2d` (Matlab M2D)
 
 **Configuration** (main fields; full names in Appendix A):
-* `variables`, `times` (+ `time_axis`, `time_tolerance`), `vertical`, `fractions`;
+* `variables`, `times: {at, axis, tolerance}`, `vertical`, `fractions`;
 * `comparisons` (§7.12);
 * `figure` (fonts, size, dpi, hooks via finalisation §7.14a) and `map` (the shared map view §7.14b: `color_limits`, `extents`, `extents_along_river_km`, `river_km_labels`, `land_boundaries`, `background_tiles`, `aspect`, `colormap`, `render`);
 * `measurements`, `movie`, `export`, `hooks`.
@@ -1505,8 +1513,8 @@ ProjectConfig
 ├─ hooks: ["module:function", …]                (applied to every figure; §7.21)
 ├─ reprocess / replot: if_changed | never | always
 ├─ on_corrupt_output: mask | error | skip         (default mask; every masking goes to the diagnostic file)
-└─ analyses: [Map2DConfig | RiverKmStatisticsConfig | plugin configs]
-     each with: figure (overrides), hooks, and — where maps are drawn — map: MapViewConfig
+└─ analyses: [Map2DConfig | RiverKmStatisticsConfig] (plugin configs join with the analysis registry; D59)
+     each with: times, figure (overrides), hooks, and — where maps are drawn — map: MapViewConfig
 MapViewConfig (shared by map2d and the SMB diagnostic maps, §7.14b)
 ├─ color_limits, colormap, render, aspect
 ├─ extents: [[xmin, xmax, ymin, ymax], …]       (null = full model)
@@ -1519,6 +1527,16 @@ MapViewConfig (shared by map2d and the SMB diagnostic maps, §7.14b)
 * All models use `extra="forbid"`.
 * Defaults live in the models; global options are inherited by analyses unless overridden.
 * `d3dplot schema > d3dplot.schema.json` exports a JSON schema for editor autocompletion.
+* WP 1.3 currently accepts the two built-in analysis discriminators only. Third-party plugin models will be discovered, validated, and included in the schema when the `d3dplot.analyses` registry is implemented (D59).
+
+The following WP 1.3 model defaults were not specified elsewhere in the plan:
+
+| Setting | Default |
+|---------|---------|
+| `times` | `at: all`, `axis: hydrodynamic`, `tolerance: null` (unset) |
+| `figure` | `font_size: 10` pt, `font_family: DejaVu Sans`, `size_cm: [16, 10]`, `dpi: 150` |
+| `map` | `colormap: viridis`, `render: auto`, `aspect: auto` |
+| `river_km_statistics` | `statistics: [mean_area_weighted]`, `views: [profile]` |
 
 ### 10.2 YAML example (Maas acceptance case, abbreviated)
 
@@ -1635,7 +1653,7 @@ Codes are stable, documented, and tested one by one. **E** = error, **W** = warn
 | V-TIME-002 | W | Time zone conflict between map units, MDU `Tzone` and configuration |
 | V-TIME-010 | E | Requested time not available within the tolerance (lists the nearest) |
 | V-TIME-011 | W | Requested time hits a corrupt output (`on_corrupt_output` decides) |
-| V-TIME-012 | E | `time_axis: morphological` requested for a simulation without morphology (no `morft`) |
+| V-TIME-012 | E | `times.axis: morphological` requested for a simulation without morphology (no `morft`) |
 | V-VAR-001 | E | Unknown variable (with "did you mean") |
 | V-VAR-002 | E | Variable missing in some sub-runs |
 | V-VAR-003 | E | Fraction or layer index out of range |
@@ -1959,7 +1977,7 @@ Typed `MorphologyModel` (`.mor`) and `SedimentModel` (`.sed`), if specification 
 | 1.1 | Repository skeleton | `pyproject.toml` (deps §6; extras `tiles`, `movies`, `dev`, `docs`), `src/d3dplot/__init__.py`, ruff/mypy/pytest config, pre-commit, CI workflow, MkDocs skeleton, `CONTRIBUTING.md`, `CHANGELOG.md`, commitizen | `uv pip install -e .[dev]` works; CI green on Windows + Linux with a smoke test; docs build |
 | 1.2 | Synthetic case as a test fixture | `tests/conftest.py`: session fixture adding `tools/synthetic_smt` to `sys.path` and generating into `tmp_path_factory`; marker `requireslocaldata` | Integration tests can use `synthetic_case` |
 | 1.2a | **Plain FM variants in the generator** (§13.3): `fm_partitioned` (one MDU at the root with `dimr_config.xml`, output in `DFM_OUTPUT_<stem>/`, 3 partitions, ~40 map times so that time blocks are exercised), `fm_single` (non-partitioned, `OutputDir` set explicitly), both without `smt.yml`; expected time axis and SMB statistics | Discovery classifies them as FM with one sub-run; the same tests as for SMT pass on them |
-| 1.3 | Configuration | `config/*` models, YAML IO, `--set` overrides, resolved-config writer, JSON schema | Round trip YAML ↔ models; unknown keys rejected; schema exported |
+| 1.3 | Configuration | Built-in `config/*` models (nested `times` and shared `map.render`, D57–D59), YAML IO, `--set` overrides, resolved-config writer, JSON schema; plugin config support deferred to the analysis registry | Round trip YAML ↔ models; unknown keys rejected; schema exported |
 | 1.4 | Validation framework | `validate/report.py`, codes, text/JSON output, static checks V-CFG-* | Each code has a test |
 | 1.5 | Model input | `model_input/*` (`MduInfo` on `ResearchFMModel(recurse=False)`; `.mor`, `.sed` with the INI parser; DIMR) | Synthetic MDU/`.mor`/`.sed` parsed; V-MDU-001 lists unknown keywords. (local) real `r209` files parsed with the HYDROLIB-core branch of WP 0.1 |
 | 1.6 | Discovery | `simulation/discover.py`, `subrun.py`, partition file discovery, V-SIM-*, V-OUT-001..003 | All synthetic variants classified correctly |
@@ -2069,7 +2087,7 @@ Resolved with the user (v6.1–v6.3):
 * upstream changes are developed locally; the user is a contributor (D49). A local feature branch is recommended, local `main` is possible (skill `upstream-contribution`);
 * agent guidance files (D48, §13.6).
 
-Still open: none. The plan is ready for execution (§0.4).
+Still open: the runtime behavior for an explicit time selection with `times.tolerance: null`; WP 2.2 must settle this before implementing time matching. No user decisions are otherwise pending.
 
 Scheduling (no decision needed): the HYDROLIB-core change (WP 0.1, §14.1) is done as the first task of Phase 1, on a local branch, because reading the MDU (WP 1.5) depends on it. The merge plan (D21) is agreed in general terms (v6.6).
 
@@ -2122,7 +2140,7 @@ Principles:
 | `do_diff_t_first_time` | `include_initial_time_difference` | Also plot the zero difference at t₀ |
 | `do_diff_s_ref_sim` | `include_reference_in_differences` | Also plot ref − ref |
 | `use_local_time` | `time_matching: reference \| own` | |
-| `tim_tol` | `time_tolerance` | |
+| `tim_tol` | `times.tolerance` | |
 
 ### A.2 Common options
 
@@ -2141,7 +2159,7 @@ Principles:
 | `var_idx` / `sum_var_idx` | `fractions` / `sum_fractions` |
 | `layer`, `depth_average`, `depth_average_limits`, `elevation` | `vertical` |
 | `tim` | `times` |
-| `tim_type` | `time_axis: hydrodynamic \| morphological` |
+| `tim_type` | `times.axis: hydrodynamic \| morphological` |
 | `xlims` / `ylims` | `extents` (maps); `x_limits`, `y_limits` (line plots) |
 | `clims`, `clims_diff_t`, `clims_diff_s`, … | `color_limits: {<variable>: {<comparison>: [[min, max], …]}}` |
 | `ylims_diff_*` | `y_limits: {<variable>: {<comparison>: […]}}` |
@@ -2176,7 +2194,7 @@ Principles:
 | `measurements_edgecolor` | `measurements.<variable>.edge_color` |
 | `measurements_tag_*`, `measurements_coverage`, `measurements_pol_location` | `measurements.<variable>.polygon_filters: {preset, value_field, count_field, area_field, min_coverage, location_field, allowed_locations, id_field}` |
 | `do_clims_measurements` | `measurements.<variable>.color_limits_from_measurements` |
-| — | `measurements.<variable>.layout`, `mosaic`; `figure.render` |
+| — | `measurements.<variable>.layout`, `mosaic`; `map.render` |
 
 ### A.4 `river_km_statistics`
 
@@ -2201,7 +2219,7 @@ Principles:
 | `do_area` | `display: auto \| lines \| stacked_area` (per variable; auto = stacked area for multi-component variables) |
 | `do_val_B`, `do_val_B_mor` | `multiply_by_width: none \| flow \| morphological` |
 | `detab_ds` | variable `bed_slope_streamwise` |
-| `tim_ave`, `tim_ave_type` | `time_averages: [{name, times, time_axis}]` |
+| `tim_ave`, `tim_ave_type` | `time_averages: [{name, times: {at, axis, tolerance}}]` |
 | `do_plot_inpolygon`, `do_plot_inpoly` | `diagnostics: [segment_map, segment_membership]` |
 | `do_plot_structures` | `structures_overlay` (or a hook) |
 | `plot_val0`, `do_staircase`, `do_marker`, `xdir` | `show_initial`, `staircase`, `markers`, `x_reversed` |
@@ -2241,6 +2259,8 @@ Principles:
 | v6.14 | WP 1.1 package skeleton, dependency lock, CI/docs setup, contributor guide and smoke test implemented locally; local checks pass and remote CI remains pending |
 | v6.15 | WP 1.2 session-scoped synthetic-case fixture and integration smoke test implemented; full generator self-check runs once per pytest session; handover moves to WP 1.2a |
 | v6.16 | Added 40-time `fm_partitioned` and `fm_single` plain-FM cases, expected time axis/SMB statistics and generator checks; discovery acceptance remains for WP 1.6; next handover is WP 1.3 |
+| v6.17 | Resolved configuration-path conflicts with user decisions D57–D58: nested `times: {at, axis, tolerance}` and shared `map.render`; WP 1.3 started on `feat/config-models` |
+| v6.18 | Completed WP 1.3 locally: built-in configuration models and IO, documented model defaults and actual package layout, deferred plugin config integration to the analysis registry (D59), and added the configuration page to MkDocs navigation; next handover is WP 1.4 |
 | v6.10 | All catalogue quantities in v1 except `morphodynamic_celerity` (D54): 3D layers, residence times (`.sub` via HYDROLIB-core), section quantities (API), new WP 2.2b, V-VAR-006; no open questions |
 | v6.9 | Constants from the model (D53): `Ag`, `Rhomean` from the MDU, `RhoSol` per fraction from the `.sed`; Shields per fraction; Rijn case limited to M2D figures; D50 agreed |
 | v6.8 | HYDROLIB-core PR 1 reduced to the agreed 6 `[sediment]` + 3 `ResearchGeometry` keywords (D51); catalogue of all Matlab derived quantities with definitions and phases (§7.9a); Rijn plain FM run as reference and acceptance case 2 (§5.5, §13.4a, D52); DIMR with several components, `StartDateTime`, V-TIME-012 |

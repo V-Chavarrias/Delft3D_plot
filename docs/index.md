@@ -8,6 +8,7 @@ for the analysis and plotting functionality described in the architecture plan.
 ## Project documents
 
 - [Architecture plan](./architecture.md)
+- [Configuration](./configuration.md)
 - [Upstream contributions](./upstream.md)
 
 For development setup and checks, see the root-level `CONTRIBUTING.md` file.

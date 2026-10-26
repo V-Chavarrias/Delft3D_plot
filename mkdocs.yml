@@ -12,6 +12,7 @@ theme:
 nav:
   - Home: index.md
   - Architecture: architecture.md
+  - Configuration: configuration.md
   - Upstream contributions: upstream.md
 
 plugins:

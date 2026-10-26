@@ -5,9 +5,9 @@ Before adding an option, check whether the concept already has a name. Full tabl
 | Concept | Name | Values / type |
 |---------|------|---------------|
 | Variables to analyse | `variables` | canonical names (`bed_level`, …), aliases and raw NetCDF names accepted |
-| Times | `times` | `all`, `last`, list, `{indices}`, `{start, end, step}` |
-| Time axis | `time_axis` | `hydrodynamic` \| `morphological` |
-| Time matching tolerance | `time_tolerance` | duration |
+| Times | `times.at` | `all`, `last`, list, `{indices}`, `{start, end, step}` |
+| Time axis | `times.axis` | `hydrodynamic` \| `morphological` |
+| Time matching tolerance | `times.tolerance` | duration |
 | Duplicate morphological times | `duplicate_morphological_times` | `last` \| `first` |
 | Pairing simulations in time | `time_matching` | `reference` \| `own` |
 | Comparisons | `comparisons` | `value`, `difference_time`, `difference_simulation`, `difference_simulation_time`, `difference_simulation_relative` |

@@ -34,7 +34,7 @@ Every figure goes through `plotting.finalize.finalize_figure` (plan §7.14a): st
 
 ## Names and options
 
-- Reuse existing option names for the same concept (`times`, `time_axis`, `time_tolerance`, `comparisons`, `color_limits`, `extents`, `extents_along_river_km`, `river_km_labels`, `land_boundaries`, `hooks`, `display`, …). Check plan Appendix A and `src/d3dplot/config/` before adding a new one.
+- Reuse existing option names for the same concept (`times`, `times.axis`, `times.tolerance`, `comparisons`, `color_limits`, `extents`, `extents_along_river_km`, `river_km_labels`, `land_boundaries`, `hooks`, `display`, …). Check plan Appendix A and `src/d3dplot/config/` before adding a new one.
 - Full English `snake_case`, no `do_` flags, enums instead of magic numbers, units in names when ambiguous (`half_width_m`).
 - Every new option: pydantic field with description and default, Appendix A row if it replaces a Matlab flag, docs, test.
 
