@@ -7,7 +7,7 @@ import math
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 
-GENERATOR_VERSION = "0.1.0"
+GENERATOR_VERSION = "0.2.0"
 
 TZ = timezone(timedelta(hours=1))
 REFERENCE_TIME = datetime(2021, 2, 8, tzinfo=TZ)
@@ -60,6 +60,7 @@ class Params:
     spinup_s: float = 86_400.0
     hydro_days_after_spinup: tuple[float, ...] = (3.0, 6.0, 12.0, 9.0)
     stage_m: tuple[float, ...] = (0.0, 1.0, 2.5, 0.5)
+    plain_fm_map_times: int = 40
 
     simulations: tuple[SimulationParams, ...] = field(
         default_factory=lambda: (

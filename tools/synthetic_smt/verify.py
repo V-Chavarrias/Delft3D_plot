@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Self-check of a generated case with the libraries the tool will use (HYDROLIB-core, dfm_tools, rasterio, ...)."""
+"""Self-check generated SMT and plain FM cases with the libraries the tool will use."""
 
 from __future__ import annotations
 
@@ -23,7 +23,13 @@ def verify(case: Path):
     from hydrolib.core.dflowfm.polyfile.models import PolyFile
     from hydrolib.core.dimr.models import DIMR
 
-    from fields import bed_level, map_fields, subrun_times
+    from expected import SEGMENT_LENGTH
+    from fields import (
+        bed_level,
+        map_fields,
+        plain_fm_times,
+        subrun_times,
+    )
     from mesh import make_centreline, make_mesh
     from params import Params
 
@@ -31,6 +37,7 @@ def verify(case: Path):
     p = Params()
     mesh = make_mesh(p, make_centreline(p))
     runs = subrun_times(p)
+    plain_run = plain_fm_times(p)
     sim_dir = case / "simulations" / "r001"
 
     # HYDROLIB-core can read the MDU (without loading referenced files) and the DIMR configuration
@@ -70,6 +77,54 @@ def verify(case: Path):
         with netCDF4.Dataset(bad / "dflowfm_0001_map.nc") as ds1, netCDF4.Dataset(bad / "dflowfm_0000_map.nc") as ds0:
             assert ds1["time"][1] != ds0["time"][1] and abs(ds1["mesh2d_mor_bl"][1, :]).max() > 1e300
         _ok("variants: non-partitioned readable; running has output/work; gap misses sub-run 2; corrupt partition present")
+
+    plain_partitioned = case / "simulations" / "fm_partitioned"
+    plain_single = case / "simulations" / "fm_single"
+    assert not (plain_partitioned / "smt.yml").exists()
+    assert not (plain_single / "smt.yml").exists()
+    assert not (plain_single / "dimr_config.xml").exists()
+    assert list(plain_partitioned.glob("*.mdu")) == [plain_partitioned / "dflowfm.mdu"]
+    assert list(plain_single.glob("*.mdu")) == [plain_single / "dflowfm.mdu"]
+    mdu_partitioned = FMModel(plain_partitioned / "dflowfm.mdu", recurse=False)
+    assert float(mdu_partitioned.time.tstop) == plain_run.tstop
+    assert mdu_partitioned.output.outputdir == ""
+    dimr = DIMR(plain_partitioned / "dimr_config.xml")
+    assert dimr.component[0].inputFile.name == "dflowfm.mdu"
+    _ok(
+        "plain FM MDUs parse; partitioned run has a root DIMR config; "
+        "neither has an SMT manifest"
+    )
+
+    partitioned_output = plain_partitioned / "DFM_OUTPUT_dflowfm"
+    partition_maps = sorted(partitioned_output.glob("dflowfm_????_map.nc"))
+    assert len(partition_maps) == p.n_partitions
+    merged_plain = open_partitioned_dataset(
+        str(partitioned_output / "dflowfm_0*_map.nc")
+    )
+    assert merged_plain.sizes["mesh2d_nFaces"] == mesh.n_faces
+    assert merged_plain.sizes["time"] == len(plain_run.time)
+    with netCDF4.Dataset(partition_maps[0]) as ds:
+        partition_time = ds["time"][:]
+        partition_morft = ds["morft"][:]
+        assert "mesh2d_flowelem_domain" in ds.variables
+    single_mdu = FMModel(plain_single / "dflowfm.mdu", recurse=False)
+    assert str(single_mdu.output.outputdir) == "single_output"
+    single_map = plain_single / "single_output" / "dflowfm_map.nc"
+    merged_single = open_partitioned_dataset(str(single_map))
+    assert merged_single.sizes["mesh2d_nFaces"] == mesh.n_faces
+    assert merged_single.sizes["time"] == len(plain_run.time)
+    with netCDF4.Dataset(single_map) as ds:
+        single_time = ds["time"][:]
+        single_morft = ds["morft"][:]
+        assert "mesh2d_flowelem_domain" not in ds.variables
+    np.testing.assert_array_equal(partition_time, plain_run.time)
+    np.testing.assert_array_equal(partition_morft, plain_run.morft)
+    np.testing.assert_array_equal(single_time, plain_run.time)
+    np.testing.assert_array_equal(single_morft, plain_run.morft)
+    _ok(
+        "plain FM: partitioned and single maps merge to the global mesh "
+        "with 40 expected map times"
+    )
 
     # land boundary: .ldb only, readable by HYDROLIB-core
     ldb = PolyFile(case / "inputs" / "ldb" / "synthetic.ldb")
@@ -118,4 +173,24 @@ def verify(case: Path):
     bl0 = bed_level(p, mesh.face_s, mesh.face_n, 0.0, sim.erosion_rate_m_per_day)
     assert np.isfinite(bl0).all()
     _ok("expected results consistent (40 summer-bed cells per segment; NaN/Inf excluded)")
+
+    plain_expected = case / "expected" / "plain_fm"
+    with (plain_expected / "time_axis.csv").open() as fh:
+        plain_axis = list(csv.DictReader(fh))
+    assert len(plain_axis) == len(plain_run.time)
+    np.testing.assert_array_equal(
+        [float(row["time_s"]) for row in plain_axis], plain_run.time
+    )
+    np.testing.assert_array_equal(
+        [float(row["morft_s"]) for row in plain_axis], plain_run.morft
+    )
+    with (plain_expected / "smb_r001_L1R1_250m.csv").open() as fh:
+        plain_smb = list(csv.DictReader(fh))
+    assert len(plain_smb) == len(plain_run.time) * int(
+        round(p.length / SEGMENT_LENGTH)
+    )
+    _ok(
+        "plain FM expected time axis and SMB statistics are generated "
+        "for all map times"
+    )
     print("Verification passed")

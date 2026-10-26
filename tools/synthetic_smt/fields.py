@@ -21,7 +21,7 @@ class SubRunTimes:
     index: int
     tstart: float  # s since reference (map time units)
     tstop: float
-    time: np.ndarray  # map times (3): start, end of spin-up, end
+    time: np.ndarray  # hydrodynamic map times (s since reference)
     morft: np.ndarray  # morphological time at the map times (s since reference)
 
 
@@ -35,6 +35,14 @@ def subrun_times(p: Params) -> list[SubRunTimes]:
         runs.append(SubRunTimes(k, tstart, tstop, time, np.array([mor, mor, mor_end])))
         tstart, mor = tstop, mor_end
     return runs
+
+
+def plain_fm_times(p: Params) -> SubRunTimes:
+    """One regular run spanning the hydrograph duration, with one initial spin-up."""
+    tstop = p.spinup_s + sum(p.hydro_days_after_spinup) * DAY
+    time = np.linspace(0.0, tstop, p.plain_fm_map_times)
+    morft = np.maximum(time - p.spinup_s, 0.0) * p.morfac
+    return SubRunTimes(0, 0.0, tstop, time, morft)
 
 
 def bed_level(p: Params, s, n, t_mor_s, erosion_rate_m_per_day: float):

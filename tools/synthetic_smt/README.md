@@ -1,6 +1,6 @@
-# Synthetic SMT case generator
+# Synthetic SMT and plain FM case generator
 
-Generates a small, artificial D-Flow FM **SMT** simulation (input and output) with the structure and file formats of the Maas run `r209`, plus project inputs and measurements in the formats of the Maas project. All fields are analytic, so expected results are known. See [docs/architecture.md §13.3](../../docs/architecture.md).
+Generates small, artificial D-Flow FM **SMT and plain FM** simulations with the structure and file formats of the Maas run `r209`, plus project inputs and measurements in the formats of the Maas project. All fields are analytic, so expected results are known. See [docs/architecture.md §13.3](../../docs/architecture.md).
 
 No project data is used or copied: the real run was only inspected to reproduce its *structure*.
 
@@ -30,12 +30,15 @@ It also checks that every map variable has all its time steps.
 |------|---------|
 | `simulations/r001`, `r002` | SMT runs: `smt.yml`, `sed/`, `output/0..3/` with `dflowfm.mdu`, `dflowfm_000p.mdu`, `mor.mor`, `dimr_config.xml`, `synthetic_net.nc`, `results/dflowfm_000p_map.nc`, `.dia`. r002 erodes faster. r001 has NaN/Inf bed levels in a few cells (sub-run 2, last time) |
 | `simulations/variants/` | `running` (has `output/work`; last sub-run truncated), `crashed` (stopped before `TStop`), `non_partitioned`, `gap` (sub-run 2 missing), `corrupt_partition` (sub-run 0, partition 1: garbage `time`/`morft` and ±1e308 values at map times 1–2, as `r209` sub-run 0 partition 0021) |
+| `simulations/fm_partitioned/` | Plain FM: one root `dflowfm.mdu`, `dimr_config.xml`, three partition map files, 40 map times in `DFM_OUTPUT_dflowfm/`; no `smt.yml` |
+| `simulations/fm_single/` | Plain FM: one root `dflowfm.mdu`, one unpartitioned map file and explicit `OutputDir=single_output`; no `smt.yml` |
 | `inputs/rkm/` | river-km files in the fixed format `x, y, <km>_<TAG>, km`: Maas (`MA`), generic (`SY`), Rijntakken (`WA`); 100 m, 1 km and 3 km spacing |
 | `inputs/regions/` | `L1R1` (summer bed), `L1L3`/`R1R3` (halves), `WIDE` (whole width) |
 | `inputs/ldb/` | land boundary as `.ldb` (Tekal), the only accepted input format (a `.mat` is only ever a cache) |
 | `inputs/measurements/smb/` | `<region>_measured.mat`: `data.<var>.val_mean.{rkm, s, unit, tim_dnum, val}` + `source`, with unsorted times |
 | `inputs/measurements/2d/` | VRT mosaic of 2 GeoTIFF tiles; a half-pixel-shifted GeoTIFF in cm (factor 0.01); a GeoTIFF outside the time tolerance; polygon shapefiles ("vakken", fields `MEAN`, `COUNT`, `A`, `locatie`, `code_uniek`, with failing coverage/location filters and shuffled order); catalogues `catalogue_raster.csv`, `catalogue_vakken.csv` |
 | `expected/` | merged SMT time axis; cells per 250 m segment; SMB statistics per simulation and region (Matlab definitions) |
+| `expected/plain_fm/` | one-run time axis and SMB statistics used by both plain FM variants |
 | `scripts/main_plot_synthetic.m` | Matlab `D3D_plot` input. Run it once to create the Matlab reference (`mat/`, `fig/` in the simulation folders) |
 
 Features reproduced from `r209`:
