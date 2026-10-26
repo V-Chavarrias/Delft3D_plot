@@ -154,6 +154,7 @@ def test_validate_accepts_registered_and_present_raw_variables(
         tmp_path,
         synthetic_case / "simulations" / "r001",
         ["bed_level", "mesh2d_s1", "mesh2d_face_x"],
+        output_root=tmp_path / "generated",
     )
 
     result = runner.invoke(
@@ -163,6 +164,57 @@ def test_validate_accepts_registered_and_present_raw_variables(
 
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout) == {"valid": True, "issues": []}
+    assert (
+        tmp_path / "generated" / "reference" / "d3dplot" / "cache" / "merge_plan.nc"
+    ).is_file()
+
+
+@pytest.mark.integration
+def test_inspect_builds_and_reuses_cache_for_selected_simulation(
+    synthetic_case: Path,
+    tmp_path: Path,
+) -> None:
+    output_root = tmp_path / "generated"
+    configuration = tmp_path / "project.yaml"
+    configuration.write_text(
+        yaml.safe_dump(
+            {
+                "simulations": [
+                    {
+                        "path": str(synthetic_case / "simulations" / "r001"),
+                        "label": "smt",
+                    },
+                    {
+                        "path": str(synthetic_case / "simulations" / "fm_single"),
+                        "label": "plain",
+                    },
+                ],
+                "analyses": [{"analysis": "map2d", "variables": ["bed_level"]}],
+                "output": {"root": str(output_root)},
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    first = runner.invoke(
+        app,
+        ["inspect", str(configuration), "--simulation", "smt"],
+    )
+
+    assert first.exit_code == 0, first.output
+    assert "smt: 1 merge plan(s)" in first.stdout
+    assert "cache built" in first.stdout
+    assert (output_root / "smt" / "d3dplot" / "cache" / "merge_plan.nc").is_file()
+    assert not (output_root / "plain" / "d3dplot").exists()
+
+    second = runner.invoke(
+        app,
+        ["inspect", str(configuration), "--simulation", "smt"],
+    )
+
+    assert second.exit_code == 0, second.output
+    assert "cache reused" in second.stdout
 
 
 @pytest.mark.integration
@@ -252,12 +304,16 @@ def _write_config(
     tmp_path: Path,
     simulation: Path,
     variables: list[str],
+    *,
+    output_root: Path | None = None,
 ) -> Path:
     configuration = tmp_path / "project.yaml"
-    data = {
+    data: dict[str, object] = {
         "simulations": [{"path": str(simulation), "label": "reference"}],
         "analyses": [{"analysis": "map2d", "variables": variables}],
     }
+    if output_root is not None:
+        data["output"] = {"root": str(output_root)}
     configuration.write_text(
         yaml.safe_dump(data, sort_keys=False),
         encoding="utf-8",

@@ -1,8 +1,9 @@
 # Command-line interface
 
 Install the package, then use either the `d3dplot` command or
-`python -m d3dplot`. The CLI currently provides read-only simulation inspection,
-configuration schema output, validation, and starter-configuration generation.
+`python -m d3dplot`. The CLI provides read-only simulation summaries, guarded
+output inspection, configuration schema output, validation, and
+starter-configuration generation.
 
 ## Inspect a simulation
 
@@ -23,6 +24,24 @@ only the first map-file header from each sub-run; status detection may read the
 metadata it needs to determine completion times and state. They do not build a
 merge plan, create a cache, or modify model files. A simulation without map
 output can still be inspected with `info` and is reported as `not_started`.
+
+## Build the output-inspection cache
+
+```powershell
+d3dplot inspect project.yaml
+d3dplot inspect project.yaml --simulation reference
+```
+
+`inspect` builds or reuses the grid and merge-plan caches for every configured
+simulation, or only the one selected by label. It checks partition identity and
+topology, selects a time-consistent reference sub-run, and reports the cache
+location and whether it was built or reused. Plain FM output without global face
+numbers uses one-to-one face-centre matching within 1 mm and reports the
+coordinate-matching fallback as `V-OUT-023`.
+
+Generated caches are written atomically beneath the configured, guarded
+`output.root` (or the simulation's default `d3dplot` output folder). Model files
+remain read-only. `inspect` does not process quantities or create figures.
 
 ## Create a starter configuration
 
@@ -54,11 +73,11 @@ when it is found in the configured simulations; missing fields produce
 available. Section quantities such as `velocity_parallel`, `velocity_perpendicular`,
 and `discharge` produce `V-VAR-006` because line sampling is not part of v1.
 
-Derived quantity dependencies, grid checks, and the metadata cache are handled
-by the model-output engine work packages; this CLI validation step does not
-build the Phase 2 inspect cache. Errors produce a non-zero exit code. Text is
-the default report format; JSON reports have the stable shape
-`{"valid": true, "issues": []}`.
+When these checks have no errors, `validate` also builds or reuses the same
+grid and merge-plan caches as `inspect`. Derived quantity dependencies,
+processing, and plotting remain future model-output work. Errors produce a
+non-zero exit code. Text is the default report format; JSON reports have the
+stable shape `{"valid": true, "issues": []}`.
 
 ## Print the configuration schema
 

@@ -1,6 +1,6 @@
 # Delft3D_plot (Python): Architecture and Implementation Plan
 
-Status: **v6.30; WP 1.10 is complete on `feat/variables` and WP 1.11 is complete locally on `feat/cli-part-1`. The CLI provides read-only simulation inspection, schema output, configuration/variable validation without building the Phase 2 inspect cache, and a no-overwrite starter configuration. WP 2.1 is next.** The package foundations, configuration system, validation framework, synthetic cases, simulation inspection, and first CLI commands are in place; analysis functionality is not yet implemented. See [the synthetic case generator](https://github.com/V-Chavarrias/Delft3D_plot/blob/main/tools/synthetic_smt/README.md). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
+Status: **v6.31; WP 1.10 and WP 1.11 are complete locally. The WP 2.1 implementation and synthetic acceptance tests are complete on `feat/inspect-phase`; the real r209 merge-plan acceptance remains pending. The CLI provides read-only `info`/`variables`, schema output, configuration/variable validation with guarded grid and merge-plan cache inspection, a dedicated `inspect` command, and a no-overwrite starter configuration. Resume with the r209 acceptance before WP 2.2.** The package foundations, configuration system, validation framework, synthetic cases, simulation inspection, and first CLI commands are in place; quantity processing and analysis functionality are not yet implemented. See [the synthetic case generator](https://github.com/V-Chavarrias/Delft3D_plot/blob/main/tools/synthetic_smt/README.md). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
 
 Document map:
 * §0 Session handover
@@ -33,8 +33,8 @@ Document map:
 
 | Item | Location | State |
 |------|----------|-------|
-| Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `feat/cli-part-1`, local and unpushed; WP 1.10 and WP 1.11 are complete |
-| Plan (this file) | `docs/architecture.md` | v6.30 |
+| Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `feat/inspect-phase`, local and unpushed; WP 1.10/WP 1.11 complete; WP 2.1 implementation and synthetic acceptance complete, r209 acceptance pending |
+| Plan (this file) | `docs/architecture.md` | v6.31 |
 | Licence | `LICENSE` | GPL-3.0 |
 | Synthetic SMT and plain FM test case generator | `tools/synthetic_smt/` | Implemented and verified locally (§13.3) |
 | Land-boundary converter (`.mat` cache → `.ldb`) | `tools/mat_to_ldb.py` | Implemented. Used to recreate the Maas land boundary (D45) |
@@ -51,7 +51,7 @@ Document map:
 | Output store | `src/d3dplot/store/` | WP 1.8 implemented locally; guarded marked roots, atomic writers, fingerprints, and input snapshots are tested |
 | Labels | `src/d3dplot/labels/` | WP 1.9 implemented locally; 141 variable aliases, 127 complete translations, and 22 unit types are packaged and tested |
 | Variables | `src/d3dplot/variables/` | WP 1.10 complete locally; 10 raw and 23 derived v1 specs, aliases, NetCDF candidates, suggestions, and generated documentation |
-| CLI | `src/d3dplot/cli.py` | WP 1.11 complete: console and module entry points; `info`, `variables`, `schema`, `validate`, and no-overwrite `init` |
+| CLI | `src/d3dplot/cli.py` | WP 1.11 and WP 2.1 implementation: console and module entry points; `info`, `variables`, `schema`, `validate`, `inspect`, and no-overwrite `init` |
 | Synthetic-case pytest fixture | `tests/conftest.py` | Session-scoped fixture generates and verifies in pytest's temporary folder (WP 1.2) |
 | CI and documentation site | `.github/workflows/ci.yml`, `mkdocs.yml` | 129 CI-eligible tests, strict mypy, strict docs, changed-file Ruff/format, and `git diff --check` pass; remote CI not run |
 | Matlab reference results of the synthetic case | `data_local/synthetic_smt_01/simulations/r00*/mat`, `fig` | **Done** (2026-10-26): r001 37 mat + 1071 PNG, r002 37 mat + 858 PNG. Protected: `generate.py --force` refuses to delete them without `--discard-matlab-reference` |
@@ -127,7 +127,8 @@ APIs the design relies on (check them first when upgrading):
 12. **WP 1.8** is complete locally on `feat/store`: output-root precedence, marked-root and forbidden-path guards, atomic text/bytes/JSON writers, canonical recursive fingerprints, and before/after input snapshots are covered. V-OUT-041 reports forbidden, unwritable, and invalid output roots. All 82 CI-eligible tests, strict mypy, strict MkDocs, and changed-file Ruff/format checks pass.
 13. **WP 1.9** is complete locally on `feat/labels`: the Matlab mapping and translation catalogs are packaged with completed en/nl/es entries, comparison templates, and unit-scale definitions. The API supports project extra dictionaries, datum/fraction formatting, and warned NetCDF metadata fallback. All 100 CI-eligible tests, strict mypy, strict MkDocs, and changed-file Ruff/format checks pass; the wheel contains all three CSV resources.
 14. **WP 1.10** is complete locally on `feat/variables`: the registry covers 10 raw and 23 derived v1 quantities, resolves canonical names, Matlab aliases, and registered NetCDF candidates case-insensitively, and raises V-VAR-001 with canonical suggestions. Generated `docs/variables.md` is tested against the registry; the three missing label translations were added. All 115 CI-eligible tests, strict mypy, changed-file Ruff/format checks, and strict MkDocs pass. The registry is metadata-only; computation callbacks remain WP 2.2a/b.
-15. **WP 1.11** is complete locally on `feat/cli-part-1`: added the `d3dplot` console entry point and `python -m d3dplot`, plus `info`, `variables`, `schema`, `validate`, and `init`. Inspection reads the first map-file header per sub-run for variables and CRS; validation combines configuration checks, V-VAR name/raw-field availability checks, and simulation discovery without building an inspect cache. `init` writes commented YAML and refuses to overwrite a target. All 129 CI-eligible tests, strict mypy, changed-file Ruff/format, strict MkDocs, and `git diff --check` pass; both CLI entry points were smoke-tested. WP 2.1 is next.
+15. **WP 1.11** is complete locally on `feat/cli-part-1`: added the `d3dplot` console entry point and `python -m d3dplot`, plus `info`, `variables`, `schema`, `validate`, and `init`. `info`/`variables` read the first map-file header per sub-run for variables and CRS; the initial `validate` scope combined configuration checks, V-VAR name/raw-field availability checks, and simulation discovery without building an inspect cache (D63). `init` writes commented YAML and refuses to overwrite a target. WP 2.1 now adds cache inspection to `validate` and the dedicated `inspect` command (D64).
+16. **WP 2.1 implementation** is on `feat/inspect-phase`: partition identity, topology signatures, time-consistent reference selection, coordinate fallback, merge plans, grid geometry, atomic guarded caches, and CLI integration are implemented. Synthetic tests compare scattered values with dfm_tools, cover cache reuse, plain-FM coordinate matching, corrupt reference selection, invalid identity, and changed topologies; validation also builds/reuses caches when earlier checks have no errors. Read-only r209 discovery found 195 sub-runs and no issues in 200.628 s, but the full inspect run did not finish after more than 20 minutes and was stopped at the user's request. Its output was directed to and cleaned from local temporary storage. **Resume by profiling/optimizing the r209 inspect path and completing the §15.3 real-case acceptance; do not start WP 2.2 yet.**
 
 ---
 
@@ -232,7 +233,8 @@ Status: **A** = agreed with the user; **P** = proposed in this plan and awaiting
 | D60 | When both are configured as lists, `figure.x_limits` and `figure.y_limits` must have the same number of rows (V-CFG-004) | User selected row-count validation for the two per-figure axis-limit lists | A |
 | D61 | Simulation discovery uses a bounded thread pool (up to 64 workers) for I/O-bound sub-run tasks; small cases remain serial, and netCDF4 access is serialized | Read-only r209 discovery with 64 workers found 195 sub-runs and 8,580 map files without issues in 99.283 s; 16 workers took 131.981 s | A |
 | D62 | WP 1.10 provides metadata for v1 quantities before the engine exists: resolve canonical names, Matlab aliases, and registered NetCDF names case-insensitively while preserving candidate spelling for file reads; unknown names raise V-VAR-001 with up to three canonical suggestions. Compute callbacks and dependency execution are added in WP 2.2a/b | The registry and CLI need stable names before model-output processing is implemented | A |
-| D63 | WP 1.11 `info`/`variables` inspect only the first map-file header per sub-run; `validate` combines config checks, variable-name and raw-field availability checks, and discovery but does not build inspect caches; `init` refuses to overwrite an existing target. An unregistered raw NetCDF name is accepted only when present in the selected simulation | Deliver useful CLI commands before the merge-plan/inspect phase exists, and protect existing user configuration | A |
+| D63 | At the WP 1.11 stage, `info`/`variables` inspected only the first map-file header per sub-run and `validate` combined config checks, variable-name/raw-field availability checks, and discovery without building inspect caches; `init` refused to overwrite an existing target. An unregistered raw NetCDF name is accepted only when present in the selected simulation | Deliver useful CLI commands before the merge-plan/inspect phase existed, and protect existing user configuration | A |
+| D64 | WP 2.1 adds `inspect cfg.yaml [--simulation label]` to build or reuse guarded grid and merge-plan caches; `validate` runs the same inspect phase only when earlier config, discovery, and variable checks have no errors. `info`/`variables` remain read-only | Expose the output-inspection phase consistently while avoiding cache writes for already-invalid project inputs | A |
 
 ## 3. Review of the plan (v6)
 
@@ -1468,7 +1470,7 @@ The YAML alternative has the same fields plus optional `type`, `crs`, `value_fie
   * per plan, faces: `partition_offset(plan, partition)`, `partition_n_owned(plan, partition)`, `owned_local(plan, owned_face)` (local face index in the partition file, 0-based), `global_pos(plan, owned_face)`, `grid_file(plan)`;
   * per plan, edges (§7.9a): `edge_partition_offset`, `edge_partition_n_owned`, `edge_owned_local(plan, owned_edge)`, `edge_global_pos(plan, owned_edge)`;
   * `signature(subrun, partition)` (hex string, §7.6);
-  * attributes `n_faces`, `n_edges`, `reference_subrun`, `matching` (`globalnr` | `coordinates`).
+  * attributes `n_faces`, `n_edges`, `reference_subrun`, `matching` (`globalnr` | `coordinates`); `matching` describes the reference plan.
   
   Most simulations have a single plan.
 * `grid.nc` also stores the grid geometry for spatial operators (§7.9a): `face_edges(face, max_edges)`, `face_edge_sign(face, max_edges)` (+1/−1 orientation), `edge_length(edge)`, `face_area(face)`.
@@ -1643,8 +1645,8 @@ if __name__ == "__main__":
 | `d3dplot variables <sim>` | Available variables (canonical, aliases, raw) | |
 | `d3dplot init <sim>… -o cfg.yaml` | Commented starter configuration | `--analyses map2d,river_km_statistics` |
 | `d3dplot schema` | JSON schema of the configuration | |
-| `d3dplot validate cfg.yaml` | Configuration/static checks, variable validation, and simulation discovery; no inspect cache yet | `--format text|json` |
-| `d3dplot inspect cfg.yaml` | Only build or refresh the metadata cache (grid, merge plans, times, status, parsed inputs) | `--simulation` |
+| `d3dplot validate cfg.yaml` | Configuration/static checks, variable validation, simulation discovery, and grid/merge-plan inspection when earlier checks pass | `--format text|json` |
+| `d3dplot inspect cfg.yaml` | Build or refresh grid and merge-plan caches | `--simulation <label>` |
 | `d3dplot prepare|process|plot|run cfg.yaml` | Stages (`run` = all) | `--only <analysis>`, `--variable`, `--time`, `--simulation`, `--workers`, `--executor`, `--shard i/N`, `--reprocess`, `--replot`, `--fresh-figures`, `--set` |
 | `d3dplot replot <figure.png>` | Regenerate one figure | `--set` |
 | `d3dplot status cfg.yaml` | Status table + cache/figure progress | |
@@ -1657,10 +1659,13 @@ header per sub-run for raw variable names and CRS. `info` reports per-sub-run
 partition counts and last hydrodynamic/morphological times; `--json` returns the
 same summary as structured JSON. `variables` lists detected raw NetCDF names,
 matching canonical registry entries and their aliases, plus the registered
-derived quantities. `validate` runs configuration checks, validates known
-variable names and raw-field availability, and discovers the configured
-simulations. It does not yet build merge plans or write an inspect cache; that
-is WP 2.1. `init` writes a commented starter YAML and refuses to overwrite an
+derived quantities. `inspect` checks partition identity and topology, selects a
+time-consistent reference sub-run, and atomically builds or reuses each
+simulation's grid and merge-plan caches. It accepts `--simulation <label>` to
+limit the run. `validate` runs configuration checks, validates known variable
+names and raw-field availability, and discovers the configured simulations;
+when those earlier checks have no errors, it also builds or reuses the inspect
+caches. `init` writes a commented starter YAML and refuses to overwrite an
 existing target.
 
 **Agent skills** (`skills/`, v1.0):
@@ -1693,6 +1698,9 @@ Codes are stable, documented, and tested one by one. **E** = error, **W** = warn
 | V-OUT-020 | E | Merge plan does not cover each face exactly once, or coordinate matching is ambiguous |
 | V-OUT-021 | W | Topology signatures differ between sub-runs (several merge plans needed) |
 | V-OUT-022 | E | Partition identity: file numbers not `0…N−1`, domain values inconsistent with file numbers, `globalnr` not 1-based/unique/complete |
+| V-OUT-023 | W | Global face numbers are absent; merge-plan matching uses face centres within 1 mm |
+| V-OUT-024 | E | No sub-run has time-consistent partition metadata for a reference merge plan |
+| V-OUT-025 | W | Existing inspect cache is incomplete, unreadable, or stale and is rebuilt |
 | V-OUT-030 | W | Corrupt or inconsistent `time`/`morft` in a partition (lists sub-run, partition, times) |
 | V-OUT-031 | W | Implausible values (> 1e30 or non-finite) in a partition (runtime) |
 | V-OUT-032 | E | Boundary duplicate between sub-runs with different `morft` |
@@ -2063,7 +2071,7 @@ The WP 1.2a generator and expected-output deliverables are implemented; their di
 
 | WP | Content | Done when |
 |----|---------|-----------|
-| 2.1 | Inspect phase: partition identity, merge plan(s) + `grid.nc`, topology signatures, reference sub-run selection (§7.6, §9.3) | Values equal dfm_tools on the synthetic case; `corrupt_partition` handled; a fixture with changed topology produces two plans. (local) `r209` merge plan built |
+| 2.1 | Inspect phase: partition identity, merge plan(s) + `grid.nc`, topology signatures, reference sub-run selection (§7.6, §9.3), guarded cache persistence, `inspect` CLI, and validation integration | Synthetic scattered values equal dfm_tools; cache reuse, coordinate fallback, corrupt reference selection, invalid identity, and changed topology producing two plans are tested; (local) `r209` merge plan built |
 | 2.2 | `MapReader` (faces and edges), quality checks, `times.nc`, `TimeAxis` (merge, duplicates, tz, selection, matching) | Synthetic `time_axis.csv` reproduced; V-OUT-030/031, V-TIME-* tested |
 | 2.2a | **Quantity engine** (§7.9a): raw/derived registry, dependency resolution, read-once memory cache, grid geometry in `grid.nc`, edge merge plan, and all 2D quantities marked "v1" in the catalogue of §7.9a (Froude, specific discharge, energy head, Shields number, velocity direction and vector, water-level rate, vorticity, stream functions, total sediment thickness, morphological volume, sediment transport magnitude (per fraction and summed), bed-load transport magnitude, mean grain sizes, grain-size percentiles); entry point `d3dplot.quantities`. **Generator extension**: the synthetic case gets `mesh2d_ucx`/`ucy` and `mesh2d_u1` (edges) with an analytic vorticity, `mesh2d_czs`, `mesh2d_thlyr`, `mesh2d_sxtot`/`sytot` and `mesh2d_sbcx`/`sbcy` per fraction, and `.sed` diameters and `RhoSol` (one fraction with a different value, to test per-fraction densities); the MDU gets `Ag = 9.813` and `Rhomean = 1000` (as the real runs), plus expected values | Each raw input read once per (sub-run, time) even when requested by several quantities and analyses (counting test); every v1 quantity equals its hand-computed / analytic value (vorticity also across partition boundaries); missing input → V-VAR-002 with the dependency chain; (local) values on `r209` and Rijn `D16000` equal direct NetCDF reads |
 | 2.2b | **3D quantities and sampling protocol** (§7.9a, §7.9b, D54, D55): layer dimension in `VariableSpec`, `zw`/`zc` (read or dfm_tools `reconstruct_zw_zcc`), vertical selections (`depth_average` with `z_range`, `elevation`), `velocity_magnitude_layer_mean`, `chloride_mass` (`sal2cl`), residence times (`.sub` with HYDROLIB-core `SubstanceModel`); the `Sampling` protocol with `GridSampling` only (§7.9b, D55). **Generator extension**: a 3D variant of the plain FM synthetic case (sigma layers; `mesh2d_ucmag` per layer, `mesh2d_sa1`, `mesh2d_cTR1`/`mesh2d_dTR1`, `mesh2d_flowelem_zw`/`zc`; a `.sub` with `RcDecTR1`), with analytic expected values | Every 3D quantity and vertical selection equals its analytic value; the dummy-sampling test of §7.9b passes; a section quantity in `map2d` → V-VAR-006 |
@@ -2318,6 +2326,7 @@ The complete model-quantity catalog (all v1 raw and derived registry entries, al
 
 | Version | Content |
 |---------|---------|
+| v6.31 | Implemented WP 2.1 locally on `feat/inspect-phase`: topology inspection, merge plans and grid caches, `inspect` CLI, validation integration, coordinate fallback, cache reuse, corruption and changed-topology tests; fixed coordinate matching to use stored merged face centres. Synthetic acceptance passes; r209 discovery took 200.628 s but the full inspect did not finish within 20 min and was stopped at the user's request. Resume with r209 profiling/acceptance before WP 2.2 |
 | v6.30 | Completed WP 1.11 locally on `feat/cli-part-1`: added the console and module entry points, five inspection/setup commands, variable/header validation, documentation, and tests; 129 CI-eligible tests, strict mypy, Ruff/format, strict MkDocs, and `git diff --check` pass |
 | v6.29 | Started WP 1.11 on `feat/cli-part-1`; specified read-only header inspection, validation before the WP 2.1 inspect cache, direct raw-name availability, and no-overwrite `init` |
 | v6.28 | Completed WP 1.10 locally on `feat/variables`: added metadata for all 10 raw and 23 derived v1 quantities, canonical/alias/NetCDF resolution, V-VAR-001 suggestions, generated catalogue docs, and three related label translations; 115 CI-eligible tests, strict mypy, changed-file Ruff/format, and strict MkDocs pass; next handover is WP 1.11 |

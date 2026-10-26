@@ -16,10 +16,16 @@ import typer
 import yaml
 
 from d3dplot.config.io import dump_config, dump_json_schema, load_config_data
-from d3dplot.config.project import ProjectConfig
+from d3dplot.config.project import ProjectConfig, SimulationConfig
 from d3dplot.simulation.discover import (
     Simulation,
     discover_simulation,
+)
+from d3dplot.simulation.inspection import (
+    InspectionResult,
+)
+from d3dplot.simulation.inspection import (
+    inspect_simulation as build_inspection_cache,
 )
 from d3dplot.simulation.partitions import _NETCDF4_READ_LOCK
 from d3dplot.simulation.status import (
@@ -28,6 +34,7 @@ from d3dplot.simulation.status import (
     detect_simulation_status,
     inspect_simulation_status,
 )
+from d3dplot.store import OutputLayout
 from d3dplot.validate import (
     ValidationIssue,
     ValidationReport,
@@ -236,7 +243,7 @@ def validate(
         typer.Option("--format", help="Validation report format."),
     ] = "text",
 ) -> None:
-    """Run configuration, variable, and simulation-discovery checks."""
+    """Run configuration, variable, discovery, and output-inspection checks."""
     try:
         data = load_config_data(configuration)
     except (OSError, ValueError, yaml.YAMLError) as error:
@@ -246,6 +253,7 @@ def validate(
     config, static_report = validate_config(data)
     issues = list(static_report.issues)
     discovered: list[tuple[str, tuple[_SubRunHeader, ...]]] = []
+    inspection_candidates: list[tuple[SimulationConfig, Simulation]] = []
 
     if config is not None:
         for simulation_config in config.simulations:
@@ -253,14 +261,98 @@ def validate(
             issues.extend(discovery_report.issues)
             if simulation is None:
                 continue
+            inspection_candidates.append((simulation_config, simulation))
             headers, header_report = _read_subrun_headers(simulation)
             issues.extend(header_report.issues)
             if header_report.is_valid:
                 discovered.append((simulation_config.label, headers))
         _validate_variable_requests(config, discovered, issues)
+        if not any(issue.level == "error" for issue in issues):
+            for simulation_config, simulation in inspection_candidates:
+                _, inspection_report = build_inspection_cache(
+                    simulation,
+                    OutputLayout.for_simulation(simulation_config, config.output),
+                    crs=config.crs,
+                    forbidden_roots=config.output.forbidden_roots,
+                )
+                issues.extend(inspection_report.issues)
 
     report = ValidationReport(tuple(issues))
     _emit_report(report, report_format)
+    if not report.is_valid:
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def inspect(
+    configuration: Annotated[
+        Path,
+        typer.Argument(
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            help="YAML or JSON project configuration.",
+        ),
+    ],
+    simulation_label: Annotated[
+        str | None,
+        typer.Option(
+            "--simulation",
+            help="Inspect only the configured simulation with this label.",
+        ),
+    ] = None,
+) -> None:
+    """Build or refresh grid and merge-plan caches for configured simulations."""
+    try:
+        data = load_config_data(configuration)
+    except (OSError, ValueError, yaml.YAMLError) as error:
+        typer.echo(f"Could not read configuration {configuration}: {error}", err=True)
+        raise typer.Exit(code=2) from error
+
+    config, static_report = validate_config(data)
+    if config is None or not static_report.is_valid:
+        _emit_report(static_report)
+        raise typer.Exit(code=1)
+
+    simulation_configs = config.simulations
+    if simulation_label is not None:
+        simulation_configs = [
+            item for item in config.simulations if item.label == simulation_label
+        ]
+        if not simulation_configs:
+            typer.echo(
+                f"Configured simulation label not found: {simulation_label}",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+
+    issues = list(static_report.issues)
+    results: list[tuple[str, InspectionResult]] = []
+    for simulation_config in simulation_configs:
+        simulation, discovery_report = discover_simulation(simulation_config.path)
+        issues.extend(discovery_report.issues)
+        if simulation is None:
+            continue
+        result, inspection_report = build_inspection_cache(
+            simulation,
+            OutputLayout.for_simulation(simulation_config, config.output),
+            crs=config.crs,
+            forbidden_roots=config.output.forbidden_roots,
+        )
+        issues.extend(inspection_report.issues)
+        if result is not None:
+            results.append((simulation_config.label, result))
+
+    report = ValidationReport(tuple(issues))
+    _emit_report(report)
+    for label, result in results:
+        cache_state = "reused" if result.cache_reused else "built"
+        typer.echo(
+            f"{label}: {result.plan_count} merge plan(s), reference sub-run "
+            f"{result.reference_subrun}, cache {cache_state} "
+            f"({result.duration_seconds:.2f} s): {result.merge_plan_path}"
+        )
     if not report.is_valid:
         raise typer.Exit(code=1)
 

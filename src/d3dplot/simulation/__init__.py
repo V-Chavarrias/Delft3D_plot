@@ -6,6 +6,7 @@ from d3dplot.simulation.discover import (
     SimulationKind,
     discover_simulation,
 )
+from d3dplot.simulation.inspection import InspectionResult, inspect_simulation
 from d3dplot.simulation.status import (
     SimulationState,
     SimulationStatus,
@@ -24,6 +25,7 @@ __all__ = [
     "SimulationKind",
     "SimulationState",
     "SimulationStatus",
+    "InspectionResult",
     "SubRun",
     "SubRunStatus",
     "detect_simulation_status",
@@ -31,6 +33,7 @@ __all__ = [
     "dump_simulation_status_csv",
     "dump_simulation_status_json",
     "inspect_simulation_status",
+    "inspect_simulation",
     "write_simulation_status_csv",
     "write_simulation_status_json",
 ]
