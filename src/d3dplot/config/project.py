@@ -201,6 +201,10 @@ class ProjectConfig(ConfigModel):
         default="mask",
         description="Handling of corrupt model output.",
     )
+    check_boundary_duplicates: bool = Field(
+        default=True,
+        description=("Compare bed levels at duplicate SMT restart-boundary outputs."),
+    )
     analyses: list[AnalysisConfig] = Field(
         min_length=1,
         description="Built-in analyses to run.",

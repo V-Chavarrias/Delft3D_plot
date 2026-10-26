@@ -9,6 +9,7 @@ from collections import Counter
 from collections.abc import Mapping, Sequence
 from contextlib import AbstractContextManager, redirect_stdout
 from dataclasses import dataclass
+from datetime import UTC, datetime, timezone
 from hashlib import blake2b
 from importlib import import_module
 from io import StringIO
@@ -21,6 +22,13 @@ from d3dplot import __version__
 from d3dplot.simulation.discover import Simulation
 from d3dplot.simulation.partitions import _NETCDF4_READ_LOCK
 from d3dplot.simulation.subrun import SubRun
+from d3dplot.simulation.time_utils import (
+    decode_cf_time,
+    offset_text,
+    timezone_from_cf_units,
+    timezone_from_hours,
+    timezone_from_offset,
+)
 from d3dplot.store import (
     OutputLayout,
     OutputWriteError,
@@ -35,11 +43,12 @@ from d3dplot.validate.report import ValidationIssue, ValidationReport
 _PARTITION_NAME = re.compile(r"(.+)_(\d{4})(_map\.nc)", flags=re.IGNORECASE)
 _TIME_TOLERANCE_S = 1.0
 _COORDINATE_TOLERANCE_M = 0.001
-_CACHE_SCHEMA_VERSION = 1
-_ALGORITHM_VERSION = "1"
+_CACHE_SCHEMA_VERSION = 2
+_ALGORITHM_VERSION = "2"
 _FACE_DOMAIN = "mesh2d_flowelem_domain"
 _FACE_GLOBALNR = "mesh2d_flowelem_globalnr"
 _FACE_NODES = "mesh2d_face_nodes"
+_EDGE_NODES = "mesh2d_edge_nodes"
 _TIME = "time"
 _MORPH_TIME = "morft"
 
@@ -108,6 +117,9 @@ class _Grid(Protocol):
     crs: object
 
     @property
+    def node_coordinates(self) -> _Array: ...
+
+    @property
     def face_coordinates(self) -> _Array: ...
 
     @property
@@ -160,6 +172,7 @@ class InspectionResult:
     """Paths and summary for one successfully inspected simulation."""
 
     merge_plan_path: Path
+    times_path: Path
     grid_paths: tuple[Path, ...]
     plan_count: int
     reference_subrun: int
@@ -176,11 +189,13 @@ class _SubRunInspection:
     has_globalnr: bool
     time_consistent: bool
     corrupt_partitions: tuple[tuple[int, tuple[int, ...]], ...]
+    time_series: _NumericSeries | None
+    morph_time_series: _NumericSeries | None
 
 
 @dataclass(frozen=True, slots=True)
 class _MergePlan:
-    """Face ownership and placement for one topology group."""
+    """Face and edge ownership and placement for one topology group."""
 
     subrun_indices: tuple[int, ...]
     reference_subrun: int
@@ -192,6 +207,11 @@ class _MergePlan:
     partition_n_owned: _Array
     owned_local: _Array
     global_pos: _Array
+    edge_partition_offset: _Array
+    edge_partition_n_owned: _Array
+    edge_owned_local: _Array
+    edge_global_pos: _Array
+    edge_orientation: _Array
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,6 +225,24 @@ class _NumericSeries:
     values: _Array
     mask: _Array
     units: str | None
+    calendar: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class _TimeRecord:
+    subrun: int
+    local_index: int
+    time: datetime
+    morph_time: datetime | None
+    corrupt_partitions: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _TimeAxisCache:
+    records: tuple[_TimeRecord, ...]
+    source_utc_offset: str
+    partition_count: int
+    morphology_available: bool
 
 
 class _InspectionFailure(Exception):
@@ -218,6 +256,8 @@ def inspect_simulation(
     layout: OutputLayout,
     *,
     crs: str | None = None,
+    time_zone: str | None = None,
+    check_boundary_duplicates: bool = True,
     forbidden_roots: Sequence[str | Path] = (),
 ) -> tuple[InspectionResult | None, ValidationReport]:
     """Build or reuse the checked topology cache for a discovered simulation."""
@@ -320,6 +360,16 @@ def inspect_simulation(
         for position, metadata in enumerate(subrun_metadata)
         if metadata.time_consistent
     )
+    time_cache, time_issues = _prepare_time_axis(
+        simulation,
+        subrun_metadata,
+        time_zone=time_zone,
+        check_boundary_duplicates=check_boundary_duplicates,
+    )
+    issues.extend(time_issues)
+    if _has_errors(issues):
+        return None, ValidationReport(tuple(issues))
+
     try:
         input_fingerprints = [
             fingerprint_model_output(path)
@@ -340,6 +390,8 @@ def inspect_simulation(
 
     parameters: dict[str, object] = {
         "crs": crs,
+        "time_zone": time_zone,
+        "check_boundary_duplicates": check_boundary_duplicates,
         "plans": [
             {
                 "subruns": [
@@ -379,6 +431,7 @@ def inspect_simulation(
         return None, ValidationReport(tuple(issues))
 
     merge_plan_path = layout.cache / "merge_plan.nc"
+    times_path = layout.cache / "times.nc"
     grid_paths = tuple(
         layout.cache / _grid_file_name(plan_index)
         for plan_index in range(len(references))
@@ -387,6 +440,7 @@ def inspect_simulation(
         cache_reused, cache_problem = _cache_is_current(
             merge_plan_path,
             grid_paths,
+            times_path,
             fingerprint,
             guard,
         )
@@ -420,6 +474,7 @@ def inspect_simulation(
         return (
             InspectionResult(
                 merge_plan_path=merge_plan_path,
+                times_path=times_path,
                 grid_paths=grid_paths,
                 plan_count=len(references),
                 reference_subrun=reference_subrun,
@@ -522,9 +577,39 @@ def inspect_simulation(
         )
         return None, ValidationReport(tuple(issues))
 
+    try:
+        _write_netcdf(
+            times_path,
+            _time_axis_dataset(time_cache, fingerprint),
+            guard,
+        )
+    except OutputWriteError as error:
+        issues.append(
+            _issue(
+                "V-OUT-041",
+                "error",
+                times_path,
+                f"Could not write the time-quality cache: {error}",
+                "Choose a writable output root outside forbidden roots.",
+            )
+        )
+        return None, ValidationReport(tuple(issues))
+    except (OSError, RuntimeError, TypeError, ValueError) as error:
+        issues.append(
+            _issue(
+                "V-OUT-002",
+                "error",
+                times_path,
+                f"Could not serialize the time-quality cache: {error}",
+                "Check the output filesystem and available disk space.",
+            )
+        )
+        return None, ValidationReport(tuple(issues))
+
     return (
         InspectionResult(
             merge_plan_path=merge_plan_path,
+            times_path=times_path,
             grid_paths=grid_paths,
             plan_count=len(plans),
             reference_subrun=reference_subrun,
@@ -574,9 +659,17 @@ def _inspect_subrun_metadata(
                 if n_faces <= 0:
                     raise ValueError("dimension 'mesh2d_nFaces' is empty")
 
+                edge_dimension = dataset.dimensions.get("mesh2d_nEdges")
+                if edge_dimension is None:
+                    raise ValueError("required dimension 'mesh2d_nEdges' is missing")
+                n_edges = len(edge_dimension)
+                if n_edges <= 0:
+                    raise ValueError("dimension 'mesh2d_nEdges' is empty")
+
                 domain = _read_integer_variable(dataset, _FACE_DOMAIN)
                 globalnr = _read_integer_variable(dataset, _FACE_GLOBALNR)
                 face_nodes = _read_integer_variable(dataset, _FACE_NODES)
+                edge_nodes = _read_integer_variable(dataset, _EDGE_NODES)
                 if face_nodes is None:
                     issues.append(
                         _issue(
@@ -603,11 +696,43 @@ def _inspect_subrun_metadata(
                     )
                     continue
 
+                if edge_nodes is None:
+                    issues.append(
+                        _issue(
+                            "V-OUT-002",
+                            "error",
+                            path,
+                            f"Required topology variable {_EDGE_NODES!r} is missing.",
+                            "Restore edge-node connectivity in the map file.",
+                        )
+                    )
+                    continue
+                if (
+                    edge_nodes.values.ndim != 2
+                    or edge_nodes.values.shape != (n_edges, 2)
+                    or edge_nodes.mask.any()
+                ):
+                    issues.append(
+                        _issue(
+                            "V-OUT-002",
+                            "error",
+                            path,
+                            (
+                                f"Topology variable {_EDGE_NODES!r} does not "
+                                "match the edge dimension."
+                            ),
+                            "Restore valid endpoints for every mesh edge.",
+                        )
+                    )
+                    continue
+
                 signature = _topology_signature(
                     n_faces,
+                    n_edges,
                     domain,
                     globalnr,
                     face_nodes,
+                    edge_nodes,
                 )
                 signatures.append(signature)
 
@@ -808,11 +933,18 @@ def _inspect_subrun_metadata(
                 has_globalnr=all_globalnr,
                 time_consistent=False,
                 corrupt_partitions=(),
+                time_series=None,
+                morph_time_series=None,
             ),
             tuple(issues),
         )
 
-    corrupt_map_indices, time_available = _inconsistent_map_times(
+    (
+        corrupt_map_indices,
+        time_available,
+        reference_times,
+        reference_morph_times,
+    ) = _inconsistent_map_times(
         times,
         morph_times,
         subrun,
@@ -845,6 +977,8 @@ def _inspect_subrun_metadata(
                 (partition, tuple(indices))
                 for partition, indices in sorted(corrupt_map_indices.items())
             ),
+            time_series=reference_times,
+            morph_time_series=reference_morph_times,
         ),
         tuple(issues),
     )
@@ -854,15 +988,20 @@ def _inconsistent_map_times(
     times: Sequence[_NumericSeries | None],
     morph_times: Sequence[_NumericSeries | None],
     subrun: SubRun,
-) -> tuple[dict[int, set[int]], bool]:
+) -> tuple[
+    dict[int, set[int]],
+    bool,
+    _NumericSeries | None,
+    _NumericSeries | None,
+]:
     corrupt: dict[int, set[int]] = {}
     time_present = all(series is not None for series in times)
     if not time_present:
-        return corrupt, False
+        return corrupt, False, None, None
 
     numeric_times = cast(tuple[_NumericSeries, ...], tuple(times))
-    time_ok = _mark_inconsistent_series(numeric_times, corrupt)
     _mark_mdu_time_bounds(numeric_times, subrun, corrupt)
+    reference_times, time_ok = _mark_inconsistent_series(numeric_times, corrupt)
 
     present_morph = [series is not None for series in morph_times]
     if any(present_morph) and not all(present_morph):
@@ -874,27 +1013,44 @@ def _inconsistent_map_times(
             if not present:
                 corrupt.setdefault(partition, set()).update(range(expected_length))
         morph_ok = False
+        reference_morph_times = None
     elif all(present_morph):
-        morph_ok = _mark_inconsistent_series(
+        reference_morph_times, morph_ok = _mark_inconsistent_series(
             cast(tuple[_NumericSeries, ...], tuple(morph_times)),
             corrupt,
         )
     else:
         morph_ok = True
+        reference_morph_times = None
 
-    return corrupt, time_ok and morph_ok
+    return (
+        corrupt,
+        time_ok and morph_ok,
+        reference_times,
+        reference_morph_times,
+    )
 
 
 def _mark_inconsistent_series(
     series: tuple[_NumericSeries, ...],
     corrupt: dict[int, set[int]],
-) -> bool:
+) -> tuple[_NumericSeries, bool]:
     lengths = [item.values.size for item in series]
     most_common_length, length_count = Counter(lengths).most_common(1)[0]
+    reference_length = max(lengths, default=0)
     if length_count <= len(series) // 2:
         for partition in range(len(series)):
-            corrupt.setdefault(partition, set()).add(0)
-        return False
+            corrupt.setdefault(partition, set()).update(range(reference_length))
+        reference_values = np.full(reference_length, np.nan, dtype=np.float64)
+        return (
+            _NumericSeries(
+                values=reference_values,
+                mask=np.ones(reference_length, dtype=np.bool_),
+                units=None,
+                calendar=None,
+            ),
+            False,
+        )
 
     for partition, length in enumerate(lengths):
         if length != most_common_length:
@@ -902,14 +1058,23 @@ def _mark_inconsistent_series(
                 range(max(length, most_common_length))
             )
 
-    unit_counts = Counter(item.units for item in series)
-    common_unit, unit_count = unit_counts.most_common(1)[0]
+    unit_counts = Counter((item.units, item.calendar) for item in series)
+    (common_unit, common_calendar), unit_count = unit_counts.most_common(1)[0]
     if unit_count <= len(series) // 2:
         for partition in range(len(series)):
             corrupt.setdefault(partition, set()).update(range(most_common_length))
-        return False
+        reference_values = np.full(most_common_length, np.nan, dtype=np.float64)
+        return (
+            _NumericSeries(
+                values=reference_values,
+                mask=np.ones(most_common_length, dtype=np.bool_),
+                units=None,
+                calendar=None,
+            ),
+            False,
+        )
     for partition, item in enumerate(series):
-        if item.units != common_unit:
+        if (item.units, item.calendar) != (common_unit, common_calendar):
             corrupt.setdefault(partition, set()).update(range(item.values.size))
 
     values = np.full((len(series), most_common_length), np.nan, dtype=np.float64)
@@ -918,10 +1083,14 @@ def _mark_inconsistent_series(
         values[partition, :length] = item.values[:length]
         values[partition, :length][item.mask[:length]] = np.nan
 
+    reference_values = np.full(most_common_length, np.nan, dtype=np.float64)
     majority_available = True
     for index in range(most_common_length):
         column = values[:, index]
         finite = np.isfinite(column)
+        for partition in range(len(series)):
+            if index in corrupt.get(partition, set()):
+                finite[partition] = False
         if not finite.any():
             majority_available = False
             for partition in range(len(series)):
@@ -935,11 +1104,20 @@ def _mark_inconsistent_series(
             for partition in range(len(series)):
                 corrupt.setdefault(partition, set()).add(index)
             continue
+        reference_values[index] = float(np.median(column[within_tolerance]))
         for partition, is_consistent in enumerate(within_tolerance):
             if not is_consistent:
                 corrupt.setdefault(partition, set()).add(index)
 
-    return majority_available
+    return (
+        _NumericSeries(
+            values=reference_values,
+            mask=~np.isfinite(reference_values),
+            units=common_unit,
+            calendar=common_calendar,
+        ),
+        majority_available,
+    )
 
 
 def _mark_mdu_time_bounds(
@@ -977,6 +1155,618 @@ def _numeric_time_bound(value: float | str) -> float | None:
     return parsed if np.isfinite(parsed) else None
 
 
+def _prepare_time_axis(
+    simulation: Simulation,
+    subrun_metadata: Sequence[_SubRunInspection],
+    *,
+    time_zone: str | None,
+    check_boundary_duplicates: bool,
+) -> tuple[_TimeAxisCache, tuple[ValidationIssue, ...]]:
+    issues: list[ValidationIssue] = []
+    records_by_subrun: dict[int, list[_TimeRecord]] = {}
+    timezone_conflicts: dict[str, set[int]] = {}
+    source_utc_offset: str | None = None
+
+    for subrun, metadata in zip(simulation.subruns, subrun_metadata, strict=True):
+        time_series = metadata.time_series
+        if time_series is None:
+            records_by_subrun[subrun.index] = []
+            continue
+
+        zone, conflicts, config_issue = _time_zone_for_subrun(
+            subrun,
+            time_series.units,
+            time_zone,
+        )
+        if config_issue is not None:
+            issues.append(config_issue)
+        if zone is None:
+            issues.append(
+                _issue(
+                    "V-OUT-002",
+                    "error",
+                    subrun.folder,
+                    "The model time zone could not be resolved.",
+                    "Set a fixed project time_zone or provide a valid MDU Tzone.",
+                )
+            )
+            records_by_subrun[subrun.index] = []
+            continue
+
+        for conflict in conflicts:
+            timezone_conflicts.setdefault(conflict, set()).add(subrun.index)
+        if source_utc_offset is None:
+            source_utc_offset = offset_text(zone)
+        elif offset_text(zone) != source_utc_offset:
+            timezone_conflicts.setdefault(
+                (
+                    f"sub-run {subrun.index} uses {offset_text(zone)} while "
+                    f"the simulation source offset is {source_utc_offset}"
+                ),
+                set(),
+            ).add(subrun.index)
+
+        if not time_series.units:
+            issues.append(
+                _issue(
+                    "V-OUT-002",
+                    "error",
+                    subrun.folder,
+                    "Map-time variable 'time' has no CF time units.",
+                    "Provide units such as 'seconds since 2021-01-01 00:00:00 +01:00'.",
+                )
+            )
+            records_by_subrun[subrun.index] = []
+            continue
+
+        corrupt_by_partition: dict[int, set[int]] = {}
+        for partition, indices in metadata.corrupt_partitions:
+            corrupt_by_partition[partition] = set(indices)
+
+        calendar = time_series.calendar or "standard"
+        decoded_times: list[datetime | None] = []
+        decode_error: str | None = None
+        offset_hours = _timezone_hours(zone)
+        for local_index, value in enumerate(time_series.values):
+            if (
+                local_index >= time_series.mask.size
+                or bool(time_series.mask[local_index])
+                or not np.isfinite(value)
+            ):
+                decoded_times.append(None)
+                continue
+            try:
+                decoded = decode_cf_time(
+                    float(value),
+                    time_series.units,
+                    calendar,
+                    offset_hours,
+                )
+            except ValueError as error:
+                decode_error = str(error)
+                decoded = None
+            if decoded is None and decode_error is None:
+                decode_error = (
+                    f"Unsupported or invalid CF time units/calendar "
+                    f"({time_series.units!r}, {calendar!r})."
+                )
+            decoded_times.append(decoded)
+
+        if decode_error is not None:
+            issues.append(
+                _issue(
+                    "V-OUT-002",
+                    "error",
+                    subrun.folder,
+                    f"Map-time values could not be decoded: {decode_error}",
+                    "Use a supported CF time unit and Gregorian calendar.",
+                )
+            )
+
+        morph_series = metadata.morph_time_series
+        morph_units = (
+            morph_series.units
+            if morph_series is not None and morph_series.units
+            else time_series.units
+        )
+        morph_calendar = (
+            morph_series.calendar
+            if morph_series is not None and morph_series.calendar
+            else calendar
+        )
+        decoded_morph_times: list[datetime | None] = []
+        morph_decode_error: str | None = None
+        if morph_series is not None:
+            explicit_morph_zone = timezone_from_cf_units(morph_units)
+            if explicit_morph_zone is not None and offset_text(
+                explicit_morph_zone
+            ) != offset_text(zone):
+                timezone_conflicts.setdefault(
+                    (
+                        "morphological time units use "
+                        f"{offset_text(explicit_morph_zone)} while hydrodynamic "
+                        f"time uses {offset_text(zone)}"
+                    ),
+                    set(),
+                ).add(subrun.index)
+
+            for local_index, value in enumerate(morph_series.values):
+                if (
+                    local_index >= morph_series.mask.size
+                    or bool(morph_series.mask[local_index])
+                    or not np.isfinite(value)
+                ):
+                    decoded_morph_times.append(None)
+                    continue
+                try:
+                    decoded = decode_cf_time(
+                        float(value),
+                        morph_units,
+                        morph_calendar,
+                        offset_hours,
+                    )
+                except ValueError as error:
+                    morph_decode_error = str(error)
+                    decoded = None
+                if decoded is None and morph_decode_error is None:
+                    morph_decode_error = (
+                        "Morphological time has unsupported or invalid CF "
+                        f"units/calendar ({morph_units!r}, {morph_calendar!r})."
+                    )
+                decoded_morph_times.append(decoded)
+
+        if morph_decode_error is not None:
+            issues.append(
+                _issue(
+                    "V-OUT-002",
+                    "error",
+                    subrun.folder,
+                    morph_decode_error,
+                    "Use supported CF time units and a Gregorian calendar for morft.",
+                )
+            )
+
+        subrun_records: list[_TimeRecord] = []
+        for local_index, decoded_time in enumerate(decoded_times):
+            if decoded_time is None:
+                continue
+            morph_time = (
+                decoded_morph_times[local_index]
+                if local_index < len(decoded_morph_times)
+                else None
+            )
+            corrupt_partitions = tuple(
+                partition
+                for partition, indices in sorted(corrupt_by_partition.items())
+                if local_index in indices
+            )
+            subrun_records.append(
+                _TimeRecord(
+                    subrun=subrun.index,
+                    local_index=local_index,
+                    time=decoded_time,
+                    morph_time=morph_time,
+                    corrupt_partitions=corrupt_partitions,
+                )
+            )
+        records_by_subrun[subrun.index] = subrun_records
+
+    if source_utc_offset is None:
+        source_utc_offset = "+00:00"
+
+    for conflict, affected_subruns in sorted(timezone_conflicts.items()):
+        subruns_text = ", ".join(str(index) for index in sorted(affected_subruns))
+        issues.append(
+            ValidationIssue(
+                code="V-TIME-002",
+                level="warning",
+                location=str(simulation.root),
+                message=(
+                    f"Time-zone offsets conflict in sub-run(s) {subruns_text}: "
+                    f"{conflict}."
+                ),
+                hint=(
+                    "Map time units take precedence, followed by an explicit MDU "
+                    "Tzone and the configured project time_zone."
+                ),
+            )
+        )
+
+    records: list[_TimeRecord] = []
+    metadata_by_index = {
+        subrun.index: metadata
+        for subrun, metadata in zip(simulation.subruns, subrun_metadata, strict=True)
+    }
+    dropped: set[tuple[int, int]] = set()
+    for previous, following in zip(
+        simulation.subruns,
+        simulation.subruns[1:],
+        strict=False,
+    ):
+        previous_series = metadata_by_index[previous.index].time_series
+        following_series = metadata_by_index[following.index].time_series
+        if previous_series is None or following_series is None:
+            continue
+        previous_index = previous_series.values.size - 1
+        previous_record = next(
+            (
+                record
+                for record in records_by_subrun.get(previous.index, ())
+                if record.local_index == previous_index
+            ),
+            None,
+        )
+        following_record = next(
+            (
+                record
+                for record in records_by_subrun.get(following.index, ())
+                if record.local_index == 0
+            ),
+            None,
+        )
+        if previous_record is None or following_record is None:
+            continue
+        if abs((previous_record.time - following_record.time).total_seconds()) > 1:
+            continue
+
+        previous_morph = previous_record.morph_time
+        following_morph = following_record.morph_time
+        if (previous_morph is None) != (following_morph is None) or (
+            previous_morph is not None
+            and following_morph is not None
+            and abs((previous_morph - following_morph).total_seconds()) > 1
+        ):
+            issues.append(
+                ValidationIssue(
+                    code="V-OUT-032",
+                    level="error",
+                    location=str(simulation.root),
+                    message=(
+                        f"Restart boundary between sub-runs {previous.index} and "
+                        f"{following.index} duplicates hydrodynamic time "
+                        f"{previous_record.time.isoformat()} but has different "
+                        "morphological times."
+                    ),
+                    hint=(
+                        "Restore matching morft values at the shared restart boundary."
+                    ),
+                )
+            )
+
+        if check_boundary_duplicates:
+            try:
+                comparison = _compare_boundary_bed_levels(
+                    previous,
+                    following,
+                    previous_record,
+                    following_record,
+                    metadata_by_index[previous.index],
+                    metadata_by_index[following.index],
+                )
+            except (
+                EOFError,
+                IndexError,
+                OSError,
+                RuntimeError,
+                TypeError,
+                ValueError,
+            ) as error:
+                issues.append(
+                    _issue(
+                        "V-OUT-002",
+                        "error",
+                        simulation.root,
+                        (
+                            f"Could not compare bed levels at the restart "
+                            f"boundary between sub-runs {previous.index} and "
+                            f"{following.index}: {error}"
+                        ),
+                        "Restore readable bed-level values in the boundary outputs.",
+                    )
+                )
+                comparison = None
+            if comparison is not True:
+                detail = (
+                    "bed-level values differ"
+                    if comparison is False
+                    else "bed-level values could not be compared"
+                )
+                issues.append(
+                    ValidationIssue(
+                        code="V-OUT-033",
+                        level="warning",
+                        location=str(simulation.root),
+                        message=(
+                            f"Restart boundary between sub-runs {previous.index} "
+                            f"and {following.index} duplicates hydrodynamic time "
+                            f"{previous_record.time.isoformat()}, but {detail} in "
+                            "the reference partition."
+                        ),
+                        hint=(
+                            "Check the bed level in the lowest-numbered partition "
+                            "that is healthy at both boundary outputs."
+                        ),
+                    )
+                )
+        dropped.add((following.index, following_record.local_index))
+
+    for subrun in simulation.subruns:
+        records.extend(
+            record
+            for record in records_by_subrun.get(subrun.index, ())
+            if (record.subrun, record.local_index) not in dropped
+        )
+    records.sort(key=lambda record: (record.time, record.subrun, record.local_index))
+    return (
+        _TimeAxisCache(
+            records=tuple(records),
+            source_utc_offset=source_utc_offset,
+            partition_count=simulation.subruns[0].partition_count,
+            morphology_available=any(
+                metadata.morph_time_series is not None for metadata in subrun_metadata
+            ),
+        ),
+        tuple(issues),
+    )
+
+
+def _time_zone_for_subrun(
+    subrun: SubRun,
+    units: str | None,
+    configured_time_zone: str | None,
+) -> tuple[timezone | None, tuple[str, ...], ValidationIssue | None]:
+    map_zone = timezone_from_cf_units(units)
+    configuration_issue: ValidationIssue | None = None
+    configured_zone: timezone | None = None
+    mdu_zone: timezone | None
+    if configured_time_zone is not None:
+        try:
+            configured_zone = timezone_from_offset(configured_time_zone)
+        except ValueError as error:
+            configuration_issue = _issue(
+                "V-CFG-001",
+                "error",
+                subrun.folder,
+                f"Invalid project time_zone: {error}",
+                "Use a fixed offset such as '+01:00' or '-05:00'.",
+            )
+
+    try:
+        mdu_zone = timezone_from_hours(subrun.mdu.tzone)
+    except ValueError:
+        mdu_zone = None
+
+    selected_zone: timezone | None
+    if map_zone is not None:
+        selected_zone = map_zone
+    elif subrun.mdu.tzone_explicit and mdu_zone is not None:
+        selected_zone = mdu_zone
+    elif configured_zone is not None:
+        selected_zone = configured_zone
+    else:
+        selected_zone = mdu_zone
+
+    conflicts: list[str] = []
+    selected_text = offset_text(selected_zone) if selected_zone else None
+    if map_zone is not None and subrun.mdu.tzone_explicit and mdu_zone is not None:
+        if offset_text(map_zone) != offset_text(mdu_zone):
+            conflicts.append(
+                f"map units use {offset_text(map_zone)} while MDU Tzone uses "
+                f"{offset_text(mdu_zone)}; using {offset_text(map_zone)}"
+            )
+    if configured_zone is not None and selected_text is not None:
+        if offset_text(configured_zone) != selected_text:
+            conflicts.append(
+                f"configured time_zone is {offset_text(configured_zone)} while "
+                f"the selected model offset is {selected_text}; using "
+                f"{selected_text}"
+            )
+    if mdu_zone is None and map_zone is not None:
+        conflicts.append("MDU Tzone is invalid; using the offset from map units")
+    elif mdu_zone is None and configured_zone is not None:
+        conflicts.append("MDU Tzone is invalid; using configured time_zone")
+
+    return selected_zone, tuple(conflicts), configuration_issue
+
+
+def _compare_boundary_bed_levels(
+    previous: SubRun,
+    following: SubRun,
+    previous_record: _TimeRecord,
+    following_record: _TimeRecord,
+    previous_metadata: _SubRunInspection,
+    following_metadata: _SubRunInspection,
+) -> bool | None:
+    corrupt_previous = set(previous_record.corrupt_partitions)
+    corrupt_following = set(following_record.corrupt_partitions)
+    for partition in range(previous.partition_count):
+        if partition in corrupt_previous or partition in corrupt_following:
+            continue
+        previous_values = _read_reference_partition_bed(
+            previous,
+            partition,
+            previous_record.local_index,
+        )
+        following_values = _read_reference_partition_bed(
+            following,
+            partition,
+            following_record.local_index,
+        )
+        if previous_values is None or following_values is None:
+            continue
+        same_topology = (
+            partition < len(previous_metadata.signatures)
+            and partition < len(following_metadata.signatures)
+            and previous_metadata.signatures[partition]
+            == following_metadata.signatures[partition]
+        )
+        left_keys, left_values, left_global = previous_values
+        right_keys, right_values, right_global = following_values
+        if left_global != right_global:
+            continue
+        common, left_positions, right_positions = np.intersect1d(
+            left_keys,
+            right_keys,
+            assume_unique=True,
+            return_indices=True,
+        )
+        if common.size == 0:
+            continue
+        if not left_global and not right_global and not same_topology:
+            continue
+        left_aligned = left_values[left_positions]
+        right_aligned = right_values[right_positions]
+        finite = np.isfinite(left_aligned) & np.isfinite(right_aligned)
+        if not finite.any():
+            continue
+        return bool(np.array_equal(left_aligned[finite], right_aligned[finite]))
+    return None
+
+
+def _read_reference_partition_bed(
+    subrun: SubRun,
+    partition: int,
+    local_index: int,
+) -> tuple[_Array, _Array, bool] | None:
+    path = subrun.map_files[partition]
+    netcdf4 = _netcdf4_module()
+    with _NETCDF4_READ_LOCK, netcdf4.Dataset(path, mode="r") as dataset:
+        variable = next(
+            (
+                dataset.variables[name]
+                for name in ("mesh2d_mor_bl", "mesh2d_flowelem_bl")
+                if name in dataset.variables
+            ),
+            None,
+        )
+        if variable is None or "mesh2d_nFaces" not in variable.dimensions:
+            return None
+
+        dimensions = variable.dimensions
+        if "time" in dimensions:
+            if local_index >= variable.shape[dimensions.index("time")]:
+                return None
+            indexer = tuple(
+                local_index if dimension == "time" else slice(None)
+                for dimension in dimensions
+            )
+        else:
+            indexer = tuple(slice(None) for _ in dimensions)
+        remaining_dimensions = tuple(
+            dimension for dimension in dimensions if dimension != "time"
+        )
+        if remaining_dimensions != ("mesh2d_nFaces",):
+            return None
+
+        raw_values = np.ma.asarray(variable[indexer])
+        values = np.asarray(raw_values.data, dtype=np.float64)
+        values[np.ma.getmaskarray(raw_values)] = np.nan
+
+        domain = _read_integer_variable(dataset, _FACE_DOMAIN)
+        if domain is None:
+            local_faces = np.arange(values.size, dtype=np.int64)
+        else:
+            local_faces = np.flatnonzero(~domain.mask & (domain.values == partition))
+        if local_faces.size == 0:
+            return None
+
+        globalnr = _read_integer_variable(dataset, _FACE_GLOBALNR)
+        if globalnr is not None:
+            if globalnr.mask[local_faces].any():
+                return None
+            keys = globalnr.values[local_faces]
+            has_global_ids = True
+        else:
+            keys = local_faces
+            has_global_ids = False
+        return keys, values[local_faces], has_global_ids
+
+
+def _time_axis_dataset(
+    cache: _TimeAxisCache,
+    fingerprint: str,
+) -> _XarrayDataset:
+    times = np.asarray(
+        [_seconds_since_epoch(record.time) for record in cache.records],
+        dtype=np.float64,
+    )
+    morph_times = np.asarray(
+        [
+            _seconds_since_epoch(record.morph_time)
+            if record.morph_time is not None
+            else np.nan
+            for record in cache.records
+        ],
+        dtype=np.float64,
+    )
+    subruns = np.asarray([record.subrun for record in cache.records], dtype=np.int32)
+    local_indices = np.asarray(
+        [record.local_index for record in cache.records],
+        dtype=np.int32,
+    )
+    corrupt = np.zeros(
+        (len(cache.records), cache.partition_count),
+        dtype=np.int8,
+    )
+    for time_index, record in enumerate(cache.records):
+        for partition in record.corrupt_partitions:
+            corrupt[time_index, partition] = 1
+
+    dataset = xr.Dataset(
+        data_vars={
+            "subrun": (("time",), subruns),
+            "local_index": (("time",), local_indices),
+            "morph_time": (("time",), morph_times),
+            "corrupt_partition": (("time", "partition"), corrupt),
+        },
+        coords={
+            "time": (("time",), times),
+            "partition": np.arange(cache.partition_count, dtype=np.int32),
+        },
+        attrs={
+            "source_utc_offset": cache.source_utc_offset,
+            "morphology_available": int(cache.morphology_available),
+            "d3dplot_fingerprint": fingerprint,
+            "d3dplot_parameters": '{"kind": "time_axis"}',
+            "d3dplot_version": __version__,
+            "d3dplot_cache_schema": _CACHE_SCHEMA_VERSION,
+        },
+    )
+    time_attributes = {
+        "standard_name": "time",
+        "units": "seconds since 1970-01-01 00:00:00",
+        "calendar": "proleptic_gregorian",
+        "source_utc_offset": cache.source_utc_offset,
+    }
+    dataset["time"].attrs.update(time_attributes)
+    dataset["morph_time"].attrs.update(
+        {
+            "standard_name": "time",
+            "units": time_attributes["units"],
+            "calendar": time_attributes["calendar"],
+            "source_utc_offset": cache.source_utc_offset,
+        }
+    )
+    dataset["corrupt_partition"].attrs["flag_values"] = np.asarray(
+        [0, 1],
+        dtype=np.int8,
+    )
+    dataset["corrupt_partition"].attrs["flag_meanings"] = "usable corrupt"
+    return dataset
+
+
+def _seconds_since_epoch(value: datetime) -> float:
+    delta = value.astimezone(UTC) - datetime(1970, 1, 1, tzinfo=UTC)
+    return delta.total_seconds()
+
+
+def _timezone_hours(zone: timezone) -> float:
+    offset = zone.utcoffset(None)
+    if offset is None:
+        raise ValueError("A fixed timezone offset is required.")
+    return offset.total_seconds() / 3600
+
+
 def _read_integer_variable(
     dataset: _NetCDFDataset,
     name: str,
@@ -1010,21 +1800,27 @@ def _read_numeric_series(
         values=values,
         mask=mask,
         units=_attribute_text(variable, "units"),
+        calendar=_attribute_text(variable, "calendar"),
     )
 
 
 def _topology_signature(
     n_faces: int,
+    n_edges: int,
     domain: _IntegerArray | None,
     globalnr: _IntegerArray | None,
     face_nodes: _IntegerArray,
+    edge_nodes: _IntegerArray,
 ) -> str:
     digest = blake2b(digest_size=32)
     digest.update(b"mesh2d_nFaces\0")
     digest.update(int(n_faces).to_bytes(8, byteorder="little", signed=False))
+    digest.update(b"mesh2d_nEdges\0")
+    digest.update(int(n_edges).to_bytes(8, byteorder="little", signed=False))
     _hash_integer_array(digest, _FACE_DOMAIN, domain)
     _hash_integer_array(digest, _FACE_GLOBALNR, globalnr)
     _hash_integer_array(digest, _FACE_NODES, face_nodes)
+    _hash_integer_array(digest, _EDGE_NODES, edge_nodes)
     return digest.hexdigest()
 
 
@@ -1068,6 +1864,9 @@ def _build_merge_plan(
     local_faces: list[_Array] = []
     local_global_numbers: list[_Array] = []
     local_centres: list[_Array] = []
+    local_edges: list[_Array] = []
+    edge_global_positions: list[_Array] = []
+    edge_orientations: list[_Array] = []
     for partition, path in enumerate(subrun.map_files):
         try:
             with (
@@ -1118,6 +1917,17 @@ def _build_merge_plan(
                             path,
                         )
                     )
+
+                edge_owned, edge_positions, edge_signs = _partition_edge_mapping(
+                    dataset,
+                    partition,
+                    subrun.partitioned,
+                    grid,
+                    path,
+                )
+                local_edges.append(edge_owned)
+                edge_global_positions.append(edge_positions)
+                edge_orientations.append(edge_signs)
         except _InspectionFailure:
             raise
         except (
@@ -1131,7 +1941,10 @@ def _build_merge_plan(
             raise _failure(
                 "V-OUT-002",
                 path,
-                f"Could not read face identity for merge-plan construction: {error}",
+                (
+                    "Could not read face or edge identity for merge-plan "
+                    f"construction: {error}"
+                ),
                 "Restore or regenerate this D-Flow FM map output.",
             ) from error
 
@@ -1245,6 +2058,51 @@ def _build_merge_plan(
             "Restore consistent partition ownership and face identity.",
         )
 
+    edge_partition_n_owned = np.asarray(
+        [edges.size for edges in local_edges],
+        dtype=np.int64,
+    )
+    edge_partition_offset = np.zeros(len(local_edges), dtype=np.int64)
+    if len(local_edges) > 1:
+        edge_partition_offset[1:] = np.cumsum(edge_partition_n_owned[:-1])
+    edge_owned_local = np.concatenate(local_edges).astype(np.int64, copy=False)
+    edge_global_pos = np.concatenate(edge_global_positions).astype(
+        np.int64,
+        copy=False,
+    )
+    edge_orientation = np.concatenate(edge_orientations).astype(
+        np.int8,
+        copy=False,
+    )
+    n_edges = int(grid.n_edge)
+    if (
+        edge_owned_local.size != n_edges
+        or edge_global_pos.size != n_edges
+        or edge_orientation.size != n_edges
+        or np.any(edge_global_pos < 0)
+        or np.any(edge_global_pos >= n_edges)
+        or np.any((edge_orientation != 1) & (edge_orientation != -1))
+    ):
+        raise _failure(
+            "V-OUT-020",
+            grid_path,
+            "Owned partition edges do not have a valid one-to-one merged-grid mapping.",
+            "Restore valid edge ownership and endpoint coordinates.",
+        )
+    edge_coverage = np.bincount(edge_global_pos, minlength=n_edges)
+    if edge_coverage.size != n_edges or not np.all(edge_coverage == 1):
+        missing = int(np.count_nonzero(edge_coverage == 0))
+        duplicated = int(np.count_nonzero(edge_coverage > 1))
+        raise _failure(
+            "V-OUT-020",
+            grid_path,
+            (
+                "Edge merge plan does not cover every merged edge exactly once "
+                f"({missing} missing, {duplicated} duplicated)."
+            ),
+            "Restore complete edge connectivity and deterministic ownership.",
+        )
+
     grid_dataset = _grid_dataset(ugrid, crs, fingerprint, grid_file)
     plan = _MergePlan(
         subrun_indices=subrun_indices,
@@ -1252,13 +2110,321 @@ def _build_merge_plan(
         matching=matching,
         grid_file=grid_file,
         n_faces=n_faces,
-        n_edges=int(grid.n_edge),
+        n_edges=n_edges,
         partition_offset=partition_offset,
         partition_n_owned=partition_n_owned,
         owned_local=owned_local,
         global_pos=global_pos,
+        edge_partition_offset=edge_partition_offset,
+        edge_partition_n_owned=edge_partition_n_owned,
+        edge_owned_local=edge_owned_local,
+        edge_global_pos=edge_global_pos,
+        edge_orientation=edge_orientation,
     )
     return plan, grid_dataset
+
+
+def _partition_edge_mapping(
+    dataset: _NetCDFDataset,
+    partition: int,
+    partitioned: bool,
+    grid: _Grid,
+    location: Path,
+) -> tuple[_Array, _Array, _Array]:
+    edge_dimension = dataset.dimensions.get("mesh2d_nEdges")
+    face_dimension = dataset.dimensions.get("mesh2d_nFaces")
+    node_dimension = dataset.dimensions.get("mesh2d_nNodes")
+    if edge_dimension is None or face_dimension is None or node_dimension is None:
+        raise _failure(
+            "V-OUT-002",
+            location,
+            "Mesh edge, face, or node dimension is missing.",
+            "Restore complete UGRID dimensions in the map file.",
+        )
+
+    n_edges = len(edge_dimension)
+    n_faces = len(face_dimension)
+    n_nodes = len(node_dimension)
+    edge_nodes = _read_connectivity(
+        dataset,
+        _EDGE_NODES,
+        (n_edges, 2),
+        location,
+    )
+    face_nodes = _read_connectivity(
+        dataset,
+        _FACE_NODES,
+        (n_faces, None),
+        location,
+    )
+    if (
+        np.any(edge_nodes < 0)
+        or np.any(edge_nodes >= n_nodes)
+        or np.any(face_nodes[face_nodes >= 0] >= n_nodes)
+    ):
+        raise _failure(
+            "V-OUT-002",
+            location,
+            "Face or edge connectivity references an invalid local node.",
+            "Restore valid UGRID node indices in the map file.",
+        )
+    local_node_coordinates = _read_node_coordinates(dataset, n_nodes, location)
+    global_node_coordinates = np.asarray(grid.node_coordinates, dtype=np.float64)
+    global_edge_nodes = np.asarray(grid.edge_node_connectivity, dtype=np.int64)
+    if (
+        global_node_coordinates.ndim != 2
+        or global_node_coordinates.shape[1] != 2
+        or not np.isfinite(global_node_coordinates).all()
+        or global_edge_nodes.shape != (int(grid.n_edge), 2)
+        or np.any(global_edge_nodes < 0)
+        or np.any(global_edge_nodes >= global_node_coordinates.shape[0])
+    ):
+        raise _failure(
+            "V-OUT-020",
+            location,
+            "Merged-grid node or edge topology is invalid.",
+            "Restore a valid two-dimensional UGRID mesh.",
+        )
+
+    spatial = cast(_ScipySpatialModule, import_module("scipy.spatial"))
+    node_tree = spatial.cKDTree(global_node_coordinates)
+    distances, node_candidates = node_tree.query(
+        local_node_coordinates,
+        k=2,
+        distance_upper_bound=_COORDINATE_TOLERANCE_M,
+        workers=1,
+    )
+    distances = np.asarray(distances, dtype=np.float64)
+    node_candidates = np.asarray(node_candidates, dtype=np.int64)
+    if distances.ndim != 2 or distances.shape[1] != 2:
+        raise _failure(
+            "V-OUT-020",
+            location,
+            "Could not match local mesh nodes to the merged grid.",
+            "Restore unique node coordinates within 1 mm of the merged grid.",
+        )
+    missing_nodes = distances[:, 0] > _COORDINATE_TOLERANCE_M
+    ambiguous_nodes = distances[:, 1] <= _COORDINATE_TOLERANCE_M
+    duplicate_nodes = np.unique(node_candidates[:, 0]).size != node_candidates.shape[0]
+    if missing_nodes.any() or ambiguous_nodes.any() or duplicate_nodes:
+        raise _failure(
+            "V-OUT-020",
+            location,
+            (
+                "Coordinate-based node matching is not one-to-one "
+                f"({int(missing_nodes.sum())} missing, "
+                f"{int(ambiguous_nodes.sum())} ambiguous, "
+                f"{int(duplicate_nodes)} duplicate mappings)."
+            ),
+            "Restore unique partition node coordinates within 1 mm of the merged grid.",
+        )
+    global_node_for_local = node_candidates[:, 0]
+
+    global_edge_for_nodes: dict[tuple[int, int], int] = {}
+    for edge_index, endpoints in enumerate(global_edge_nodes):
+        key = _edge_key(int(endpoints[0]), int(endpoints[1]))
+        if key[0] == key[1] or key in global_edge_for_nodes:
+            raise _failure(
+                "V-OUT-020",
+                location,
+                "Merged-grid edge endpoint pairs are not unique.",
+                "Restore valid edge-node connectivity in the merged grid.",
+            )
+        global_edge_for_nodes[key] = edge_index
+
+    local_edge_for_nodes: dict[tuple[int, int], int] = {}
+    for edge_index, endpoints in enumerate(edge_nodes):
+        key = _edge_key(int(endpoints[0]), int(endpoints[1]))
+        if key[0] == key[1] or key in local_edge_for_nodes:
+            raise _failure(
+                "V-OUT-020",
+                location,
+                "Partition edge endpoint pairs are not unique.",
+                "Restore valid edge-node connectivity in the map file.",
+            )
+        local_edge_for_nodes[key] = edge_index
+
+    adjacent_faces: list[list[int]] = [[] for _ in range(n_edges)]
+    for face_index, nodes in enumerate(face_nodes):
+        valid_nodes = nodes[nodes >= 0]
+        if valid_nodes.size < 3:
+            raise _failure(
+                "V-OUT-020",
+                location,
+                f"Face {face_index} has fewer than three valid nodes.",
+                "Restore valid face-node connectivity in the map file.",
+            )
+        for slot in range(valid_nodes.size):
+            key = _edge_key(
+                int(valid_nodes[slot]),
+                int(valid_nodes[(slot + 1) % valid_nodes.size]),
+            )
+            local_edge_index = local_edge_for_nodes.get(key)
+            if local_edge_index is None:
+                raise _failure(
+                    "V-OUT-020",
+                    location,
+                    f"Face {face_index} references an unknown mesh edge.",
+                    "Restore consistent face-node and edge-node connectivity.",
+                )
+            adjacent_faces[local_edge_index].append(face_index)
+
+    for edge_index, faces in enumerate(adjacent_faces):
+        if len(faces) not in {1, 2}:
+            raise _failure(
+                "V-OUT-020",
+                location,
+                (
+                    f"Edge {edge_index} is adjacent to {len(faces)} faces; "
+                    "expected one or two."
+                ),
+                "Restore valid two-dimensional mesh connectivity.",
+            )
+
+    if partitioned:
+        domain = _read_integer_variable(dataset, _FACE_DOMAIN)
+        if domain is None or domain.values.shape != (n_faces,) or domain.mask.any():
+            raise _failure(
+                "V-OUT-022",
+                location,
+                "Valid face-domain ownership is required to select owned edges.",
+                "Restore domain numbers for every partition face.",
+            )
+        edge_owner = np.asarray(
+            [
+                min(int(domain.values[face]) for face in faces)
+                for faces in adjacent_faces
+            ],
+            dtype=np.int64,
+        )
+        owned_local = np.flatnonzero(edge_owner == partition).astype(
+            np.int64,
+            copy=False,
+        )
+    else:
+        owned_local = np.arange(n_edges, dtype=np.int64)
+
+    if owned_local.size == 0:
+        raise _failure(
+            "V-OUT-020",
+            location,
+            f"Partition {partition} owns no mesh edges.",
+            "Restore complete edge ownership across the partitioned grid.",
+        )
+
+    global_positions = np.empty(owned_local.size, dtype=np.int64)
+    orientation = np.empty(owned_local.size, dtype=np.int8)
+    for position, local_index in enumerate(owned_local):
+        local_endpoints = global_node_for_local[edge_nodes[local_index]]
+        key = _edge_key(int(local_endpoints[0]), int(local_endpoints[1]))
+        global_index = global_edge_for_nodes.get(key)
+        if global_index is None:
+            raise _failure(
+                "V-OUT-020",
+                location,
+                f"Partition edge {int(local_index)} is absent from the merged grid.",
+                "Restore complete edge connectivity in every partition.",
+            )
+        global_positions[position] = global_index
+        global_endpoints = global_edge_nodes[global_index]
+        orientation[position] = (
+            1 if np.array_equal(local_endpoints, global_endpoints) else -1
+        )
+
+    return owned_local, global_positions, orientation
+
+
+def _edge_key(first: int, second: int) -> tuple[int, int]:
+    return (first, second) if first < second else (second, first)
+
+
+def _read_connectivity(
+    dataset: _NetCDFDataset,
+    name: str,
+    expected_shape: tuple[int, int | None],
+    location: Path,
+) -> _Array:
+    variable = dataset.variables.get(name)
+    if variable is None:
+        raise _failure(
+            "V-OUT-002",
+            location,
+            f"Required topology variable {name!r} is missing.",
+            "Restore complete edge and face connectivity in the map file.",
+        )
+    raw = np.ma.asarray(variable[...])
+    if not np.issubdtype(raw.dtype, np.integer):
+        raise _failure(
+            "V-OUT-002",
+            location,
+            f"Topology variable {name!r} must contain integers.",
+            "Restore valid UGRID connectivity arrays.",
+        )
+    if (
+        raw.ndim != 2
+        or raw.shape[0] != expected_shape[0]
+        or (expected_shape[1] is not None and raw.shape[1] != expected_shape[1])
+    ):
+        raise _failure(
+            "V-OUT-002",
+            location,
+            f"Topology variable {name!r} has an invalid shape.",
+            "Restore valid UGRID connectivity arrays.",
+        )
+    start_index_text = _attribute_text(variable, "start_index")
+    try:
+        start_index = 0 if start_index_text is None else int(start_index_text)
+    except ValueError as error:
+        raise _failure(
+            "V-OUT-002",
+            location,
+            f"Topology variable {name!r} has an invalid start_index.",
+            "Restore valid UGRID connectivity metadata.",
+        ) from error
+    values = np.asarray(raw.data, dtype=np.int64) - start_index
+    mask = np.asarray(np.ma.getmaskarray(raw), dtype=np.bool_)
+    values[mask] = -1
+    if np.any(values[~mask] < 0):
+        raise _failure(
+            "V-OUT-002",
+            location,
+            f"Topology variable {name!r} contains invalid node indices.",
+            "Restore valid UGRID connectivity arrays.",
+        )
+    return values
+
+
+def _read_node_coordinates(
+    dataset: _NetCDFDataset,
+    n_nodes: int,
+    location: Path,
+) -> _Array:
+    coordinates: list[_Array] = []
+    for name in ("mesh2d_node_x", "mesh2d_node_y"):
+        variable = dataset.variables.get(name)
+        if variable is None:
+            raise _failure(
+                "V-OUT-002",
+                location,
+                f"Required node-coordinate variable {name!r} is missing.",
+                "Restore node coordinates in the map file.",
+            )
+        raw = np.ma.asarray(variable[...])
+        values = np.asarray(raw.data, dtype=np.float64)
+        if (
+            raw.ndim != 1
+            or values.size != n_nodes
+            or np.ma.getmaskarray(raw).any()
+            or not np.isfinite(values).all()
+        ):
+            raise _failure(
+                "V-OUT-002",
+                location,
+                f"Node-coordinate variable {name!r} has invalid values.",
+                "Restore finite coordinates for every mesh node.",
+            )
+        coordinates.append(values)
+    return np.column_stack(coordinates)
 
 
 def _read_face_centres(
@@ -1473,11 +2639,17 @@ def _merge_plan_dataset(
     n_subruns = len(simulation.subruns)
     n_partitions = simulation.subruns[0].partition_count
     max_owned_faces = max(plan.n_faces for plan in plans)
+    max_owned_edges = max(plan.n_edges for plan in plans)
     plan_of_subrun = np.full(n_subruns, -1, dtype=np.int32)
     owned_local = np.full((len(plans), max_owned_faces), -1, dtype=np.int64)
     global_pos = np.full_like(owned_local, -1)
     partition_offset = np.zeros((len(plans), n_partitions), dtype=np.int64)
     partition_n_owned = np.zeros_like(partition_offset)
+    edge_owned_local = np.full((len(plans), max_owned_edges), -1, dtype=np.int64)
+    edge_global_pos = np.full_like(edge_owned_local, -1)
+    edge_orientation = np.zeros((len(plans), max_owned_edges), dtype=np.int8)
+    edge_partition_offset = np.zeros((len(plans), n_partitions), dtype=np.int64)
+    edge_partition_n_owned = np.zeros_like(edge_partition_offset)
     subrun_indices = np.asarray(
         [subrun.index for subrun in simulation.subruns],
         dtype=np.int32,
@@ -1511,6 +2683,15 @@ def _merge_plan_dataset(
         partition_n_owned[plan_index] = plan.partition_n_owned
         owned_local[plan_index, : plan.owned_local.size] = plan.owned_local
         global_pos[plan_index, : plan.global_pos.size] = plan.global_pos
+        edge_partition_offset[plan_index] = plan.edge_partition_offset
+        edge_partition_n_owned[plan_index] = plan.edge_partition_n_owned
+        edge_owned_local[plan_index, : plan.edge_owned_local.size] = (
+            plan.edge_owned_local
+        )
+        edge_global_pos[plan_index, : plan.edge_global_pos.size] = plan.edge_global_pos
+        edge_orientation[plan_index, : plan.edge_orientation.size] = (
+            plan.edge_orientation
+        )
 
     if np.any(plan_of_subrun < 0):
         raise _failure(
@@ -1527,6 +2708,17 @@ def _merge_plan_dataset(
             "partition_n_owned": (("plan", "partition"), partition_n_owned),
             "owned_local": (("plan", "owned_face"), owned_local),
             "global_pos": (("plan", "owned_face"), global_pos),
+            "edge_partition_offset": (
+                ("plan", "partition"),
+                edge_partition_offset,
+            ),
+            "edge_partition_n_owned": (
+                ("plan", "partition"),
+                edge_partition_n_owned,
+            ),
+            "edge_owned_local": (("plan", "owned_edge"), edge_owned_local),
+            "edge_global_pos": (("plan", "owned_edge"), edge_global_pos),
+            "edge_orientation": (("plan", "owned_edge"), edge_orientation),
             "signature": (("subrun", "partition"), signatures),
             "subrun_index": (("subrun",), subrun_indices),
             "plan_n_faces": (("plan",), plan_n_faces),
@@ -1540,6 +2732,7 @@ def _merge_plan_dataset(
             "partition": np.arange(n_partitions, dtype=np.int32),
             "subrun": np.arange(n_subruns, dtype=np.int32),
             "owned_face": np.arange(max_owned_faces, dtype=np.int64),
+            "owned_edge": np.arange(max_owned_edges, dtype=np.int64),
         },
         attrs={
             "n_faces": plans[0].n_faces,
@@ -1558,10 +2751,11 @@ def _merge_plan_dataset(
 def _cache_is_current(
     merge_plan_path: Path,
     grid_paths: Sequence[Path],
+    times_path: Path,
     fingerprint: str,
     guard: OutputWriteGuard,
 ) -> tuple[bool, str | None]:
-    cache_paths = (merge_plan_path, *grid_paths)
+    cache_paths = (merge_plan_path, *grid_paths, times_path)
     existing = tuple(path.exists() for path in cache_paths)
     if not any(existing):
         return False, None

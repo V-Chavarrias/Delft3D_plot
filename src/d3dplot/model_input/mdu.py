@@ -38,6 +38,7 @@ class MduInfo:
     sed_file: Path | None
     gravity: float
     water_density: float
+    tzone_explicit: bool = False
 
     @classmethod
     def from_path(cls, path: Path) -> MduInfo:
@@ -68,6 +69,7 @@ class MduInfo:
             tstart=start_datetime or model.time.tstart,
             tstop=stop_datetime or model.time.tstop,
             tzone=model.time.tzone,
+            tzone_explicit="tzone" in model.time.model_fields_set,
             output_dir=_resolve_output_dir(
                 model.output.outputdir,
                 base_dir=base_dir,

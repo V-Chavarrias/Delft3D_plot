@@ -44,6 +44,7 @@ def test_mdu_info_reads_values_and_resolves_input_references(
         2.5,
         1.0,
     )
+    assert info.tzone_explicit
     assert info.output_dir == (tmp_path / "results").resolve()
     assert info.map_file == Path("custom_map.nc")
     assert info.net_file == (tmp_path / "mesh.nc").resolve()
@@ -74,6 +75,7 @@ def test_mdu_info_uses_kernel_defaults_and_datetime_overrides(
 
     assert info.tstart == "20200203040506"
     assert info.tstop == "20200204050607"
+    assert not info.tzone_explicit
     assert info.output_dir == (tmp_path / "DFM_OUTPUT_defaults").resolve()
     assert info.map_file == Path("defaults_map.nc")
     assert info.gravity == pytest.approx(9.81)

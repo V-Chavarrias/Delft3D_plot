@@ -7,6 +7,11 @@ from d3dplot.simulation.discover import (
     discover_simulation,
 )
 from d3dplot.simulation.inspection import InspectionResult, inspect_simulation
+from d3dplot.simulation.map_reader import (
+    MapReader,
+    MapReaderError,
+    MapReadResult,
+)
 from d3dplot.simulation.status import (
     SimulationState,
     SimulationStatus,
@@ -19,6 +24,12 @@ from d3dplot.simulation.status import (
     write_simulation_status_json,
 )
 from d3dplot.simulation.subrun import SubRun
+from d3dplot.simulation.time_axis import (
+    DuplicateResolution,
+    TimeAxis,
+    TimeEntry,
+    TimeSelectionResult,
+)
 
 __all__ = [
     "Simulation",
@@ -26,6 +37,13 @@ __all__ = [
     "SimulationState",
     "SimulationStatus",
     "InspectionResult",
+    "MapReadResult",
+    "MapReader",
+    "MapReaderError",
+    "DuplicateResolution",
+    "TimeAxis",
+    "TimeEntry",
+    "TimeSelectionResult",
     "SubRun",
     "SubRunStatus",
     "detect_simulation_status",

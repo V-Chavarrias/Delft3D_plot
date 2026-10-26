@@ -31,6 +31,11 @@ from d3dplot.simulation.discover import (
 )
 from d3dplot.simulation.partitions import _NETCDF4_READ_LOCK
 from d3dplot.simulation.subrun import SubRun
+from d3dplot.simulation.time_utils import (
+    decode_cf_time,
+    time_unit_seconds,
+    timezone_from_hours,
+)
 from d3dplot.validate.report import ValidationReport
 
 _DIA_TAIL_BYTES = 4096
@@ -38,10 +43,6 @@ _FINISHED_MARKER = "Computation finished"
 _INTERRUPTED_MARKERS = (
     "*** ERROR Flow exited abnormally",
     "** INFO   : Simulation did not reach stop time",
-)
-_CF_TIME_UNITS = re.compile(
-    r"^\s*(?P<unit>[A-Za-z]+)\s+since\s+(?P<origin>.+?)\s*$",
-    re.IGNORECASE,
 )
 _DATETIME_TOKEN = re.compile(r"^\d{14}$")
 _CSV_FIELDS = (
@@ -58,32 +59,6 @@ _CSV_FIELDS = (
     "checked_at",
     "dflowfm_version",
 )
-_TIME_UNIT_SECONDS = {
-    "s": 1.0,
-    "sec": 1.0,
-    "secs": 1.0,
-    "second": 1.0,
-    "seconds": 1.0,
-    "min": 60.0,
-    "mins": 60.0,
-    "minute": 60.0,
-    "minutes": 60.0,
-    "h": 3600.0,
-    "hr": 3600.0,
-    "hrs": 3600.0,
-    "hour": 3600.0,
-    "hours": 3600.0,
-    "d": 86400.0,
-    "day": 86400.0,
-    "days": 86400.0,
-    "ms": 0.001,
-    "millisecond": 0.001,
-    "milliseconds": 0.001,
-    "us": 0.000001,
-    "microsecond": 0.000001,
-    "microseconds": 0.000001,
-}
-
 TextWriter: TypeAlias = Callable[[Path, str], None]
 
 
@@ -602,34 +577,14 @@ def _decode_cf_time(
     calendar: str,
     tzone: float,
 ) -> datetime | None:
-    match = _CF_TIME_UNITS.fullmatch(units)
-    if match is None:
-        return None
-    seconds_per_unit = _TIME_UNIT_SECONDS.get(match.group("unit").casefold())
-    if seconds_per_unit is None:
-        return None
-    origin_text = match.group("origin").strip().replace("Z", "+00:00")
     try:
-        origin = datetime.fromisoformat(origin_text)
-    except ValueError:
-        return None
-    if origin.tzinfo is None:
-        origin = origin.replace(tzinfo=_fixed_timezone(tzone))
-    try:
-        decoded = origin + timedelta(seconds=value * seconds_per_unit)
-    except OverflowError:
-        return None
-    if calendar.casefold() not in {"standard", "gregorian", "proleptic_gregorian"}:
-        return None
-    return decoded.astimezone(UTC)
+        return decode_cf_time(value, units, calendar, tzone)
+    except ValueError as error:
+        raise SimulationStatusError(str(error)) from error
 
 
 def _time_unit_seconds(units: str | None) -> float | None:
-    if units is None:
-        return None
-    match = _CF_TIME_UNITS.fullmatch(units)
-    unit = match.group("unit") if match is not None else units.strip()
-    return _TIME_UNIT_SECONDS.get(unit.casefold())
+    return time_unit_seconds(units)
 
 
 def _is_before_mdu_stop(metadata: _MapMetadata, mdu: MduInfo) -> bool:
@@ -666,23 +621,17 @@ def _mdu_stop_time(mdu: MduInfo) -> _StopTime:
         if instant.tzinfo is None:
             instant = instant.replace(tzinfo=_fixed_timezone(mdu.tzone))
         return _StopTime(None, instant.astimezone(UTC))
-    seconds_per_unit = _TIME_UNIT_SECONDS.get(mdu.tunit.casefold())
+    seconds_per_unit = time_unit_seconds(mdu.tunit)
     if seconds_per_unit is None or not math.isfinite(numeric):
         return _StopTime(None, None)
     return _StopTime(numeric * seconds_per_unit, None)
 
 
 def _fixed_timezone(offset_hours: float) -> timezone:
-    if not math.isfinite(offset_hours) or abs(offset_hours) > 14:
-        raise SimulationStatusError(
-            f"MDU time-zone offset is outside the supported range: {offset_hours}"
-        )
     try:
-        return timezone(timedelta(hours=offset_hours))
+        return timezone_from_hours(offset_hours)
     except ValueError as error:
-        raise SimulationStatusError(
-            f"Invalid MDU time-zone offset: {offset_hours}"
-        ) from error
+        raise SimulationStatusError(str(error)) from error
 
 
 def _dia_path(map_file: Path) -> Path:

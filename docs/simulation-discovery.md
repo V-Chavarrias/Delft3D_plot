@@ -52,6 +52,33 @@ Classic NetCDF3 headers use SciPy's memory-mapped reader; other NetCDF formats
 use netCDF4, whose native reader access is serialized across discovery threads.
 SMT sub-runs must have the same number of map files.
 
+## Inspection and time axis
+
+`inspect_simulation(simulation, layout)` builds or reuses guarded grid,
+merge-plan, and `times.nc` caches. The time cache contains the merged UTC
+hydrodynamic axis, optional morphological times, sub-run and local output
+indices, and corrupt-partition flags. Inspection also checks restart-boundary
+`morft` and bed-level consistency. Model map files remain read-only.
+
+Use `TimeAxis` to load the checked cache and apply the same `Times` selections
+used by analysis configuration:
+
+```python
+from pathlib import Path
+
+from d3dplot.config import Times
+from d3dplot.simulation import TimeAxis
+
+axis = TimeAxis.from_cache(Path("./postprocessing/reference/d3dplot/cache/times.nc"))
+selection = axis.select(Times(at="last"))
+if not selection.is_valid:
+    print([issue.message for issue in selection.issues])
+```
+
+Times in the API are timezone-aware UTC. Naive requested times are interpreted
+using the cache's source UTC offset. An unset tolerance chooses the nearest
+output without a distance limit; an explicit tolerance is a hard maximum.
+
 ## Status
 
 `detect_simulation_status(simulation)` reads only the final 4 KiB of each
@@ -82,6 +109,14 @@ counts remain unknown until the output-quality inspection stage has run.
 | `V-OUT-001` | Map output folder or required map files are missing, or partition numbering has gaps. |
 | `V-OUT-002` | A map file cannot be opened as NetCDF. |
 | `V-OUT-003` | Map-file counts differ between SMT sub-runs. |
+| `V-OUT-030` | A partition has corrupt or inconsistent `time`/`morft` values. |
+| `V-OUT-031` | Implausible non-finite or extremely large values were read from a partition. |
+| `V-OUT-032` | Hydrodynamic restart-boundary duplicates have different `morft`. |
+| `V-OUT-033` | Bed levels differ at a restart-boundary duplicate. |
+| `V-TIME-002` | Map, MDU, or configured time-zone offsets conflict. |
+| `V-TIME-010` | A requested time cannot be resolved on the selected axis. |
+| `V-TIME-011` | A selected output has corrupt partitions; the configured policy applies. |
+| `V-TIME-012` | A morphological axis was requested without `morft` values. |
 | `V-MDU-001` | The selected MDU or a referenced morphology/sediment file cannot be parsed. |
 
 The same stable validation codes are listed in the

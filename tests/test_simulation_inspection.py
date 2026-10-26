@@ -3,17 +3,22 @@
 
 from __future__ import annotations
 
+import csv
+import math
 from contextlib import redirect_stdout
+from datetime import UTC, datetime
 from importlib import import_module
 from io import StringIO
 from pathlib import Path
 from shutil import copytree
 
 import netCDF4
+import numpy as np
 import pytest
 
 from d3dplot.simulation import (
     Simulation,
+    TimeAxis,
     discover_simulation,
     inspect_simulation,
 )
@@ -37,10 +42,13 @@ def test_inspection_matches_dfm_tools_and_reuses_cache(
 
     assert result is not None, report.to_text()
     assert report.is_valid
+    assert "V-OUT-033" not in {issue.code for issue in report.warnings}
     assert result.reference_subrun == 0
     assert result.plan_count == 1
     assert result.merge_plan_path.is_file()
+    assert result.times_path.is_file()
     assert result.grid_paths[0].is_file()
+    _assert_time_axis_matches_expected(synthetic_case, result.times_path)
     _assert_values_match_dfm_tools(simulation, result.merge_plan_path)
 
     reused, reused_report = inspect_simulation(
@@ -95,6 +103,90 @@ def test_corrupt_partition_uses_first_time_consistent_reference(
     assert result is not None
     assert result.reference_subrun == 1
     assert "V-OUT-030" in {issue.code for issue in report.warnings}
+    time_axis = TimeAxis.from_cache(result.times_path)
+    corrupt_entries = [entry for entry in time_axis.entries if entry.corrupt_partitions]
+    assert corrupt_entries
+    assert all(1 in entry.corrupt_partitions for entry in corrupt_entries)
+
+
+@pytest.mark.integration
+def test_configured_time_zone_conflict_uses_map_offset(
+    synthetic_case: Path,
+    tmp_path: Path,
+) -> None:
+    simulation = _discover(synthetic_case / "simulations" / "r001")
+
+    result, report = inspect_simulation(
+        simulation,
+        OutputLayout(tmp_path / "d3dplot"),
+        crs=None,
+        forbidden_roots=(),
+        time_zone="+02:00",
+    )
+
+    assert result is not None, report.to_text()
+    assert "V-TIME-002" in {issue.code for issue in report.warnings}
+    assert TimeAxis.from_cache(result.times_path).source_utc_offset == "+01:00"
+
+
+@pytest.mark.integration
+def test_restart_boundary_morphological_mismatch_is_rejected(
+    synthetic_case: Path,
+    tmp_path: Path,
+) -> None:
+    simulation_path = tmp_path / "boundary_morph_mismatch"
+    copytree(synthetic_case / "simulations" / "r001", simulation_path)
+    simulation = _discover(simulation_path)
+    for map_file in simulation.subruns[1].map_files:
+        with netCDF4.Dataset(map_file, mode="r+") as dataset:
+            morph_time = dataset.variables["morft"]
+            morph_time[0] = float(morph_time[0]) + 2.0
+
+    result, report = inspect_simulation(
+        _discover(simulation_path),
+        OutputLayout(tmp_path / "output" / "d3dplot"),
+        crs=None,
+        forbidden_roots=(),
+    )
+
+    assert result is None
+    assert "V-OUT-032" in {issue.code for issue in report.errors}
+
+
+@pytest.mark.integration
+def test_restart_boundary_bed_level_mismatch_is_reported(
+    synthetic_case: Path,
+    tmp_path: Path,
+) -> None:
+    simulation_path = tmp_path / "boundary_bed_mismatch"
+    copytree(synthetic_case / "simulations" / "r001", simulation_path)
+    simulation = _discover(simulation_path)
+    map_file = simulation.subruns[1].map_files[0]
+    with netCDF4.Dataset(map_file, mode="r+") as dataset:
+        domains = np.asarray(
+            dataset.variables["mesh2d_flowelem_domain"][:],
+            dtype=np.int64,
+        )
+        bed_level = dataset.variables["mesh2d_mor_bl"]
+        boundary_values = np.asarray(bed_level[0], dtype=np.float64)
+        local_face = next(
+            index
+            for index, (domain, value) in enumerate(
+                zip(domains, boundary_values, strict=True)
+            )
+            if domain == 0 and math.isfinite(float(value))
+        )
+        bed_level[0, local_face] = boundary_values[local_face] + 0.1
+
+    result, report = inspect_simulation(
+        _discover(simulation_path),
+        OutputLayout(tmp_path / "output" / "d3dplot"),
+        crs=None,
+        forbidden_roots=(),
+    )
+
+    assert result is not None, report.to_text()
+    assert "V-OUT-033" in {issue.code for issue in report.warnings}
 
 
 @pytest.mark.integration
@@ -159,6 +251,31 @@ def _discover(path: Path) -> Simulation:
     assert simulation is not None
     assert report.is_valid
     return simulation
+
+
+def _assert_time_axis_matches_expected(
+    synthetic_case: Path,
+    time_cache_path: Path,
+) -> None:
+    with (synthetic_case / "expected" / "time_axis.csv").open(
+        encoding="utf-8",
+        newline="",
+    ) as stream:
+        expected = list(csv.DictReader(stream))
+
+    time_axis = TimeAxis.from_cache(time_cache_path)
+    assert len(expected) == len(time_axis.entries) == 9
+    assert time_axis.source_utc_offset == "+01:00"
+    assert time_axis.morphology_available
+    for entry, row in zip(time_axis.entries, expected, strict=True):
+        assert entry.time_index == int(row["time_index"])
+        assert entry.subrun == int(row["subrun"])
+        assert entry.local_index == int(row["local_index"])
+        assert entry.time == datetime.fromisoformat(row["time"]).astimezone(UTC)
+        assert entry.morph_time == datetime.fromisoformat(row["morph_time"]).astimezone(
+            UTC
+        )
+        assert not entry.corrupt_partitions
 
 
 def _assert_values_match_dfm_tools(

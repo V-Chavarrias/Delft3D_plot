@@ -273,6 +273,8 @@ def validate(
                     simulation,
                     OutputLayout.for_simulation(simulation_config, config.output),
                     crs=config.crs,
+                    time_zone=config.time_zone,
+                    check_boundary_duplicates=config.check_boundary_duplicates,
                     forbidden_roots=config.output.forbidden_roots,
                 )
                 issues.extend(inspection_report.issues)
@@ -338,6 +340,8 @@ def inspect(
             simulation,
             OutputLayout.for_simulation(simulation_config, config.output),
             crs=config.crs,
+            time_zone=config.time_zone,
+            check_boundary_duplicates=config.check_boundary_duplicates,
             forbidden_roots=config.output.forbidden_roots,
         )
         issues.extend(inspection_report.issues)

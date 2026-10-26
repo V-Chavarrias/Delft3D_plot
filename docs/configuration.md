@@ -40,10 +40,27 @@ analyses:
 `10 days` or ISO-8601 durations. Measurement-matching tolerances remain scoped
 to their measurement settings, for example
 `measurements.bed_level.time_tolerance`.
-`duplicate_morphological_times` remains an analysis-level setting.
+With `times.tolerance: null`, explicit requests select the nearest available
+output without a distance limit; a configured tolerance is a hard maximum
+distance. Duplicate hydrodynamic times within one second and morphological
+times within 60 seconds resolve to the last output in hydrodynamic order.
+`duplicate_morphological_times` remains an analysis-level setting and can keep
+the first output for morphological duplicates. `time_matching` selects whether
+other simulations follow the reference simulation's selected times or use
+their own.
 `status.stale_after` controls how long output files must remain unchanged before
 an incomplete run is reported as stopped; it defaults to one hour and accepts
 durations such as `30 minutes`.
+
+`time_zone` accepts a fixed UTC offset such as `+01:00`; it is used only when
+the map time units have no offset and the MDU does not explicitly set `Tzone`.
+Map time units take precedence over explicit MDU `Tzone`, which takes
+precedence over the project setting. Conflicts are reported as `V-TIME-002`.
+`on_corrupt_output` controls selected outputs with corrupt partitions: `mask`
+keeps the output and masks affected faces, `skip` omits it, and `error` rejects
+it. `check_boundary_duplicates` defaults to `true` and compares bed levels at
+duplicate SMT restart outputs; mismatched `morft` is an error (`V-OUT-032`) and
+different bed levels are a warning (`V-OUT-033`).
 
 Map drawing options belong to the shared `map` block. In particular, use
 `map.render` (`polygons`, `raster`, or `auto`) for map rendering. Global figure
@@ -58,9 +75,9 @@ fields explicitly set there.
 ## Defaults and supported analyses
 
 If omitted, `times.at` defaults to `all`, `times.axis` to `hydrodynamic`, and
-`times.tolerance` is unset (`null`). Specify a tolerance for explicit time
-requests until the runtime matching behavior for an unset tolerance is defined
-with the time-axis implementation.
+`times.tolerance` is unset (`null`), which means unbounded nearest-output
+matching for explicit requests. Setting a tolerance limits selection to outputs
+within that distance. A morphological time axis requires output `morft` values.
 
 The default figure style is 10 pt DejaVu Sans, 16 × 10 cm at 150 dpi. Maps use
 the `viridis` colormap, `auto` rendering, and `auto` aspect. The

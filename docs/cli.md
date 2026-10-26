@@ -32,16 +32,21 @@ d3dplot inspect project.yaml
 d3dplot inspect project.yaml --simulation reference
 ```
 
-`inspect` builds or reuses the grid and merge-plan caches for every configured
-simulation, or only the one selected by label. It checks partition identity and
-topology, selects a time-consistent reference sub-run, and reports the cache
-location and whether it was built or reused. Plain FM output without global face
-numbers uses one-to-one face-centre matching within 1 mm and reports the
-coordinate-matching fallback as `V-OUT-023`.
+`inspect` builds or reuses the grid, merge-plan, and checked time-axis caches
+for every configured simulation, or only the one selected by label. It checks
+partition identity and topology, time quality, and duplicate SMT restart
+boundaries; it also selects a time-consistent reference sub-run and reports the
+cache location and whether it was built or reused. Plain FM output without
+global face numbers uses one-to-one face-centre matching within 1 mm and reports
+the coordinate-matching fallback as `V-OUT-023`. The time-axis cache stores
+UTC hydrodynamic and morphological times, merged sub-run/local indices, and
+corrupt-partition flags.
 
 Generated caches are written atomically beneath the configured, guarded
 `output.root` (or the simulation's default `d3dplot` output folder). Model files
 remain read-only. `inspect` does not process quantities or create figures.
+Boundary `morft` mismatches are errors (`V-OUT-032`); boundary bed-level
+mismatches are warnings (`V-OUT-033`).
 
 ## Create a starter configuration
 
@@ -74,10 +79,10 @@ available. Section quantities such as `velocity_parallel`, `velocity_perpendicul
 and `discharge` produce `V-VAR-006` because line sampling is not part of v1.
 
 When these checks have no errors, `validate` also builds or reuses the same
-grid and merge-plan caches as `inspect`. Derived quantity dependencies,
-processing, and plotting remain future model-output work. Errors produce a
-non-zero exit code. Text is the default report format; JSON reports have the
-stable shape `{"valid": true, "issues": []}`.
+grid, merge-plan, and checked time-axis caches as `inspect`. Derived quantity
+dependencies, processing, and plotting remain future model-output work. Errors
+produce a non-zero exit code. Text is the default report format; JSON reports
+have the stable shape `{"valid": true, "issues": []}`.
 
 ## Print the configuration schema
 
