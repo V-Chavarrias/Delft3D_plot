@@ -50,8 +50,8 @@ Missing optional file references and optional values are represented as
 
 `resolve_dimr_mdu(path)` uses HYDROLIB-core's `DIMR` model to select the unique
 component whose library is `dflowfm`. Its `workingDir` is resolved relative to
-the DIMR file. A configuration with no FM component or multiple FM components
-raises `ValueError`.
+the DIMR file. A configuration with no FM component, multiple FM components,
+or an FM component without an input file raises `ValueError`.
 
 ## Validation
 

@@ -25,3 +25,14 @@ for the contribution workflow.
 | Verification | 3,344 passed, 10 skipped, 2 xfailed in the non-local-data suite; 70 DIMR tests passed; real r209 sub-run 0 DIMR resolved and MDU/`.mor`/`.sed` inputs parsed read-only in 0.390 s |
 | Upstream status | Committed locally only; not pushed, proposed, merged, or released |
 | Minimum release for d3dplot | TBD — use the first published HYDROLIB-core release containing both WP 0.1 and the DIMR fix; until then, local development uses the editable checkout on the integrated branch above |
+
+### DIMR external component libraries
+
+| Item | Status |
+|------|--------|
+| Contribution branch | `fix/dimr-external-libraries`, based on `origin/main` |
+| Local commit | `25e390bd` adds a generic component for non-`rr_dll`/`dflowfm` libraries and a parse/round-trip regression test |
+| Integrated development branch | `feat/mdu_morphology_keywords` includes cherry-pick `96d07c87`, after WP 0.1 and the parallel-control fix |
+| Verification | Integrated HYDROLIB-core suite: 3,345 passed, 10 skipped, 2 xfailed; 71 DIMR tests passed. d3dplot's 51 CI-eligible tests, strict mypy, changed-file Ruff/format checks, and strict MkDocs build pass; read-only r209 discovery found 195 sub-runs and 8,580 map files without issues in 99.283 s |
+| Upstream search/status | No matching open issue or pull request found; committed locally only, not pushed, proposed, merged, or released |
+| Minimum release for d3dplot | TBD — use the first published HYDROLIB-core release containing WP 0.1 and both DIMR fixes; until then, local development uses the integrated branch above |
