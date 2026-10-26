@@ -1,6 +1,6 @@
 # Delft3D_plot (Python): Architecture and Implementation Plan
 
-Status: **v6.7, plan for review.** Only the synthetic test-case generator is implemented ([tools/synthetic_smt](../tools/synthetic_smt/README.md)). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
+Status: **v6.8, plan for review.** Only the synthetic test-case generator is implemented ([tools/synthetic_smt](../tools/synthetic_smt/README.md)). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
 
 Document map:
 * §0 Session handover
@@ -34,7 +34,7 @@ Document map:
 | Item | Location | State |
 |------|----------|-------|
 | Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `main`, conventional commits |
-| Plan (this file) | `docs/architecture.md` | v6.7 |
+| Plan (this file) | `docs/architecture.md` | v6.8 |
 | Licence | `LICENSE` | GPL-3.0 |
 | Synthetic SMT test case generator | `tools/synthetic_smt/` | Implemented and verified (§13.3) |
 | Land-boundary converter (`.mat` cache → `.ldb`) | `tools/mat_to_ldb.py` | Implemented. Used to recreate the Maas land boundary (D45) |
@@ -198,6 +198,8 @@ Status: **A** = agreed with the user; **P** = proposed in this plan and awaiting
 | D48 | **Agent guidance**: always-on `AGENTS.md` (principles: plan first, read-only P-drive, reuse HYDROLIB-core/dfm_tools, performance, finalisation, names, time, diagnostics), a plotting file instruction, and two skills (`add-analysis-or-option`, `upstream-contribution`) (§13.6) | User: future agent development must follow the plan | A |
 | D49 | The user is a contributor of HYDROLIB-core and dfm_tools. Upstream changes are developed locally in the checkouts; branches, issues and PRs are created when the user decides (§14, skill `upstream-contribution`). Recommended: commit on a **local feature branch** from the start (no access needed); committing on local `main` is possible and can be moved to a branch later | User | A |
 | D50 | **Quantity engine**: one central service resolves requested quantities (raw or derived, e.g. Froude, vorticity), reads each raw input once per (sub-run, time) through the merge plan, computes derived quantities in dependency order, and is the only reader of model output for all analyses (§7.9a). The merge plan includes edges for edge-located inputs | User; Matlab `gdm_read_data_map_simdef` | P |
+| D51 | HYDROLIB-core PR 1 scope: **6 `[sediment]` keywords** (`dredgeFile`, `morCFL`, `DzbDtMax`, `morphoPol`, `inMorphoPol`, `upperLimitSSC`) and **3 `ResearchGeometry` keywords** (`circumcenterMethod`, `circumcenterTolerance`, `calculateBedLevelOverNonActiveLinks`); the other missing `[sediment]` keywords will be deprecated and are not added (§14.1) | User; agreed with the HYDROLIB-core maintainer | A |
+| D52 | Second acceptance case: the Rijn **plain FM** run `D16000` (§5.5, §13.4a) | User | A |
 
 ## 3. Review of the plan (v6)
 
@@ -494,7 +496,26 @@ No issue existed (2026-10-25) for the missing `[sediment]` keywords.
 | output | `writedfminterpretedvalues` | intbool, `0` | research | research | none |
 | restart | `rstignorebl` | intbool, `0` | research | research | none |
 
-With the first 7 changes, `ResearchFMModel` reads the `r209` MDU. The last 6 keywords are already covered by `ResearchFMModel`, which is why D22 uses it rather than `FMModel`.
+With the 5 `[sediment]` and 2 `[geometry]` changes, `ResearchFMModel` reads the `r209` MDU (PR 1, §14.1, adds these plus `upperLimitSSC` and `calculateBedLevelOverNonActiveLinks`). The last 6 keywords are already covered by `ResearchFMModel`, which is why D22 uses it rather than `FMModel`.
+
+### 5.5 Reference: plain D-Flow FM run (Rijn, `D16000`; read-only)
+
+Second real case, a **regular (non-SMT) D-Flow FM simulation** (acceptance case 2, §13.4):
+
+| Item | Value |
+|------|-------|
+| Folder | `p:\11212773-003-26mad09-rijn\C_Work\818_dflowfm2d-rijn-beno24_6-v1a\01_standaardsommen\computations\test\D16000\` |
+| MDU | `RIJN.mdu` (plus partition MDUs `RIJN_0000…0003.mdu`) |
+| DIMR | `dimr_config.xml` with **two components**: `FlowFM` (`dflowfm`, `RIJN.mdu`, processes 0–3) and `Real-Time Control` (`FBCTools_BMI`, working dir `../../../rtc/rtc_ini1`). Discovery must select the `dflowfm` component, not the first one |
+| Net file | `rijn-beno24_6-v1a_net.nc` (270 MB) and partition net files `…_000p_net.nc` |
+| Time | `RefDate = 20000101`, `Tunit = M`, `Tzone = 1`, run defined by `StartDateTime = 20000101000000` / `StopDateTime = 20000119000000` (instead of `TStart`/`TStop`; `MduInfo` must handle both) |
+| Output | `results/`: 4 partition map files (≈ 400 MB each), `RIJN_0000_his.nc` (3.2 GB, partition 0 only), 4 `*_fou.nc`, `.dia` files |
+| Map | `MapInterval = 14400 s` → **109 map times**; units `seconds since 2000-01-01 00:00:00 +01:00`; EPSG 0; faces per partition ≈ 131 000 (≈ 523 600 owned in total), up to 6 nodes per face (hexagons), 268 651 edges in partition 0 |
+| Map variables (time-dependent) | `mesh2d_s1`, `mesh2d_waterdepth`, `mesh2d_ucx`, `mesh2d_ucy`, `mesh2d_ucmag`, `mesh2d_u1`, `mesh2d_cfcl`, `mesh2d_cftrt`, `mesh2d_dtcell`, `mesh2d_Numlimdt`; **no morphology** (no `morft`, no `mesh2d_mor_bl`; bed level from `mesh2d_flowelem_bl`) |
+| Status | "Computation finished" in the 4 partition `.dia` files, not in `RIJN.dia` (same pattern as `r209`) |
+| HYDROLIB-core | `FMModel` rejects 8 keywords (`[geometry]` 3, `[output]` 5); `ResearchFMModel` rejects only `[geometry]` `calculateBedLevelOverNonActiveLinks`, `circumcenterMethod`, `circumcenterTolerance` → added in PR 1 (§14.1) |
+
+What it tests: plain FM discovery (DIMR with several components), `StartDateTime` handling, time-block parallelism (109 times, §7.13), hexagonal faces, a hydrodynamic-only run (`time_axis: morphological` must be rejected, V-TIME-012), derived quantities from velocity (Froude, vorticity from `mesh2d_u1`).
 
 ## 6. Libraries and tools
 
@@ -691,7 +712,7 @@ src/d3dplot/
 | Condition | Kind |
 |-----------|------|
 | `smt.yml` exists and `output/<integer>/` folders exist | SMT |
-| `dimr_config.xml` with an FM component | FM (the MDU from `inputFile`, relative to `workingDir`) |
+| `dimr_config.xml` with an FM component | FM (the MDU from `inputFile` of the component whose `library` is `dflowfm`, relative to `workingDir`; other components such as RTC are ignored, §5.5) |
 | exactly one `*.mdu` that is not a partition MDU (`*_\d{4}.mdu`) | FM |
 | otherwise | error V-SIM-001 |
 
@@ -708,7 +729,7 @@ Inside an SMT sub-run, relative paths in the MDU are resolved against the sub-ru
 |-------|-------------------------|-------|
 | `refdate` | `model.time.refdate` | `yyyymmdd` (int) |
 | `tunit` | `model.time.tunit` | `S`, `M`, `H`, `D` |
-| `tstart`, `tstop` | `model.time.tstart`, `model.time.tstop` | in `tunit` from `refdate` |
+| `tstart`, `tstop` | `model.time.startdatetime`/`stopdatetime` when set (`yyyymmddHHMMSS`), otherwise `model.time.tstart`/`tstop` | `tstart`/`tstop` are in `tunit` from `refdate`; the Rijn run uses `StartDateTime`/`StopDateTime` with `Tunit = M` (§5.5) |
 | `tzone` | `model.time.tzone` | hours |
 | `output_dir` | `model.output.outputdir` | default `DFM_OUTPUT_<stem>` |
 | `map_file` | `model.output.mapfile` | default `<stem>_map.nc`; partitions `<stem>_<pppp>_map.nc` |
@@ -834,19 +855,54 @@ Several plotted quantities are not stored in the map file but computed from one 
 * **Validation.** Requested quantities are resolved during validation: a missing input reports V-VAR-002 with the dependency chain (e.g. `vorticity → mesh2d_u1 missing in sub-runs 3–5`).
 * **Extensible.** Projects can register their own derived quantities through the entry point `d3dplot.quantities` (same mechanism as analyses and hooks), with tests.
 
-**v1 derived quantities** (definitions; each gets a unit test with hand-computed values and an analytic test on the synthetic case):
+**Catalogue of quantities** (all derived quantities of Matlab `D3D_plot`, which M2D and SMB share through `gdm_read_data_map_simdef.m`, its line-profile variant `gdm_read_data_map_ls_simdef.m` and `gdm_read_data_map.m`; definitions taken from the Matlab code). Matlab constants are kept: `g = 9.81 m/s²`, `ρ = 1000 kg/m³`, `ρ_s = 2650 kg/m³`, configurable in `constants:`. Each entry gets a unit test with hand-computed values and, where the synthetic case allows it, an analytic test. Notation: `‖u‖` velocity magnitude, `h` water depth, `F_i` volume fraction of sediment fraction `i`, `D_i` its diameter.
 
-| Quantity | Matlab | Inputs | Definition |
-|----------|--------|--------|------------|
-| `froude_number` | `Fr` | `velocity_magnitude`, `water_depth` | `‖u‖ / sqrt(g·h)`, NaN where `h < dry_depth_m` (default 0.01 m) |
-| `specific_discharge` | `qsp` | `velocity_magnitude`, `water_depth` | `‖u‖·h` (m²/s) |
-| `vorticity` | `vorticity` (`D3D_vorticity_from_u1`) | `mesh2d_u1` (edge normal velocity), grid geometry | circulation per face: `ω_f = Σ_{e∈f} s_{f,e}·u1_e·L_e / A_f`, with `s` the edge orientation sign, `L` the edge length, `A` the face area |
-| `mean_grain_size_arithmetic` / `_geometric` | `dm` / `dg` | `layer_fraction`, `.sed` diameters | `Σ F_k D_k` / `2^{Σ F_k log2 D_k}` (Matlab definitions, to be confirmed against `gdm_read_data_map_mean_grain_size.m`) |
-| `total_sediment_transport_magnitude` | `stot` | `mesh2d_sxtot`, `mesh2d_sytot` (per fraction) | `sqrt(sx² + sy²)` per fraction (component dimension, §8.2) |
-| `velocity_vector` | `uv` | `mesh2d_ucx`, `mesh2d_ucy` | two components; used by M2D velocity arrows |
+*Raw quantities with aliases* (registry entries of kind `raw`; Matlab short names from `D3D_var_num2str.m`):
 
-Later (same mechanism): streamfunction, Shields number, piezometric head (`E`), total sediment thickness (`Ltot`), morphological area (`ba_mor`).
+| Canonical | Matlab | FM NetCDF |
+|-----------|--------|-----------|
+| `water_depth` | `h`, `wd`, `waterdepth` | `mesh2d_waterdepth` |
+| `velocity_magnitude` | `umag`, `umag_layer` | `mesh2d_ucmag` (depth-averaged in 3D: `mesh2d_ucmaga`) |
+| `water_level` | `wl` | `mesh2d_s1` |
+| `bed_level` | `bl`, `DPS`, `etab` | `mesh2d_mor_bl` (morphological runs), otherwise `mesh2d_flowelem_bl` |
+| `layer_thickness` | `thlyr`, `La` (layer 0 = active layer) | `mesh2d_thlyr` |
+| `layer_fraction` | `Fak`, `lyrfrac`, `Fs` | `mesh2d_lyrfrac` (selection `fractions`, `layer`, `sum_fractions`) |
+| `chezy` | `czs` | `mesh2d_czs` |
+| `bed_shear_stress` | `taub` | `mesh2d_taus` |
+| `mean_grain_size_geometric_output` | `mesh2d_dg` | `mesh2d_dg` (as written by D-Flow FM; differs from the derived `dg` below) |
+| `cell_area` | `ba` | `mesh2d_flowelem_ba` |
 
+*Derived quantities* (registry entries of kind `derived`):
+
+| Canonical | Matlab (file) | Inputs | Definition | Phase |
+|-----------|---------------|--------|------------|-------|
+| `froude_number` | `Fr`, `fr` (`gdm_read_data_map_Fr`) | `velocity_magnitude`, `water_depth` | `‖u‖ / sqrt(g·h)`; NaN where `h < dry_depth_m` (default 0.01 m; Matlab has no threshold) | v1 |
+| `specific_discharge` | `qsp` (`gdm_read_data_map_q`) | `velocity_magnitude`, `water_depth` | `‖u‖·h` (m²/s) | v1 |
+| `energy_head` | `E` (`gdm_read_data_map_E`) | `water_level`, `velocity_magnitude` | `η + ‖u‖²/(2g)` (m) | v1 |
+| `shields_number` | `ShieldsD` (`gdm_read_data_map_ShieldsD`) | `bed_shear_stress`; if absent `velocity_magnitude`, `chezy` | `θ = τ_b / (g·ρ·R)`, `R = (ρ_s − ρ)/ρ`; without `τ_b`: `τ_b = ρ·(g/C²)·‖u‖²` | v1 |
+| `velocity_direction` | `udir` (`gdm_read_data_map_udir`) | `mesh2d_ucx`, `mesh2d_ucy` | direction of the depth-averaged velocity (degrees; convention to be taken from the Matlab reader and documented) | v1 |
+| `velocity_vector` | `uv` | `mesh2d_ucx`, `mesh2d_ucy` | two components; M2D arrows | v1 |
+| `velocity_magnitude_layer_mean` | `umag` with `layer` (`gdm_read_data_map_umag`) | `mesh2d_ucmag` per layer | arithmetic mean over the selected layers (Matlab behaviour; not thickness-weighted) | later (3D) |
+| `water_level_rate` | `dzetadt` (`gdm_read_data_map_dzetadt`) | `mesh2d_s1`, `mesh2d_s0` | `(s1 − s0)/Δt`, `Δt` from the map times (m/s). `mesh2d_s0` is often not written (e.g. Rijn: `Wrimap_waterlevel_s0 = 0`); then the previous map time of `mesh2d_s1` is used, and the choice is written to the `.dia` | v1 |
+| `vorticity` | `vorticity` (`gdm_read_data_map_vorticity`, `D3D_vorticity_from_u1`) | `mesh2d_u1` (edges), grid geometry | `ω_f = Σ_{e∈f} s_{f,e}·u1_e·L_e / A_f` (s⁻¹, positive counter-clockwise) | v1 |
+| `streamfunction`, `transport_streamfunction` | same names (`gdm_read_data_map_streamfunction`, `D3D_compute_streamfunction`) | `mesh2d_u1` (× `mesh2d_hu` for transport; NaN → 0), grid Laplacian | edge fluxes `u_e·L_e` assembled into `b` (`b_L −=`, `b_R +=`), gauge `b_1 = 0`, `ψ = L⁻¹ b` (sparse solve, scipy) | later |
+| `total_sediment_thickness` | `Ltot` (`gdm_read_data_map_Ltot`) | `layer_thickness` | `Σ_k thlyr_k` (m) | v1 |
+| `morphological_volume` | `ba_mor` (`gdm_read_data_map_ba_mor`) | `cell_area`, `total_sediment_thickness` | `A_f · L_tot` (as in Matlab; used by SMB `multiply_by_width: morphological`) | v1 |
+| `sediment_transport_magnitude` | `stot` (`gdm_read_data_map_stot`) | `mesh2d_sxtot`, `mesh2d_sytot` | `sqrt(sx² + sy²)` per fraction (component dimension) | v1 |
+| `sediment_transport_magnitude_sum` | `stot_sum` (`gdm_read_data_map_stot_sum`) | `sediment_transport_magnitude` | `Σ_i` over fractions | v1 |
+| `bed_load_transport_magnitude` | `sb` (profile reader) | `mesh2d_sbcx`, `mesh2d_sbcy` | `sqrt(sbx² + sby²)` | v1 |
+| `mean_grain_size_arithmetic` | `dm` (`gdm_read_data_map_mean_grain_size`) | `layer_fraction`, `.sed` diameters | `d_m = Σ_i F_i·D_i` (m) | v1 |
+| `mean_grain_size_geometric` | `dg` (same file) | `layer_fraction`, `.sed` diameters | `d_g = d_0·2^{Σ_i F_i·log2(D_i/d_0)}`, `d_0 = 10⁻³ m` | v1 |
+| `grain_size_percentile` | `d10`, `d50`, `d90` (profile reader `gdm_read_data_map_ls_grainsize`) | `layer_fraction`, `.sed` diameters | percentile of the grain-size distribution (interpolation rule to be taken from Matlab) | v1 |
+| `velocity_parallel`, `velocity_perpendicular` | `vpara`, `vperp` (profile reader) | `velocity_vector`, a polyline direction | projection on the polyline direction / its normal | later (PRF) |
+| `discharge` | `Q` (profile reader `gdm_read_data_map_ls_Q`) | velocity, depth along a section | integral of `q` over the section | later (PRF) |
+| `chloride_mass` | `clm2` (`gdm_read_data_map_sal_mass`) | `sal`, `mesh2d_flowelem_zw` | `Σ_k (Cl_k/1000)·Δz_k`, `Cl = sal2cl(sal)` | later (3D) |
+| `residence_time_max` / `_depth_average` / `_surface` | `T_max`, `T_da`, `T_surf` (`gdm_read_data_map_T_max`) | `mesh2d_cTR<i>`, `mesh2d_dTR<i>`, `zw`, decay rate from the substance file | `T = ln(C_d/C_c)/r`, with Matlab's clipping rules; depth average, surface layer, or max over layers | later |
+| `morphodynamic_celerity` | `*cel_morpho*` (`gdm_read_data_map_cel_morpho`, `call_ECT`) | `velocity_magnitude`, `water_depth`, `chezy`, active layer, fractions, transport parameters | eigenvalues of the morphodynamic system (ECT) | later (needs a port of ECT) |
+
+*Selections that work like derived quantities* (applied by the engine to any 3D input, §7.9): `vertical: {depth_average: {z_range}}` = `Σ v_k Δz_k / Σ Δz_k` with `Δz` from `mesh2d_flowelem_zw`, layers outside `z_range` masked (Matlab `depth_average`, `depth_average_limits`); `vertical: {elevation: z}` = linear interpolation of the profile at elevation `z` using `mesh2d_flowelem_zc` (Matlab `elevation`). Later, with 3D support.
+
+"v1" quantities are implemented in WP 2.2a; "later" ones are added with the analysis or model type that needs them, through the same registry. The column "Phase" is a proposal (§17).
 **Edge-located inputs** (e.g. `mesh2d_u1`): the merge plan (§7.6) also has an **edge part**. Owned edges per partition are those whose owning face (first of `mesh2d_edge_faces`) is owned by the partition. Their global positions are matched by edge mid-point coordinates against the merged grid (KD-tree, 1 mm, one-to-one, error on ambiguity). Coverage is checked as for faces (V-OUT-020).
 
 **Two levels of "derived"** (not to be confused):
@@ -1551,6 +1607,7 @@ Codes are stable, documented, and tested one by one. **E** = error, **W** = warn
 | V-TIME-002 | W | Time zone conflict between map units, MDU `Tzone` and configuration |
 | V-TIME-010 | E | Requested time not available within the tolerance (lists the nearest) |
 | V-TIME-011 | W | Requested time hits a corrupt output (`on_corrupt_output` decides) |
+| V-TIME-012 | E | `time_axis: morphological` requested for a simulation without morphology (no `morft`) |
 | V-VAR-001 | E | Unknown variable (with "did you mean") |
 | V-VAR-002 | E | Variable missing in some sub-runs |
 | V-VAR-003 | E | Fraction or layer index out of range |
@@ -1677,6 +1734,12 @@ Generator: `tools/synthetic_smt/` ([README](../tools/synthetic_smt/README.md)). 
   * SMB per segment: absolute tolerance 1e−6 m on statistics, except where face-centre conventions differ (to be investigated: §4.5).
 * Performance targets: §7.22.
 
+### 13.4a Acceptance case 2: Rijn plain FM run (`D16000`)
+
+* Input: §5.5 (read-only); `output.root` local; `forbidden_roots` contains the project folder.
+* Analyses: `map2d` of `water_level`, `water_depth`, `velocity_magnitude`, and derived `froude_number` and `vorticity`, all 109 times, with comparisons `value` and `difference_time`; windows along a river-km file of the Rijntakken (with track) if one is available; `river_km_statistics` of `water_level` and `froude_number` on a summer-bed polygon of the Rijn (to be provided, §17).
+* No Matlab reference yet: checks are the engine values against direct NetCDF reads, the time-block parallelism (serial == parallel), the performance (§7.22), and a visual review.
+
 ### 13.5 CI
 
 GitHub Actions on push and pull request:
@@ -1711,7 +1774,7 @@ Upstream changes are made by the user (a contributor of both repositories) local
 
 | Repository | Contribution | Why | Priority |
 |------------|--------------|-----|----------|
-| HYDROLIB-core | **MDU keywords**: complete `[sediment]` with the 22 missing standard keywords of the MDU specification (incl. the 5 of `r209`) and accept the 2 deprecated `[geometry]` keywords (detailed plan §14.1) | `ResearchFMModel` must read real morphological MDUs (D22) | **High, first** (prerequisite of WP 1.5) |
+| HYDROLIB-core | **MDU keywords**: add 6 morphology keywords to `[sediment]` and 3 deprecated/research keywords to `ResearchGeometry` (detailed plan §14.1; scope agreed with the maintainer, D51) | `ResearchFMModel` must read real morphological MDUs (D22) | **High, first** (prerequisite of WP 1.5) |
 | HYDROLIB-core | Move the standard keywords `ncCompression`, `wriMap_trachytopes`, `tStartTlfsmo` from the research model to the standard model (§14.1, PR 2) | Spec conformity | Medium |
 | HYDROLIB-core | Opt-in lenient loading (unknown keywords → warnings), contributing to #931 | Future kernel keywords | Low (discuss with maintainers) |
 | HYDROLIB-core | `MorphologyModel` (`.mor`) and `SedimentModel` (`.sed`) | Typed access to MorFac, MorStt, fractions | High |
@@ -1734,100 +1797,87 @@ Upstream changes are made by the user (a contributor of both repositories) local
 
 **Reference**: `Deltares/Delft3DFM.File.Specifications`, `specifications/dflowfm/mdu.json` at commit `a4d5827` (2026-10-26). The repository needs a GitHub login; it was read through the GitHub API.
 
-**Findings** (complete comparison of the spec with HYDROLIB-core 1.5.0, checkout `14cdeffe`, 2026-10-26):
-* `[sediment]`: the spec has 31 keywords. HYDROLIB-core `Sediment` has only 3 (`Sedimentmodelnr`, `MorFile`, `SedFile`), and `ResearchSediment` adds 4 research keywords. **22 standard keywords are missing**, among them the 5 found in `r209`. One more (`masBalMinDep`) is obsolete.
-* `[geometry]`: the deprecated `circumcenterMethod`/`circumcenterTolerance` (found in `r209`) are missing. Also missing: the standard `zLayerGrowthFactor` and `bedLevMode`, and `stretchCoef` is classified as standard in the spec but is in `ResearchGeometry` in HYDROLIB-core.
+**Findings** (comparison of the spec with HYDROLIB-core 1.5.0, checkout `14cdeffe`, and of two real MDUs, 2026-10-26):
+* `[sediment]`: the spec has 31 keywords; HYDROLIB-core `Sediment` has 3 (`Sedimentmodelnr`, `MorFile`, `SedFile`), `ResearchSediment` 4 research keywords. 22 standard keywords are missing in HYDROLIB-core. **Most of them will be deprecated in D-Flow FM soon** (user, 2026-10-26), so only the morphology keywords below are added.
+* `[geometry]`: the deprecated `circumcenterMethod`/`circumcenterTolerance` (in both real MDUs) and the research keyword `calculateBedLevelOverNonActiveLinks` (in the Rijn MDU, §5.5) are missing.
+* Real MDUs: `ResearchFMModel` fails on `r209` (7 keywords) and on the Rijn `RIJN.mdu` (3 keywords, all in `[geometry]`).
 
-**Scope of PR 1** (decided here; adjust only with a reason):
+**Scope of PR 1** (agreed with the HYDROLIB-core maintainer, D51):
 
-| Part | Content | Why |
-|------|---------|-----|
-| A | Complete `[sediment]` in the standard `Sediment` class: all **22 standard keywords** of the spec (table below) | Same section, same pattern per keyword, the spec is the source; doing only the 5 of `r209` would leave the next user with the same error |
-| B | `circumcenterMethod`, `circumcenterTolerance` in `ResearchGeometry`, following the existing convention for deprecated keywords (`research/models.py`: comment `DEPRECATED_KEYWORD`, default `None`, as `s1incinterval`, `waqfilebase`) | Read without error; never written for new models (`None` is not serialised); no new deprecation mechanism, which is the topic of #931 |
-| — | Not in PR 1: `[geometry]` `zLayerGrowthFactor`, `bedLevMode`; moving `stretchCoef`, `ncCompression`, `wriMap_trachytopes`, `tStartTlfsmo` from research to standard; the obsolete `masBalMinDep` | PR 2: different sections, and moving keywords changes the public API |
+| Part | Class | Keywords | Why |
+|------|-------|----------|-----|
+| A | `Sediment` (standard) | `dredgeFile`, `morCFL`, `DzbDtMax`, `morphoPol`, `inMorphoPol`, `upperLimitSSC` | Standard keywords used by morphological models; the other 16 missing `[sediment]` keywords will be deprecated and are **not** added |
+| B | `ResearchGeometry` | `circumcenterMethod`, `circumcenterTolerance` (deprecated), `calculateBedLevelOverNonActiveLinks` (research) | Existing convention: deprecated and research keywords live in the research classes (`research/models.py`, comment `DEPRECATED_KEYWORD` for the deprecated ones, default `None`, as `s1incinterval`) |
+| — | not in PR 1 | `[geometry]` `zLayerGrowthFactor`, `bedLevMode`; moving `stretchCoef`, `ncCompression`, `wriMap_trachytopes`, `tStartTlfsmo` from research to standard | PR 2: different sections; moving keywords changes the public API |
 
-**Part A: keywords to add to `Sediment`** (`hydrolib/core/dflowfm/mdu/models.py`, class `Sediment`). Attribute = lower-case key; alias = the spec spelling; types follow existing HYDROLIB-core patterns: `intbool` → `bool`, `path` → `DiskOnlyFileModel` (or `PolyFile | DiskOnlyFileModel` for `.pol`), `list[float]` → `List[float]` with the `split_on_delimiter` validator, `intenum` → `int` validated against the spec's values.
+**Part A: fields added to `Sediment`** (`hydrolib/core/dflowfm/mdu/models.py`). Attribute = lower-case key; alias = spec spelling; types follow existing HYDROLIB-core patterns (`intbool` → `bool`, `path` → file model, `intenum` → `int` validated against the spec values):
 
-| Alias (spec) | Type | Default | Notes |
-|--------------|------|---------|-------|
-| `jaceneqtr` | `int` | `2` | |
-| `dredgeFile` | `DiskOnlyFileModel` (`set_default_disk_only_file_model`) | empty | `.dad`, no HYDROLIB-core model |
-| `bndTreatment` | `bool` | `False` | intbool |
-| `sourSink` | `int` (enum values of the spec) | `1` | |
-| `cRefCav` | `float` | `20.0` | |
-| `d50` | `float` | `0.0002` | |
-| `morFac` | `float` | `1.0` | MorFac for `Sedimentmodelnr` 1–3; the `.mor` MorFac applies to model 4 |
-| `rhoSed` | `float` | `2650.0` | |
-| `numIntVerticalEinstein` | `int` | `10` | |
-| `alfaBed` | `float` | `1.0` | |
-| `tMorfSpinup` | `float` | `0.0` | |
-| `initialSedimentConcentration` | `float` | `0.0` | |
-| `uniformErodableThickness` | `float` | `1.0` | |
-| `alfaSus` | `float` | `1.0` | |
-| `morCFL` | `bool` | `True` | intbool |
-| `DzbDtMax` | `float` | `0.1` | |
-| `morphoPol` | `Optional[Union[PolyFile, DiskOnlyFileModel]]` | `None` | as `Geometry.partitionfile` |
-| `ws` | `List[float]` | `[0.0003]` | list, delimiter as other list keywords |
-| `erosionPar` | `List[float]` | `[0.0001]` | list |
-| `tauCre` | `List[float]` | `[0.3]` | list |
-| `inMorphoPol` | `int` ∈ {0, 1} | `1` | 0 = no update inside the polygon, 1 = update |
-| `mormergeDtUser` | `int` (enum values of the spec) | `0` | |
-| `upperLimitSSC` | `float` | `1e-06` | |
+| Alias (spec) | Type | Default | Spec description |
+|--------------|------|---------|------------------|
+| `dredgeFile` | `DiskOnlyFileModel` with `set_default_disk_only_file_model` (as `morfile`) | empty | Dredging/dumping settings file (`*.dad`) |
+| `morCFL` | `bool` | `True` | Use CFL-like condition for morphologic updating |
+| `DzbDtMax` | `float` | `0.1` | Maximum bed level change (m) per time step for `MorCFL=1` |
+| `morphoPol` | `Optional[Union[PolyFile, DiskOnlyFileModel]]` (as `Geometry.partitionfile`) | `None` | Only apply bed updating within the polygon (`*.pol`) |
+| `inMorphoPol` | `int` ∈ {0, 1} | `1` | 0 = no update inside the polygon, 1 = update inside |
+| `upperLimitSSC` | `float` | `1e-06` | (re-read the spec description and unit at implementation time) |
 
-The final list, types and defaults are re-read from the spec at implementation time (it may have changed). Each keyword also gets a `Comments` entry with the spec description.
+**Part B: fields added to `ResearchGeometry`** (`hydrolib/core/dflowfm/research/models.py`):
 
-**Open point to check during implementation**: `FMModel` uses `skip_empty_properties=False`, so new fields with defaults are **written** by `FMModel().save()`. This changes the output of new models (more keywords in `[sediment]`). Precedent: #648 and #788 added keywords in the same way. If the maintainers prefer, use `Optional[...] = None` for the morphology keywords so that they are only written when set. Decide with the maintainers in the PR; the reading behaviour is the same.
+| Alias (spec) | Type | Default | Comment |
+|--------------|------|---------|---------|
+| `circumcenterMethod` | `Optional[Literal["internalNetlinksEdge", "internalNetlinksLoop", "allNetlinksLoop"]]` | `None` | `DEPRECATED_KEYWORD` |
+| `circumcenterTolerance` | `Optional[float]` | `None` | `DEPRECATED_KEYWORD` |
+| `calculateBedLevelOverNonActiveLinks` | `Optional[bool]` | `None` | spec description (research, intbool, default 0) |
 
+Each field gets a `Comments` entry. Types, defaults and descriptions are re-read from the spec at implementation time.
+
+**Open point to check during implementation**: `FMModel` uses `skip_empty_properties=False`, so new **standard** fields with defaults (part A) are written by `FMModel().save()`. Precedent: #648, #788. Research fields with default `None` (part B) are not written. Confirm with the maintainer in the PR.
 #### Procedure
 
 **Step 0: preparation** (local, `c:\checkouts\HYDROLIB-core`):
 * `git switch main; git pull` (read access is enough).
 * Environment: HYDROLIB-core uses poetry (`poetry install`). Alternative without poetry: the d3dplot `.venv` already has HYDROLIB-core installed editable, plus `pip install pytest black isort` for the checks.
-* Branch: `git switch -c feat/mdu_sediment_keywords` (local; no access needed, D49).
+* Branch: `git switch -c feat/mdu_morphology_keywords` (local; no access needed, D49).
 * Baseline: run `pytest tests/dflowfm/test_mdu.py tests/dflowfm/test_research.py` and note the result before changing anything.
 
 **Step 1: tests first** (they fail before the change):
-* New test data `tests/data/input/dflowfm_individual_files/mdu_sediment_keywords.mdu`: written by hand, **no project data**, `[sediment]` with all 22 keywords set to non-default values (mixed casing, e.g. `MorphoPol`, `morphopol`), a list keyword with 2 values, and a `[geometry]` with the two `circumcenter*` keywords.
-* New tests in `tests/dflowfm/test_mdu.py` (`class TestSediment`):
-  1. `FMModel(path, recurse=False)` and `ResearchFMModel(path, recurse=False)` load; each attribute has the expected value and type (parametrised over the 22 keywords);
-  2. defaults when a keyword is absent equal the spec defaults;
+* New test data `tests/data/input/dflowfm_individual_files/mdu_morphology_keywords.mdu`, written by hand, **no project data**: `[sediment]` with the 6 keywords set to non-default values (mixed casing, e.g. `MorphoPol`, `morphopol`); `[geometry]` with the 3 part-B keywords; a small `.pol` next to it for `morphoPol`.
+* `tests/dflowfm/test_mdu.py`, new `class TestSedimentMorphologyKeywords`:
+  1. `FMModel(path, recurse=False)` loads the `[sediment]` part; each of the 6 attributes has the expected value and type (parametrised);
+  2. defaults when absent equal the spec defaults;
   3. `inMorphoPol = 2` → `ValidationError`;
-  4. `morphoPol` and `dredgeFile` are file models with the right path; with `recurse=True`, `morphoPol` is parsed as `PolyFile` (a small test `.pol`);
-  5. round trip: save and load give equal values; list keywords keep their values;
-  6. unknown-keyword check still works in `[sediment]` (an invalid key still raises, as `test_mdu_unknown_keyword_loading_throws_valueerror_for_unknown_keyword`).
-* New tests in `tests/dflowfm/test_research.py`:
-  1. `ResearchFMModel` loads `circumcenterMethod`/`circumcenterTolerance`; `FMModel` still rejects them (they are research/deprecated);
+  4. `morphoPol`/`dredgeFile` are file models with the right path; with `recurse=True`, `morphoPol` is parsed as `PolyFile`;
+  5. round trip: save and load give equal values;
+  6. an unknown keyword in `[sediment]` still raises (pattern of `test_mdu_unknown_keyword_loading_throws_valueerror_for_unknown_keyword`).
+* `tests/dflowfm/test_research.py`:
+  1. `ResearchFMModel` loads the 3 part-B keywords with the right values; `FMModel` still rejects them;
   2. a new `ResearchFMModel()` saved to file does not contain them;
-  3. an MDU with all 13 keywords of §5.4 loads with `ResearchFMModel`.
+  3. MDU test files containing exactly the keyword sets that failed in `r209` and in `RIJN.mdu` (synthetic values, §5.4, §5.5) load with `ResearchFMModel`.
 
 **Step 2: implementation**:
-* `Sediment`: fields of part A, their `Comments`, and a `field_validator` with `split_string_on_delimiter` for the list keywords (pattern of `Geometry.split_on_delimiter`).
-* `ResearchGeometry.Comments`: `research_circumcentermethod`, `research_circumcentertolerance` with `DEPRECATED_KEYWORD`; fields `Optional[Literal["internalNetlinksEdge", "internalNetlinksLoop", "allNetlinksLoop"]] = Field(None, alias="circumcenterMethod")` and `Optional[float] = Field(None, alias="circumcenterTolerance")`.
+* `Sediment`: part-A fields and their `Comments`; an `inMorphoPol` validator (or `Literal[0, 1]`, whichever matches neighbouring code); `parse_file_model_paths`-style validator if the class needs it for `morphoPol` (check how `Geometry` does it).
+* `ResearchGeometry`: part-B fields and `Comments`.
 * Nothing changes in `ResearchSediment`/`ResearchFMModel` (they inherit).
 
-**Step 3: documentation**:
-* `docs/reference/dflowfm/mdu/fm-model-attributes-detailed.md`: add the new `Sediment` attributes (the file lists them, e.g. `morfile: DiskOnlyFileModel [file] (alias=MorFile)`).
-* `docs/reference/dflowfm/mdu/research.md`: the class diagram if it lists attributes.
-* Changelog: generated by commitizen from the commit messages; no manual edit.
+**Step 3: documentation**: `docs/reference/dflowfm/mdu/fm-model-attributes-detailed.md` (new `Sediment` attributes) and `docs/reference/dflowfm/mdu/research.md` if it lists `ResearchGeometry` attributes. Changelog via commitizen.
 
-**Step 4: checks**:
-* `black .`, `isort .`, `pytest` (full suite) in the HYDROLIB-core environment, Python 3.12 locally; CI later runs 3.10–3.14 on Windows/Ubuntu/macOS and SonarCloud.
+**Step 4: checks**: `black .`, `isort .`, full `pytest`, locally with Python 3.12; CI later runs 3.10–3.14 on Windows/Ubuntu/macOS and SonarCloud.
 
-**Step 5: verification from d3dplot** (the editable install follows the checked-out branch):
-* the synthetic case MDUs still load;
-* **read-only** on the P-drive: `ResearchFMModel(r"…\r209\output\1\dflowfm.mdu", recurse=False)` loads, `sediment.morphopol` is a file model pointing to the `.pol`, `sediment.morcfl`, `sediment.dzbdtmax` and `geometry.research_circumcentermethod` have the file's values. Also sub-run 0 and the last sub-run (194).
+**Step 5: verification from d3dplot** (the editable install follows the checked-out branch), read-only on the P-drive:
+* `ResearchFMModel(<r209>\output\{0,1,194}\dflowfm.mdu, recurse=False)` loads; `sediment.morphopol` points to the `.pol`; `sediment.morcfl`, `sediment.dzbdtmax`, `geometry.research_circumcentermethod` have the file's values;
+* `ResearchFMModel(<Rijn D16000>\RIJN.mdu, recurse=False)` loads (§5.5);
+* the synthetic case MDUs still load.
 
 **Step 6: commits** (local), conventional, with the Copilot trailer:
-1. `test(mdu): add tests for [sediment] keywords of the MDU specification`
-2. `feat(mdu): add missing [sediment] keywords of the MDU specification`
-3. `feat(research): accept deprecated circumcenterMethod and circumcenterTolerance in [geometry]`
+1. `test(mdu): add tests for morphology keywords in [sediment] and research keywords in [geometry]`
+2. `feat(mdu): add dredgeFile, morCFL, DzbDtMax, morphoPol, inMorphoPol and upperLimitSSC to [sediment]`
+3. `feat(research): accept circumcenterMethod, circumcenterTolerance and calculateBedLevelOverNonActiveLinks in [geometry]`
 4. `docs(mdu): list the new [sediment] attributes`
 
-**Step 7: when the user has push access** (D49): push the branch, open an issue (title: "MDU: [sediment] section is missing 22 keywords of the MDU specification; deprecated circumcenter keywords rejected"; body: the tables above, error message, links to #648, #788, #931), open a draft PR with `Closes #<issue>`, mark ready for review; maintainers squash-merge with `Refs: #<issue>`.
-
+**Step 7: when the user has push access** (D49): push the branch, open an issue (title: "MDU: morphology keywords missing in [sediment]; circumcenter and calculateBedLevelOverNonActiveLinks rejected in [geometry]"; body: the tables above, the error messages, links to #648, #788, #931), open a draft PR with `Closes #<issue>`; maintainers squash-merge with `Refs: #<issue>`.
 **Done when**: all new and existing HYDROLIB-core tests pass locally; step 5 passes; plan §0.1 and §14 updated (branch name, status "local").
 
-**Effort estimate**: about 1 day (most of it tests and checking the spec types).
+**Effort estimate**: about half a day.
 
 #### PR 2 (later, separate issue)
 
@@ -1859,7 +1909,7 @@ Typed `MorphologyModel` (`.mor`) and `SedimentModel` (`.sed`), if specification 
 
 | WP | Content | Done when |
 |----|---------|-----------|
-| 0.1 | HYDROLIB-core PR 1 on a local branch: 22 `[sediment]` keywords + 2 deprecated `[geometry]` keywords (§14.1, steps 0–6; step 7 when access exists) | §14.1 "Done when"; `ResearchFMModel` loads the `r209` MDU locally |
+| 0.1 | HYDROLIB-core PR 1 on a local branch: 6 `[sediment]` keywords + 3 `ResearchGeometry` keywords (§14.1, steps 0–6; step 7 when access exists) | §14.1 "Done when"; `ResearchFMModel` loads the `r209` MDU locally |
 | 0.2 | Follow-up HYDROLIB-core release that contains PR 1 | `hydrolib-core >= <version>` in d3dplot's `pyproject.toml` (needed before the first PyPI release, WP 5.5) |
 
 ### 15.2 Phase 1: foundations
@@ -1885,7 +1935,7 @@ Typed `MorphologyModel` (`.mor`) and `SedimentModel` (`.sed`), if specification 
 |----|---------|-----------|
 | 2.1 | Inspect phase: partition identity, merge plan(s) + `grid.nc`, topology signatures, reference sub-run selection (§7.6, §9.3) | Values equal dfm_tools on the synthetic case; `corrupt_partition` handled; a fixture with changed topology produces two plans. (local) `r209` merge plan built |
 | 2.2 | `MapReader` (faces and edges), quality checks, `times.nc`, `TimeAxis` (merge, duplicates, tz, selection, matching) | Synthetic `time_axis.csv` reproduced; V-OUT-030/031, V-TIME-* tested |
-| 2.2a | **Quantity engine** (§7.9a): raw/derived registry, dependency resolution, read-once memory cache, grid geometry in `grid.nc`, edge merge plan, v1 derived quantities (Froude, specific discharge, vorticity, velocity vector, mean grain size, transport magnitude), entry point `d3dplot.quantities`. **Generator extension**: the synthetic case gets `mesh2d_ucx`, `mesh2d_ucy`, `mesh2d_u1` (edge normal velocity) with an analytic vorticity (e.g. solid-body rotation component), and `mesh2d_sxtot`/`sytot` per fraction, plus expected values | Each raw input read once per (sub-run, time) even when requested by several quantities and analyses (counting test); derived values equal analytic ones (vorticity on the interior faces, including across partition boundaries); missing input → V-VAR-002 with the dependency chain |
+| 2.2a | **Quantity engine** (§7.9a): raw/derived registry, dependency resolution, read-once memory cache, grid geometry in `grid.nc`, edge merge plan, and all quantities marked "v1" in the catalogue of §7.9a (Froude, specific discharge, energy head, Shields number, velocity direction and vector, water-level rate, vorticity, total sediment thickness, morphological volume, sediment transport magnitude (per fraction and summed), bed-load transport magnitude, mean grain sizes, grain-size percentiles); entry point `d3dplot.quantities`. **Generator extension**: the synthetic case gets `mesh2d_ucx`/`ucy` and `mesh2d_u1` (edges) with an analytic vorticity, `mesh2d_czs`, `mesh2d_thlyr`, `mesh2d_sxtot`/`sytot` and `mesh2d_sbcx`/`sbcy` per fraction, and `.sed` diameters, plus expected values | Each raw input read once per (sub-run, time) even when requested by several quantities and analyses (counting test); every v1 quantity equals its hand-computed / analytic value (vorticity also across partition boundaries); missing input → V-VAR-002 with the dependency chain; (local) values on `r209` and Rijn `D16000` equal direct NetCDF reads |
 | 2.3 | Execution: tasks, planner (one `ProcessTask` per simulation × sub-run for all analyses, D27), fingerprints and skipping, serial/process executors, worker init, logging queue, run summary, **diagnostic file** (D41), sharding | Parallel-equivalence and resumability tests pass; the `.dia` of a synthetic run lists the selected times, the resolved duplicates and the masked corrupt outputs of `corrupt_partition` |
 
 ### 15.4 Phase 3: `map2d`
@@ -1965,13 +2015,16 @@ Resolved with the user (v6.1–v6.3):
 * hooks for every figure through a common finalisation (D46); shared map/line building blocks (D47);
 * SMB stacked areas and diagnostic maps are planned (§8.2);
 * D24 and D27–D40 agreed; D27 refined to time blocks so plain FM simulations also run in parallel (v6.7);
+* HYDROLIB-core PR 1 scope agreed with the maintainer: 6 `[sediment]` + 3 `ResearchGeometry` keywords (D51);
+* second acceptance case: Rijn plain FM run `D16000` (D52, §5.5);
+* all Matlab derived quantities catalogued (§7.9a).
 * the Matlab reference run of the synthetic case is done (the generator needed explicit `statis_plot` and empty `rkm_track`);
 * upstream changes are developed locally; the user is a contributor (D49). A local feature branch is recommended, local `main` is possible (skill `upstream-contribution`);
 * agent guidance files (D48, §13.6).
 
 Still open:
-1. **Quantity engine** (D50, §7.9a): agreement needed before Phase 2. Also: which derived quantities beyond the v1 list (§7.9a) are needed first?
-2. **Real plain FM case**: is there a regular (non-SMT) D-Flow FM simulation on the P-drive to use as a second acceptance case (read-only), ideally partitioned with many map times?
+1. **Quantity engine** (D50, §7.9a): agreement needed before Phase 2, and confirmation of the proposed phase (v1 / later) of each quantity in the catalogue of §7.9a.
+2. **Rijn acceptance case** (§13.4a): which river-km file and summer-bed polygon of the Rijn should be used for iver_km_statistics and the map windows?
 
 Scheduling (no decision needed): the HYDROLIB-core change (WP 0.1, §14.1) is done as the first task of Phase 1, on a local branch, because reading the MDU (WP 1.5) depends on it. The merge plan (D21) is agreed in general terms (v6.6).
 
@@ -2137,6 +2190,7 @@ Principles:
 | v5 | Answers on measurements, `r209` findings, synthetic SMT case specification and generator |
 | v6 | Thorough review against real data (merge plan, tolerant MDU parsing, corrupt partitions, time zones, duplicate morphological times, float64, task granularity, path lengths); `.ldb`-only land boundaries; independent review (14 issues fixed: inspect phase, recursive fingerprints, topology signatures, deterministic sharding and geometry, derived-statistic definitions, verified versions); consolidated, self-contained plan with handover, file formats, validation catalogue and work packages |
 | v6.1 | User answers: last duplicate and masking of corrupt output, both written to a new per-run diagnostic file (`.dia`); `.ldb` read with HYDROLIB-core; contextily cache replaces `earth_tiles`; uv and float64 agreed; HYDROLIB-core keyword contribution analysed (`ResearchFMModel` fails only on 7 keywords) |
+| v6.8 | HYDROLIB-core PR 1 reduced to the agreed 6 `[sediment]` + 3 `ResearchGeometry` keywords (D51); catalogue of all Matlab derived quantities with definitions and phases (§7.9a); Rijn plain FM run as reference and acceptance case 2 (§5.5, §13.4a, D52); DIMR with several components, `StartDateTime`, V-TIME-012 |
 | v6.7 | Detailed HYDROLIB-core plan (§14.1): spec comparison shows 22 missing standard [sediment] keywords, PR 1 completes the section; D27 agreed and refined to time blocks; parallelism for plain FM vs SMT (§7.13); plain FM synthetic variants planned (WP 1.2a) |
 | v6.6 | Merge plan agreed in general terms; D27 explained; HYDROLIB-core change scheduled as first task of Phase 1 |
 | v6.5 | Quantity engine for raw and derived quantities (Froude, vorticity, …) shared by all analyses, edge merge plan, one process task per sub-run for all analyses (D50, D27 revised, §7.9a); upstream work on local `main` or branch (D49) |
