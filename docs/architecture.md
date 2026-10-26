@@ -1,6 +1,6 @@
 # Delft3D_plot (Python): Architecture and Implementation Plan
 
-Status: **v6.25; WP 1.8 is complete locally on `feat/store`: guarded output layouts, marker and forbidden-root enforcement, atomic writes, fingerprints, and input-snapshot coverage are implemented. All 82 CI-eligible tests, strict mypy, changed-file Ruff/format checks, and strict MkDocs pass.** The package foundations, configuration system, validation framework, synthetic cases, and simulation inspection are in place; analysis functionality is not yet implemented. See [the synthetic case generator](https://github.com/V-Chavarrias/Delft3D_plot/blob/main/tools/synthetic_smt/README.md). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
+Status: **v6.26; WP 1.9 is complete locally on `feat/labels`: the Matlab-seeded label and unit catalogs, English/Dutch/Spanish translations, comparison templates, extra dictionaries, and NetCDF metadata fallback are implemented. All 100 CI-eligible tests, strict mypy, changed-file Ruff/format checks, and strict MkDocs pass.** The package foundations, configuration system, validation framework, synthetic cases, and simulation inspection are in place; analysis functionality is not yet implemented. See [the synthetic case generator](https://github.com/V-Chavarrias/Delft3D_plot/blob/main/tools/synthetic_smt/README.md). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
 
 Document map:
 * §0 Session handover
@@ -33,8 +33,8 @@ Document map:
 
 | Item | Location | State |
 |------|----------|-------|
-| Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `feat/store`, local and unpushed; WP 1.8 is complete |
-| Plan (this file) | `docs/architecture.md` | v6.25 |
+| Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `feat/labels`, local and unpushed; WP 1.9 is complete |
+| Plan (this file) | `docs/architecture.md` | v6.26 |
 | Licence | `LICENSE` | GPL-3.0 |
 | Synthetic SMT and plain FM test case generator | `tools/synthetic_smt/` | Implemented and verified locally (§13.3) |
 | Land-boundary converter (`.mat` cache → `.ldb`) | `tools/mat_to_ldb.py` | Implemented. Used to recreate the Maas land boundary (D45) |
@@ -42,15 +42,16 @@ Document map:
 | Recreated Maas land boundary | `data_local/maas/j21_ldb.ldb` (55.7 MB) | Git-ignored. 174 220 polylines, 2 343 057 points; read by HYDROLIB-core in 22 s, identical to the `.mat` |
 | HYDROLIB-core modifications | §14.1–§14.3 | WP 0.1 (`54011e0d`) and both DIMR fixes (`3e4f7317`, `96d07c87`) are integrated locally on `feat/mdu_morphology_keywords`; the external-library fix is also committed on `fix/dimr-external-libraries` |
 | Python environment | `.venv/` (uv, Python 3.12) | Git-ignored. dfm_tools and HYDROLIB-core are installed editable from the local checkouts; HYDROLIB-core is currently on `feat/mdu_morphology_keywords` with WP 0.1 and the DIMR fix |
-| Package `d3dplot` | `pyproject.toml`, `src/d3dplot/` | WP 1.1–1.8 foundations implemented locally; analysis functionality pending |
+| Package `d3dplot` | `pyproject.toml`, `src/d3dplot/` | WP 1.1–1.9 foundations implemented locally; analysis functionality pending |
 | Configuration design | §2 decisions D57–D59 | Nested `times` object and shared `map.render`; WP 1.3 complete locally; plugin config integration deferred to the analysis registry |
 | Validation framework | `src/d3dplot/validate/` | WP 1.4 complete locally: report serialization and static V-CFG-001..004 checks |
 | Model-input adapters | `src/d3dplot/model_input/` | WP 1.5 implemented locally; MDU, `.mor`, `.sed`, DIMR, V-MDU-001, and real r209 read-only validation complete |
 | Simulation discovery | `src/d3dplot/simulation/` | WP 1.6 implemented locally; synthetic FM/SMT cases pass; real r209 discovery completes read-only in 99.283 s |
 | Simulation status | `src/d3dplot/simulation/status.py` | WP 1.7 implemented locally; synthetic statuses pass; real r209 is finished with no validation issues; bounded status scan 27.371 s |
 | Output store | `src/d3dplot/store/` | WP 1.8 implemented locally; guarded marked roots, atomic writers, fingerprints, and input snapshots are tested |
+| Labels | `src/d3dplot/labels/` | WP 1.9 implemented locally; 141 variable aliases, 127 complete translations, and 22 unit types are packaged and tested |
 | Synthetic-case pytest fixture | `tests/conftest.py` | Session-scoped fixture generates and verifies in pytest's temporary folder (WP 1.2) |
-| CI and documentation site | `.github/workflows/ci.yml`, `mkdocs.yml` | 82 CI-eligible tests, strict mypy, strict docs, and changed-file Ruff/format checks pass; whole-repository Ruff/format checks report unrelated existing issues; remote CI not run |
+| CI and documentation site | `.github/workflows/ci.yml`, `mkdocs.yml` | 100 CI-eligible tests, strict mypy, strict docs, and changed-file Ruff/format checks pass; whole-repository Ruff/format checks report unrelated existing issues; remote CI not run |
 | Matlab reference results of the synthetic case | `data_local/synthetic_smt_01/simulations/r00*/mat`, `fig` | **Done** (2026-10-26): r001 37 mat + 1071 PNG, r002 37 mat + 858 PNG. Protected: `generate.py --force` refuses to delete them without `--discard-matlab-reference` |
 | Agent guidance for development | `AGENTS.md`, `.github/instructions/plotting.instructions.md`, `.github/skills/{add-analysis-or-option,upstream-contribution}` | Done (§13.6) |
 
@@ -121,7 +122,8 @@ APIs the design relies on (check them first when upgrading):
 9. **WP 1.5** is implemented locally on `feat/model-input`: typed MDU, `.mor`, `.sed`, and DIMR adapters, V-MDU-001 reporting, and synthetic tests are complete. All 31 CI-eligible tests pass; strict mypy, strict MkDocs, and changed-file Ruff/format checks pass. The full HYDROLIB-core suite passes with WP 0.1 and the DIMR fixes integrated, and real r209 sub-run 0 DIMR resolution plus model-input parsing succeeds read-only in 0.390 s. Whole-repository Ruff and formatting checks report unrelated pre-existing issues; remote CI has not run. WP 1.6 is complete; see item 10.
 10. **WP 1.6** is complete locally on `feat/simulation-discovery`: plain-FM/SMT discovery, typed V-SIM/V-OUT reporting, and read-only NetCDF header validation are tested. All 51 CI-eligible tests, strict mypy, strict MkDocs, and changed-file Ruff/format checks pass. Real r209 discovery found 195 sub-runs and 8,580 map files with no issues in 99.283 s (<2 min), using D61's bounded I/O thread pool. Do not push or open a pull request unless asked.
 11. **WP 1.7** is complete locally on `feat/simulation-status`: status inspection includes `not_started` when valid model input has no maps, per-sub-run `.dia` and NetCDF metadata, configurable staleness, and caller-writer JSON/CSV serializers. Corrupt-output counts remain unknown until WP 2.2. The 69 CI-eligible tests, strict mypy, strict MkDocs, and changed-file Ruff/format checks pass. Read-only r209 status is `finished` (195 sub-runs, 44 partitions, 0 validation issues); bounded status detection took 27.371 s, down from 433.548 s serially (15.8×). Discovery took 124.220 s and discovery plus status 151.590 s. Numeric `TStop` comparison uses elapsed seconds, not the decoded CF origin.
-12. **WP 1.8** is complete locally on `feat/store`: output-root precedence, marked-root and forbidden-path guards, atomic text/bytes/JSON writers, canonical recursive fingerprints, and before/after input snapshots are covered. V-OUT-041 reports forbidden, unwritable, and invalid output roots. All 82 CI-eligible tests, strict mypy, strict MkDocs, and changed-file Ruff/format checks pass. Continue with WP 1.9.
+12. **WP 1.8** is complete locally on `feat/store`: output-root precedence, marked-root and forbidden-path guards, atomic text/bytes/JSON writers, canonical recursive fingerprints, and before/after input snapshots are covered. V-OUT-041 reports forbidden, unwritable, and invalid output roots. All 82 CI-eligible tests, strict mypy, strict MkDocs, and changed-file Ruff/format checks pass.
+13. **WP 1.9** is complete locally on `feat/labels`: the Matlab mapping and translation catalogs are packaged with completed en/nl/es entries, comparison templates, and unit-scale definitions. The API supports project extra dictionaries, datum/fraction formatting, and warned NetCDF metadata fallback. All 100 CI-eligible tests, strict mypy, strict MkDocs, and changed-file Ruff/format checks pass; the wheel contains all three CSV resources. Continue with WP 1.10.
 
 ---
 
@@ -2290,6 +2292,7 @@ Principles:
 
 | Version | Content |
 |---------|---------|
+| v6.26 | Completed WP 1.9 locally on `feat/labels`: added the Matlab-seeded catalog, completed all en/nl/es translations, comparison templates, unit scales, extra dictionaries, and metadata fallback; all 100 CI-eligible tests, strict mypy, Ruff/format, strict MkDocs, and wheel resource checks pass; next handover is WP 1.10 |
 | v6.25 | Completed WP 1.8 locally on `feat/store`: output layout, marked-root write guard, atomic writers, recursive fingerprints, V-OUT-041 checks, input-snapshot helper, and output-store documentation; 82 CI-eligible tests, strict mypy, Ruff/format, and strict MkDocs pass; next handover is WP 1.9 |
 | v1 | First architecture proposal |
 | v2 | Decisions on scope (M2D, SMB; FM, SMT), cache, reprocessing, status, replot, naming, skills, upstream |

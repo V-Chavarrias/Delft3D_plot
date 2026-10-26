@@ -12,6 +12,9 @@ simulations:
     label: reference
 reference_simulation: reference
 language: en
+labels:
+  vertical_datum: "+NAP"
+  extra_dictionaries: []
 output:
   root: ./postprocessing
 status:
@@ -44,6 +47,11 @@ Map drawing options belong to the shared `map` block. In particular, use
 `map.render` (`polygons`, `raster`, or `auto`) for map rendering. Global figure
 style is configured under `figure`; analysis-level values override only the
 fields explicitly set there.
+
+`language` selects English (`en`), Dutch (`nl`), or Spanish (`es`) labels.
+`labels.vertical_datum` controls the datum shown for reference elevations, and
+`labels.extra_dictionaries` lists additional translation CSVs. See
+[Labels](./labels.md) for their format and the label-building API.
 
 ## Defaults and supported analyses
 
