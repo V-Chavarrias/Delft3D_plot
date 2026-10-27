@@ -147,6 +147,15 @@ from `MA` to `BM` at 230.5 km only when `BM` is present. For a generic file with
 multiple branch tags, set `river_km.branches` to one branch to use throughout or
 one branch per requested km centre.
 
+River-km region polygons may contain multiple polygon parts and holes. Their
+source CRS must be present; when the model CRS is known, polygons are
+transformed before face membership is calculated. Missing or incompatible CRS
+information is reported as `V-SMB-002`. Segment polygons are validated by
+default. Set `river_km.allow_invalid_segments: true` only when intentionally
+accepting invalid segment geometry or overlapping segments; overlapping faces
+are still assigned deterministically to the lower segment index and remain
+available to diagnostics.
+
 The current schema recognizes the built-in `map2d` and `river_km_statistics`
 analyses. Plugin configuration models will be discovered and included in
 validation and JSON Schema when the planned `d3dplot.analyses` registry is

@@ -43,6 +43,7 @@ class RiverKmSegmentGeometry:
     left_cut_lines: FloatArray
     right_cut_lines: FloatArray
     polygons: FloatArray
+    invalid_segment_indices: tuple[int, ...]
     removed_centres_km: tuple[float, ...]
 
 
@@ -171,6 +172,7 @@ def build_segment_geometry(
     track: str | None = None,
     branches: Sequence[str] | None = None,
     half_width_m: float = 1000.0,
+    allow_invalid_segments: bool = False,
 ) -> RiverKmSegmentGeometry:
     """Build edges, cut lines, and segment polygons for one km set."""
     centres = _validated_centres(centres_km)
@@ -265,12 +267,17 @@ def build_segment_geometry(
             for index in range(len(retained_centres))
         ]
     )
-    for index, coordinates in enumerate(polygons):
-        if not _shapely_geometry.Polygon(coordinates).is_valid:
-            raise RiverKmGeometryError(
-                f"River-km segment {index} is an invalid or self-intersecting polygon.",
-                code="V-SMB-010",
-            )
+    invalid_segment_indices = tuple(
+        index
+        for index, coordinates in enumerate(polygons)
+        if not _shapely_geometry.Polygon(coordinates).is_valid
+    )
+    if invalid_segment_indices and not allow_invalid_segments:
+        index = invalid_segment_indices[0]
+        raise RiverKmGeometryError(
+            f"River-km segment {index} is an invalid or self-intersecting polygon.",
+            code="V-SMB-010",
+        )
 
     return RiverKmSegmentGeometry(
         provider=provider.name,
@@ -285,5 +292,6 @@ def build_segment_geometry(
         left_cut_lines=left,
         right_cut_lines=right,
         polygons=polygons,
+        invalid_segment_indices=invalid_segment_indices,
         removed_centres_km=removed_centres,
     )

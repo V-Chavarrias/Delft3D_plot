@@ -299,3 +299,12 @@ def test_self_intersecting_segment_is_rejected() -> None:
         )
 
     assert error.value.code == "V-SMB-010"
+
+    permitted = build_segment_geometry(
+        points,
+        [0.5, 1.5, 2.5],
+        branches=["A"],
+        half_width_m=10.0,
+        allow_invalid_segments=True,
+    )
+    assert permitted.invalid_segment_indices

@@ -1,6 +1,6 @@
 # Delft3D_plot (Python): Architecture and Implementation Plan
 
-Status: **v6.58; WP 1.10–1.11, WP 2.1–2.2a, WP 2.3 execution foundations, WP 3.1–3.5 map2d, and WP 4.1 river-km providers/geometry are implemented locally.** WP 2.3 and WP 3.1 were committed on `feat/execution` (`735fb38`); WP 3.2 on `feat/map2d-plotting` (`d508cf7`); WP 3.3 on `feat/map2d-overlays` (`53d1bb7`); WP 3.4 on `feat/map2d-measurements` (`6da45e8`); WP 3.5 on `feat/map2d-provenance` (`38a84a4`, `c86f3a3`). WP 4.1 is implemented on `feat/river-km-providers`: the fixed-format reader is shared from the domain package; packaged Rijntakken/Maas/generic provider data resolves branches and cutoffs; geometry builds edge positions, lengths, interpolated coordinates, cut lines, and segment polygons. All 247 CI-eligible tests pass; strict mypy over 79 source files, strict MkDocs, changed-file Ruff/format, and `git diff --check` pass. WP 3.5's two-frame synthetic-cache timings were: fresh plot 0.910 s, cache reuse 0.517 s, single-figure replot 0.757 s; 945×591 MP4 encoding/reuse took 0.559/0.003 s. The plotting path covers polygon/raster rendering, comparisons with regridding, cache reuse, hook isolation, pixel-identical fresh rendering/replay, `.ldb` overlays, independent river-km labels/windows, optional contextily tiles, measurement panels, and grouped MP4 output. When hooks are configured, figures are rebuilt by default so arbitrary hook mutations cannot leak between images; draw-once rendering remains in effect when no hooks are configured. Complete CLI `run` integration remains. The quantity engine, time selection (D69), active-sediment threshold (D70), water-level-rate interval (D71), date-relative colour limits (D72), and hook isolation (D73) decisions are recorded. WP 4.2 region assignment/coverage is next. P-drive r209/Rijn acceptance remains deferred until local development is complete (D65). The CLI provides read-only `info`/`variables`, schema output, configuration/variable validation with guarded grid, merge-plan, and time-quality cache inspection, a dedicated `inspect` command, cache-backed `plot`, and provenance-backed `replot`. See [the synthetic case generator](https://github.com/V-Chavarrias/Delft3D_plot/blob/main/tools/synthetic_smt/README.md). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
+Status: **v6.59; WP 1.10–1.11, WP 2.1–2.2a, WP 2.3 execution foundations, WP 3.1–3.5 map2d, and WP 4.1–4.2 river-km geometry/assignment are implemented locally.** WP 2.3 and WP 3.1 were committed on `feat/execution` (`735fb38`); WP 3.2 on `feat/map2d-plotting` (`d508cf7`); WP 3.3 on `feat/map2d-overlays` (`53d1bb7`); WP 3.4 on `feat/map2d-measurements` (`6da45e8`); WP 3.5 on `feat/map2d-provenance` (`38a84a4`, `c86f3a3`). WP 4.1 is implemented on `feat/river-km-providers`; WP 4.2 is implemented on `feat/river-km-regions`, with region loading, CRS handling, boundary-inclusive membership, deterministic lower-index ties, coverage/overlap results, and plot-ready data. WP 4.2's 6,406-face/40-segment synthetic preparation (three regions) took 0.388 s total: 0.257 s for mesh/segment geometry and 0.130 s for region loading/assignment. The full suite passes 254 CI-eligible tests; strict mypy over 80 source files, strict MkDocs, changed-file Ruff/format, and `git diff --check` pass. WP 4.3 will wire these in-memory results to guarded geometry caches and implement statistics processing. WP 4.4 renders diagnostic maps through the shared `MapView` and common finalisation (D75). WP 3.5's two-frame synthetic-cache timings were: fresh plot 0.910 s, cache reuse 0.517 s, single-figure replot 0.757 s; 945×591 MP4 encoding/reuse took 0.559/0.003 s. The plotting path covers polygon/raster rendering, comparisons with regridding, cache reuse, hook isolation, pixel-identical fresh rendering/replay, `.ldb` overlays, independent river-km labels/windows, optional contextily tiles, measurement panels, and grouped MP4 output. When hooks are configured, figures are rebuilt by default so arbitrary hook mutations cannot leak between images; draw-once rendering remains in effect when no hooks are configured. Complete CLI `run` integration remains. The quantity engine, time selection (D69), active-sediment threshold (D70), water-level-rate interval (D71), date-relative colour limits (D72), and hook isolation (D73) decisions are recorded. P-drive r209/Rijn acceptance remains deferred until local development is complete (D65). The CLI provides read-only `info`/`variables`, schema output, configuration/variable validation with guarded grid, merge-plan, and time-quality cache inspection, a dedicated `inspect` command, cache-backed `plot`, and provenance-backed `replot`. See [the synthetic case generator](https://github.com/V-Chavarrias/Delft3D_plot/blob/main/tools/synthetic_smt/README.md). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
 
 Document map:
 * §0 Session handover
@@ -33,8 +33,8 @@ Document map:
 
 | Item | Location | State |
 |------|----------|-------|
-| Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `feat/river-km-providers`, local and unpushed; WP 2.2a, WP 2.3 execution, WP 3.1–3.5, and WP 4.1 complete locally; WP 4.2 is next; P-drive acceptance deferred per D65 |
-| Plan (this file) | `docs/architecture.md` | v6.58 |
+| Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `feat/river-km-regions`, local and unpushed; WP 2.2a, WP 2.3 execution, WP 3.1–3.5, and WP 4.1–4.2 complete locally; WP 4.3 is next; P-drive acceptance deferred per D65 |
+| Plan (this file) | `docs/architecture.md` | v6.59 |
 | Licence | `LICENSE` | GPL-3.0 |
 | Synthetic SMT and plain FM test case generator | `tools/synthetic_smt/` | Implemented and verified locally (§13.3) |
 | Land-boundary converter (`.mat` cache → `.ldb`) | `tools/mat_to_ldb.py` | Implemented. Used to recreate the Maas land boundary (D45) |
@@ -42,7 +42,7 @@ Document map:
 | Recreated Maas land boundary | `data_local/maas/j21_ldb.ldb` (55.7 MB) | Git-ignored. 174 220 polylines, 2 343 057 points; read by HYDROLIB-core in 22 s, identical to the `.mat` |
 | HYDROLIB-core modifications | §14.1–§14.3 | WP 0.1 (`54011e0d`) and both DIMR fixes (`3e4f7317`, `96d07c87`) are integrated locally on `feat/mdu_morphology_keywords`; the external-library fix is also committed on `fix/dimr-external-libraries` |
 | Python environment | `.venv/` (uv, Python 3.12) | Git-ignored. dfm_tools and HYDROLIB-core are installed editable from the local checkouts; HYDROLIB-core is currently on `feat/mdu_morphology_keywords` with WP 0.1 and the DIMR fix |
-| Package `d3dplot` | `pyproject.toml`, `src/d3dplot/` | WP 1.1–1.11 foundations, WP 2.1–2.3 execution, WP 3.1–3.5 map2d, and WP 4.1 river-km providers/geometry are implemented locally |
+| Package `d3dplot` | `pyproject.toml`, `src/d3dplot/` | WP 1.1–1.11 foundations, WP 2.1–2.3 execution, WP 3.1–3.5 map2d, and WP 4.1–4.2 river-km provider/geometry/assignment foundations are implemented locally |
 | Configuration design | §2 decisions D57–D59, D69–D70 | Nested `times` object, Matlab-compatible one-based time indices, configurable active-sediment threshold, and shared `map.render`; WP 1.3 complete locally; plugin config integration deferred to the analysis registry |
 | Validation framework | `src/d3dplot/validate/` | WP 1.4 complete locally: report serialization and static V-CFG-001..004 checks |
 | Model-input adapters | `src/d3dplot/model_input/` | WP 1.5 implemented locally; MDU, `.mor`, `.sed`, DIMR, V-MDU-001, and real r209 read-only validation complete |
@@ -53,7 +53,7 @@ Document map:
 | Variables | `src/d3dplot/variables/` | WP 1.10 and WP 2.2a complete locally; 19 raw and 23 derived v1 specs, dependency resolution, per-time caching, formula callbacks, grid operators, aliases, NetCDF candidates, suggestions, and generated documentation |
 | CLI | `src/d3dplot/cli.py` | WP 1.11 and WP 2.1 implementation: console and module entry points; `info`, `variables`, `schema`, `validate`, `inspect`, and no-overwrite `init`; `validate` and `inspect` now write guarded `.dia` diagnostics and a debug `.log` |
 | Synthetic-case pytest fixture | `tests/conftest.py` | Session-scoped fixture generates and verifies in pytest's temporary folder (WP 1.2) |
-| CI and documentation site | `.github/workflows/ci.yml`, `mkdocs.yml` | All 247 CI-eligible tests pass; strict MkDocs, strict mypy over all 79 source files, changed-file Ruff/format, and `git diff --check` pass; remote CI not run |
+| CI and documentation site | `.github/workflows/ci.yml`, `mkdocs.yml` | All 254 CI-eligible tests pass; strict MkDocs, strict mypy over all 80 source files, changed-file Ruff/format, and `git diff --check` pass; remote CI not run |
 | Matlab reference results of the synthetic case | `data_local/synthetic_smt_01/simulations/r00*/mat`, `fig` | **Done** (2026-10-26): r001 37 mat + 1071 PNG, r002 37 mat + 858 PNG. Protected: `generate.py --force` refuses to delete them without `--discard-matlab-reference` |
 | Agent guidance for development | `AGENTS.md`, `.github/instructions/plotting.instructions.md`, `.github/skills/{add-analysis-or-option,upstream-contribution}` | Done (§13.6) |
 
@@ -251,6 +251,9 @@ Status: **A** = agreed with the user; **P** = proposed in this plan and awaiting
 | D72 | `color_limits_mode: {days_since: date}` sets each frame's colour limits to `[0, max((time_UTC − date_at_UTC_midnight).days, 0)]`, retaining fractional days and overriding configured numeric bounds | Matches Matlab `gdm_plot_M2D.fcn_clims_type` (`clims_type=2`) | A |
 | D73 | When hooks are configured, `figure.hooks_mode` defaults to `rebuild`: create a fresh figure for every image so arbitrary hook mutations cannot leak between frames. With no hooks, continue reusing the draw-once template. `per_image` remains an explicit opt-in to snapshot/restore of common mutations | User selected rebuilding hooked images as the safe behavior; snapshots cannot undo every possible Matplotlib mutation | A |
 | D74 | Built-in river-km providers are versioned package data for Rijntakken, Maas, and generic rivers. Provider dispatch uses the fixed-file branch tags case-insensitively; provider rules resolve track branches and bend cutoffs, while generic multi-branch files require an explicit branch assignment. `branches` accepts one branch to broadcast or one branch per requested km centre | Keep provider data separate from geometry code as required by D15 and WP 4.1; make branch selection deterministic | P |
+| D75 | WP 4.2 prepares region and segment membership/check results; diagnostic maps are rendered in WP 4.4 through the shared `MapView` and common finalisation, not by a separate WP 4.2 plot | Reconcile the WP 4.2 package row with the shared-view diagnostic-map specification in WP 4.4 (D46–D47) | P |
+| D76 | V-SMB-011 coverage is measured only for region face centres between the perpendicular endpoint planes through the first and last river-km edges; lateral distance from the centreline is unrestricted for this range test | Detect an undersized corridor without warning for region faces beyond the configured km span | P |
+| D77 | WP 4.2 exposes deterministic geometry and assignment results in memory; WP 4.3 wires these into the guarded NetCDF geometry caches together with the SMB prepare stage | The execution layer does not yet provide an analysis `GeometryTask`; keep this package independently testable and avoid adding an unused writer | P |
 
 ## 3. Review of the plan (v6)
 
@@ -401,7 +404,7 @@ The Matlab checker maps legacy tag `fig_map_summerbed_01` to `SMB` and reads no 
 5. **Direction**: `θ_k = atan2(y_{k+1} − y_{k−1}, x_{k+1} − x_{k−1})`. The ends copy the angle of their neighbour; with 2 edges, both use the direction between them.
 6. **Cut lines**: `L_k = e_k + W·(cos(θ_k+π/2), sin(θ_k+π/2))`, `R_k = e_k − W·(…)`. `W` = `half_width_m` (Matlab default 1000).
 7. **Segment polygons**: `P_i = [L_i, L_{i+1}, R_{i+1}, R_i]`.
-8. **Region membership**: the face centre is inside the region polygon (shapefile; multi-part allowed). An optional concave hull builds one polygon from unordered parts (Matlab `boundary(…, 0.8)`, default off).
+8. **Region membership**: the face centre is inside the region polygon (shapefile; multi-part allowed). Multipart geometries are unioned, holes are preserved, and an optional concave hull builds one polygon from unordered parts (Matlab `boundary(…, 0.8)`, default off). Region CRS is retained and transformed to the model CRS when available; a missing source CRS or failed transformation is V-SMB-002.
 9. **Assignment**: a face belongs to segment `i` if its centre is in `P_i` **and** in the region. Faces whose value is NaN or ±Inf are excluded at processing time.
    * **Boundaries are deterministic.** Points exactly on a region boundary count as inside (Matlab `inpolygon` includes the boundary): `shapely.covers`-equivalent, implemented as `contains_xy | touches`. A point exactly on a shared cut line belongs to the **lower** segment index (Matlab would count it in both segments: a deliberate difference). Ties are resolved by index order, so results do not depend on the shapely version.
    * Multi-part regions are the union of their parts. Holes are respected.
@@ -430,7 +433,7 @@ The Matlab checker maps legacy tag `fig_map_summerbed_01` to `SMB` and reads no 
 **New checks** (Matlab had none):
 * every `P_i` is a valid, non-self-intersecting quadrilateral (cut lines can cross in sharp bends with a large `W`). **Error** V-SMB-010, unless `allow_invalid_segments: true`;
 * no face is assigned to two segments (overlap). **Error** V-SMB-013, same override;
-* coverage: region faces in the km range that are in no segment (`W` too small). Warning V-SMB-011 with the count;
+* coverage: region faces between the perpendicular endpoint planes through the first and last river-km edges that are in no segment (`W` too small). Warning V-SMB-011 with the count; points on a shared cut line are assigned to the lower index and are not reported as an overlap;
 * the requested km are within the branch range in the file;
 * edge-to-axis distance within tolerance (`TolMinDist`).
 
@@ -1408,7 +1411,7 @@ Images = times × extents × colour-limit sets. Differences between simulations 
 * `variables`, `times`;
 * `regions[]`: name, polygon, optional `measurements`, optional `concave_hull`;
 * `region_groups`, `region_differences`;
-* `river_km`: `file`, `sets` (`name → [km]`), `track`, `branches`, `half_width_m`;
+* `river_km`: `file`, `sets` (`name → [km]`), `track`, `branches`, `half_width_m`; `allow_invalid_segments` defaults to `false` and controls the V-SMB-010/V-SMB-013 override;
 * `statistics`, `views`, `comparisons`, `time_series_locations_km`;
 * `multiply_by_width`, `time_averages`, `diagnostics: [segment_map, segment_membership]`, `display: auto | lines | stacked_area` (per variable);
 * `map`: the shared map-view settings for the diagnostic maps (§7.14b), including `extents_along_river_km` and `river_km_labels`;
@@ -1418,12 +1421,12 @@ Images = times × extents × colour-limit sets. Differences between simulations 
 
 `river_km.branches` is either one explicit branch broadcast to every requested centre, or one branch per centre. For multiple named sets, the list must be broadcastable or match each set; Rijntakken branch transitions are inferred from `track` and take precedence. Generic files with multiple branch tags require an explicit branch assignment.
 
-**Inspect**: parse the river-km file → `cache/inputs/river_km_<hash>.nc`; detect the river provider from the tags (§4.5); read the region polygons.
+**Inspect**: parse the river-km file → `cache/inputs/river_km_<hash>.nc`; detect the river provider from the tags (§4.5); read the region polygons, retaining their CRS and rejecting missing source CRS (V-SMB-002).
 
-**Prepare** (per simulation × region × km set):
-1. Build edges, cut lines and segment polygons (§4.5). Run the geometry checks.
+**Prepare** (per simulation × region × km set; WP 4.2 supplies the calculation core and WP 4.3 wires it to guarded cache writes):
+1. Build edges, cut lines and segment polygons (§4.5). Transform region polygons to the model CRS when available and run the geometry checks.
 2. Compute region membership (boundary inclusive, §4.5) on face centres → `geometry/region_<name>.nc`.
-3. Assign faces to segments (shared cut lines → lower index) → `geometry/segments_<region>_<set>.nc` (§9.6). Coverage and overlap checks; a diagnostic figure if requested.
+3. Assign faces to segments (shared cut lines → lower index) → `geometry/segments_<region>_<set>.nc` (§9.6). Check coverage and overlaps and retain the results for diagnostics; WP 4.4 renders requested figures through the shared `MapView` (D75).
 
 **Process** (inside the shared `ProcessTask` per simulation × sub-run, §7.13): for each time, variable, region and km set, the quantity engine (§7.9a) returns the global face values (raw or derived, e.g. `froude_number`); SMB keeps the faces with a segment index ≥ 0 and finite values. Compute **all** statistics per segment, vectorised with `numpy` `bincount`-style reductions on the segment index. Write `data/river_km_statistics/<region>/<set>/<variable>/<time>.nc`, holding `values(segment, statistic[, component])` with coordinates `km_centre`, `km_edge_start/end`, `segment_length_m`.
 
@@ -1548,12 +1551,12 @@ For SMB: `values(segment, statistic)`, plus `km_centre(segment)`, `km_start(segm
 
 ### 9.6 Geometry files (cache)
 
-* `region_<name>.nc`: `inside(face)` int8; attributes: polygon source path and hash.
+* `region_<name>.nc`: `inside(face)` int8; attributes: polygon source path and hash, source/model CRS, and optional concave-hull ratio.
 * `segments_<region>_<set>.nc`:
   * `segment(face)` int32, −1 = none;
   * `km_centre`, `km_start`, `km_end`, `branch` per segment;
   * `cut_line_x/y(edge, 2)` and `polygon_x/y(segment, 5)`;
-  * check results as attributes (`n_uncovered`, `n_overlap`, `invalid_segments`).
+  * check results as attributes (`n_uncovered`, `n_overlap`, `invalid_segments`); shared-cut-line ties count once for the lower segment and are excluded from `n_overlap`.
 * `extent_<hash>.nc`: `faces(n)` int32; attributes: the extent bounds and margin.
 
 ### 9.7 Simulation status (`simulation_status.json`)
@@ -1760,6 +1763,7 @@ Codes are stable, documented, and tested one by one. **E** = error, **W** = warn
 | V-RKM-004 | E | Requested km outside the branch range |
 | V-RKM-005 | E | Requested km set has fewer than two finite, strictly increasing, distinct centres |
 | V-SMB-001 | E | Region polygon unreadable or empty |
+| V-SMB-002 | E | Region polygon CRS missing, invalid, or incompatible with the model grid |
 | V-SMB-010 | E | Invalid or self-intersecting segment polygon (override: `allow_invalid_segments`) |
 | V-SMB-011 | W | Region faces not covered by any segment (count; `half_width_m` too small) |
 | V-SMB-012 | E | Region group mixes km sets |
@@ -2139,8 +2143,8 @@ Per D65, use generated local cases for development, automated tests, and perform
 | WP | Content | Done when |
 |----|---------|-----------|
 | 4.1 | Shared river-km reader and packaged providers (Rijntakken/Maas/generic), branch resolution, irregular-centre edges and lengths, bend cutoffs, interpolation, angles, cut lines, segment polygons, and geometry validation | Implemented and locally validated on `feat/river-km-providers`: property tests; Rijntakken track tables and Maas transition; generic branch ambiguity, duplicate/range failures, and synthetic coordinates/polygons match hand-computed results. All 247 CI-eligible tests, strict mypy (79 files), strict MkDocs, changed-file Ruff/format, and diff checks pass |
-| 4.2 | Regions, segment assignment, coverage/overlap checks, diagnostic plot | `cells_per_segment_250m.csv` reproduced |
-| 4.3 | Process statistics through the quantity engine (also for derived quantities, e.g. Froude per segment); post-processing (slope, × width, region differences, time averages) | `smb_*.csv` reproduced exactly (incl. NaN/Inf exclusion); a run with M2D and SMB on `bed_level` reads `mesh2d_mor_bl` once per time |
+| 4.2 | Region loading and membership, segment assignment, coverage/overlap checks, and plot-ready diagnostic results (D75); in-memory calculation core only (D77) | `cells_per_segment_250m.csv` reproduced; boundary, hole, multipart, overlap, and coverage cases tested |
+| 4.3 | Persist WP 4.2 geometry results to guarded caches; process statistics through the quantity engine (also for derived quantities, e.g. Froude per segment); post-processing (slope, × width, region differences, time averages) | `smb_*.csv` reproduced exactly (incl. NaN/Inf exclusion); a run with M2D and SMB on `bed_level` reads `mesh2d_mor_bl` once per time |
 | 4.4 | Plots on the shared views: profile/space-time/time-series views, groupings, region groups, `x_limits`, **lines vs stacked areas** for multi-component variables (`display`), **diagnostic maps** `segment_map` (full model + windows along km) and `segment_membership` on `MapView`; hooks through the finalisation | Image baselines; synthetic `layer_fraction` (3 fractions) gives a stacked-area profile; diagnostic maps reuse the M2D windows |
 | 4.5 | Profile measurements: `.mat` → NetCDF (v5; v7.3 later), matching, plotting | Synthetic `.mat` converted (sorted times, units); measurements drawn at the right times |
 
@@ -2376,6 +2380,7 @@ The complete model-quantity catalog (all v1 raw and derived registry entries, al
 
 | Version | Content |
 |---------|---------|
+| v6.59 | Completed WP 4.2's in-memory region loading, CRS transformation, boundary-inclusive membership, deterministic segment assignment, overlap/coverage results, and concave-hull option on `feat/river-km-regions`; documented D75–D77 and V-SMB-002. The synthetic CSV acceptance test reproduces exact face IDs for three regions and 40 segments. All 254 CI-eligible tests, strict mypy over 80 files, strict MkDocs, changed-file Ruff/format, and diff checks pass. On 6,406 faces and 40 segments, mesh/segment geometry took 0.257 s and region loading/assignment for three regions 0.130 s (0.388 s total). Guarded geometry-cache wiring and SMB processing are WP 4.3 |
 | v6.58 | Completed WP 4.1 locally on `feat/river-km-providers`: shared fixed-format reader, packaged Rijntakken/Maas/generic provider data, branch and cutoff resolution, irregular-centre edges/lengths, interpolation, cut lines, polygons, and validation. All 247 CI-eligible tests pass; strict mypy over 79 files, strict MkDocs, changed-file Ruff/format, and diff checks pass. WP 4.2 region assignment/coverage is next |
 | v6.57 | Started WP 4.1 on `feat/river-km-providers`; recorded the data-driven provider contract, Matlab geometry flags, irregular-centre/cutoff rules, and V-RKM-005 before implementation. |
 | v6.56 | Completed WP 3.5 locally on `feat/map2d-provenance`: canonical resolved configs with replayable paths, `plot` from YAML/output directories with `--set`, PNG replot selectors, and one-figure pixel-identical replay; added V-PLOT-005. All 218 CI-eligible tests pass, strict mypy over 75 source files, strict MkDocs, Ruff/format, lock, and diff checks pass. Two-frame synthetic-cache timings: fresh plot 0.910 s, cache reuse 0.517 s, single-figure replot 0.757 s; 945×591 MP4 encode/reuse 0.559/0.003 s. CLI `run` integration and P-drive acceptance remain |

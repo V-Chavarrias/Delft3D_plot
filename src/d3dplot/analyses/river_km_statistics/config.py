@@ -105,6 +105,13 @@ class RiverKmConfig(ConfigModel):
         default=1000.0,
         description="Half-width of the river corridor in metres.",
     )
+    allow_invalid_segments: bool = Field(
+        default=False,
+        description=(
+            "Allow invalid segment polygons and non-shared segment overlaps; "
+            "the lower segment index remains the deterministic assignment."
+        ),
+    )
 
 
 class TimeAverageConfig(ConfigModel):

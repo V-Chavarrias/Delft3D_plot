@@ -122,6 +122,19 @@ def test_defaults_and_global_figure_inheritance() -> None:
     )
     assert statistics_config.statistics == ["mean_area_weighted"]
     assert statistics_config.views == ["profile"]
+    assert statistics_config.river_km.allow_invalid_segments is False
+
+    permissive_statistics_config = RiverKmStatisticsConfig.model_validate(
+        {
+            "variables": ["bed_level"],
+            "regions": [{"name": "region", "polygon": "region.shp"}],
+            "river_km": {
+                "file": "river_km.csv",
+                "allow_invalid_segments": True,
+            },
+        }
+    )
+    assert permissive_statistics_config.river_km.allow_invalid_segments is True
 
     data = _minimal_data()
     data["figure"] = {"dpi": 240, "font_size": 9}
