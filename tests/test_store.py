@@ -197,6 +197,30 @@ def test_guarded_text_stream_flushes_lines_and_rejects_unsafe_targets(
 
 
 @pytest.mark.unit
+def test_output_guard_allows_only_explicit_external_cache_roots(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "output"
+    guard = initialize_output_root(root, tool_version="0.1.0")
+    cache_root = tmp_path / "shared-tiles"
+    cache_guard = guard.with_allowed_roots((cache_root,))
+    cache_file = cache_root / "tile.bin"
+
+    with atomic_path(cache_file, cache_guard) as temporary:
+        temporary.write_bytes(b"tile")
+
+    assert cache_file.read_bytes() == b"tile"
+    with pytest.raises(OutputWriteError, match="outside output root"):
+        guard.validate_target(cache_file)
+
+    forbidden_guard = OutputWriteGuard(
+        root, forbidden_roots=(cache_root,)
+    ).with_allowed_roots((cache_root,))
+    with pytest.raises(OutputWriteError, match="inside forbidden root"):
+        forbidden_guard.validate_target(cache_file)
+
+
+@pytest.mark.unit
 def test_guarded_writes_leave_input_snapshots_unchanged(tmp_path: Path) -> None:
     input_file = tmp_path / "model.mdu"
     input_file.write_text("[Time]\nTStop = 1\n", encoding="utf-8")

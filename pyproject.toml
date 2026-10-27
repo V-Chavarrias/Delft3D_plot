@@ -50,6 +50,7 @@ d3dplot = "d3dplot.cli:main"
 [project.optional-dependencies]
 tiles = [
     "contextily>=1.7.1",
+    "platformdirs>=4",
     "rioxarray>=0.15",
 ]
 movies = [

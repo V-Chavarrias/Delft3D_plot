@@ -19,6 +19,7 @@ from matplotlib.figure import Figure
 from matplotlib.image import AxesImage
 
 from d3dplot.config.figure import Extent, FigureConfig, MapViewConfig
+from d3dplot.plotting.views.decorations import MapDecorations
 from d3dplot.plotting.views.extents import ExtentWindow, UgridGrid
 
 _Array = Any
@@ -59,6 +60,7 @@ class MapView:
         colormap: str,
         colorbar_label: str,
         initial_limits: tuple[float | None, float | None] | None = None,
+        decorations: MapDecorations | None = None,
     ) -> MapView:
         if window.faces.size == 0:
             raise MapViewError(f"Extent {window.name!r} contains no visible faces.")
@@ -105,6 +107,12 @@ class MapView:
             )
         figure, axes = plt.subplots()
         figure.subplots_adjust(left=0.08, right=0.86, bottom=0.08, top=0.92)
+        axes.set_xlim(window.bounds[0], window.bounds[1])
+        axes.set_ylim(window.bounds[2], window.bounds[3])
+        if decorations is not None:
+            decorations.draw_background(axes, window.bounds)
+            axes.set_xlim(window.bounds[0], window.bounds[1])
+            axes.set_ylim(window.bounds[2], window.bounds[3])
         if render_mode == "polygons":
             if polygons is None:
                 raise MapViewError("Polygon render mode has no visible polygons.")
@@ -140,6 +148,8 @@ class MapView:
                 cmap=color_map,
             )
             mappable = image
+        if decorations is not None:
+            decorations.draw_foreground(axes, window.bounds)
         axes.set_xlim(window.bounds[0], window.bounds[1])
         axes.set_ylim(window.bounds[2], window.bounds[3])
         axes.set_aspect(map_config.aspect)

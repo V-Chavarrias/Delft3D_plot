@@ -16,17 +16,29 @@ class OutputWriteError(RuntimeError):
 class OutputWriteGuard:
     """Authorize writes only beneath a marked root and outside forbidden paths."""
 
-    __slots__ = ("root", "marker", "forbidden_roots")
+    __slots__ = ("root", "marker", "forbidden_roots", "allowed_roots")
 
     def __init__(
         self,
         root: str | Path,
         forbidden_roots: Iterable[str | Path] = (),
+        allowed_roots: Iterable[str | Path] = (),
     ) -> None:
         self.root = _resolve_path(root)
         self.marker = self.root / OUTPUT_MARKER_NAME
         self.forbidden_roots = tuple(
             _resolve_path(forbidden_root) for forbidden_root in forbidden_roots
+        )
+        self.allowed_roots = tuple(
+            _resolve_path(allowed_root) for allowed_root in allowed_roots
+        )
+
+    def with_allowed_roots(self, roots: Iterable[str | Path]) -> OutputWriteGuard:
+        """Return a guard that also authorizes explicitly configured cache roots."""
+        return OutputWriteGuard(
+            self.root,
+            self.forbidden_roots,
+            (*self.allowed_roots, *roots),
         )
 
     def validate_root_location(self) -> None:
@@ -42,7 +54,11 @@ class OutputWriteGuard:
         """Return a resolved target only when it is safe to write."""
         self.validate_root_location()
         target = _resolve_path(path)
-        if target == self.root or not is_path_within(target, self.root):
+        in_output_root = target != self.root and is_path_within(target, self.root)
+        in_allowed_root = any(
+            is_path_within(target, allowed_root) for allowed_root in self.allowed_roots
+        )
+        if not in_output_root and not in_allowed_root:
             raise OutputWriteError(
                 f"Write target {target} is outside output root {self.root}."
             )

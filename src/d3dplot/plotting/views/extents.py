@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import csv
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
@@ -14,6 +13,7 @@ import netCDF4
 from d3dplot import __version__
 from d3dplot.config.figure import Extent, MapViewConfig
 from d3dplot.execution.cache import read_cache_fingerprints
+from d3dplot.plotting.views.river_km import RiverKmFileError, read_river_km_points
 from d3dplot.store import (
     CACHE_SCHEMA_VERSION,
     OutputLayout,
@@ -30,6 +30,10 @@ xu: Any = import_module("xugrid")
 
 class ExtentSetError(RuntimeError):
     """Configured map windows could not be resolved."""
+
+    def __init__(self, message: str, *, code: str = "V-PLOT-002") -> None:
+        super().__init__(message)
+        self.code = code
 
 
 class UgridGrid(Protocol):
@@ -197,42 +201,22 @@ def _river_windows(
     half_width_y: float,
 ) -> list[tuple[str, Extent, bool]]:
     try:
-        with path.open(encoding="utf-8-sig", newline="") as stream:
-            rows = csv.reader(stream)
-            next(rows)
-            windows: list[tuple[str, Extent, bool]] = []
-            for row_number, row in enumerate(rows, start=2):
-                if len(row) < 4:
-                    raise ExtentSetError(
-                        f"River-km row {row_number} in {path} needs x, y, label, km."
-                    )
-                x_coord, y_coord = float(row[0]), float(row[1])
-                label, km = row[2].strip(), row[3].strip()
-                if not np.isfinite(x_coord) or not np.isfinite(y_coord):
-                    raise ExtentSetError(
-                        f"River-km row {row_number} in {path} has non-finite "
-                        "coordinates."
-                    )
-                name = f"river_km_{label}_{km}"
-                windows.append(
-                    (
-                        name,
-                        (
-                            x_coord - half_width_x,
-                            x_coord + half_width_x,
-                            y_coord - half_width_y,
-                            y_coord + half_width_y,
-                        ),
-                        False,
-                    )
-                )
-    except (OSError, StopIteration, ValueError) as error:
-        raise ExtentSetError(
-            f"Could not read river-km windows from {path}: {error}"
-        ) from error
-    if not windows:
-        raise ExtentSetError(f"River-km file contains no windows: {path}.")
-    return windows
+        points = read_river_km_points(path)
+    except RiverKmFileError as error:
+        raise ExtentSetError(str(error), code="V-RKM-001") from error
+    return [
+        (
+            f"river_km_{point.label}_{point.km_text}",
+            (
+                point.x - half_width_x,
+                point.x + half_width_x,
+                point.y - half_width_y,
+                point.y + half_width_y,
+            ),
+            False,
+        )
+        for point in points
+    ]
 
 
 def _load_or_write_faces(

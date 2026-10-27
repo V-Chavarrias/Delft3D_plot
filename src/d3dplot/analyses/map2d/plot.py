@@ -35,6 +35,7 @@ from d3dplot.plotting.finalize import (
     close_figure,
     finalize_figure,
 )
+from d3dplot.plotting.views.decorations import MapDecorations, MapDecorationsError
 from d3dplot.plotting.views.extents import (
     ExtentSet,
     ExtentSetError,
@@ -195,6 +196,20 @@ def plot_map2d_group(
             output_guard,
             analysis.map,
         )
+        decorations = MapDecorations.prepare(
+            project,
+            analysis.map,
+            figure_config,
+            getattr(target_grid, "crs", None),
+            output_layout,
+            output_guard,
+            diagnostic=report,
+        )
+        decorations.prepare_backgrounds(
+            tuple(
+                window.bounds for window in extent_set.windows if window.faces.size > 0
+            )
+        )
         regridder, regrid_fingerprint = _regridder_for(
             current_grid,
             target_grid,
@@ -353,6 +368,7 @@ def plot_map2d_group(
                             style_hash,
                             *data_fingerprints,
                             target_grid_fingerprint,
+                            decorations.fingerprint_for(window.bounds),
                         ),
                         time=output_time.isoformat(),
                     )
@@ -390,6 +406,7 @@ def plot_map2d_group(
                             colormap=_colormap_for(analysis, variable),
                             colorbar_label=unit_label,
                             initial_limits=limits,
+                            decorations=decorations,
                         )
                     view.update(map_values, limits=limits)
                     view.axes.set_title(title)
@@ -405,6 +422,7 @@ def plot_map2d_group(
                         data={
                             "values": map_values,
                             "face_indices": window.faces,
+                            "river_km": decorations.visible_river_km(window.bounds),
                             "time": output_time,
                         },
                         labels={
@@ -449,7 +467,11 @@ def plot_map2d_group(
         if view is not None:
             close_figure(view.figure)
             view = None
-    except (CacheFingerprintReadError, ExtentSetError, MapViewError) as error:
+    except MapDecorationsError as error:
+        raise Map2DPlotError(error.code, str(error)) from error
+    except ExtentSetError as error:
+        raise Map2DPlotError(error.code, str(error)) from error
+    except (CacheFingerprintReadError, MapViewError) as error:
         raise Map2DPlotError("V-PLOT-002", str(error)) from error
     finally:
         if view is not None:

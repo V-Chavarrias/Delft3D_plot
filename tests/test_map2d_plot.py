@@ -14,6 +14,7 @@ import xarray as xr
 import xugrid as xu
 from PIL import Image
 
+from _input_snapshot import assert_inputs_unchanged, snapshot_inputs
 from d3dplot import __version__
 from d3dplot.analyses.map2d.config import Map2DConfig
 from d3dplot.analyses.map2d.plot import (
@@ -23,6 +24,7 @@ from d3dplot.analyses.map2d.plot import (
     plot_map2d_group,
 )
 from d3dplot.config.project import ProjectConfig
+from d3dplot.plotting.views.decorations import _clip_line
 from d3dplot.store import (
     OutputLayout,
     OutputWriteGuard,
@@ -35,6 +37,8 @@ _HOOK_VALUES: list[tuple[float, ...]] = []
 _HOOK_LIMITS: list[tuple[float, float]] = []
 _HOOK_AXES_COUNTS: list[int] = []
 _HOOK_MAPPABLE_ZORDERS: list[float] = []
+_HOOK_RIVER_LABELS: list[tuple[str, ...]] = []
+_HOOK_MAP_TEXTS: list[tuple[str, ...]] = []
 
 
 def _capture_plot_state(figure: Any, context: Any) -> None:
@@ -52,6 +56,12 @@ def _capture_plot_state(figure: Any, context: Any) -> None:
     figure.add_axes([0.01, 0.01, 0.01, 0.01])
 
 
+def _capture_map_texts(figure: Any, context: Any) -> None:
+    axes = context.axes["model"]
+    _HOOK_RIVER_LABELS.append(tuple(point.label for point in context.data["river_km"]))
+    _HOOK_MAP_TEXTS.append(tuple(text.get_text() for text in axes.texts))
+
+
 def _project_and_source(
     tmp_path: Path,
     *,
@@ -59,6 +69,8 @@ def _project_and_source(
     render: str = "polygons",
     map_overrides: dict[str, Any] | None = None,
     figure_overrides: dict[str, Any] | None = None,
+    project_overrides: dict[str, Any] | None = None,
+    hooks: list[str] | None = None,
     with_hook: bool = False,
     grid_faces: int = 2,
 ) -> tuple[ProjectConfig, Map2DConfig, Map2DPlotSource]:
@@ -95,6 +107,10 @@ def _project_and_source(
     }
     if with_hook:
         project_data["hooks"] = [f"{__name__}:_capture_plot_state"]
+    if hooks is not None:
+        project_data["hooks"] = hooks
+    if project_overrides is not None:
+        project_data.update(project_overrides)
     project = ProjectConfig.model_validate(project_data)
     analysis = project.analyses[0]
     assert isinstance(analysis, Map2DConfig)
@@ -148,6 +164,15 @@ def _write_frame(
             stored[:] = values
             dataset.d3dplot_fingerprint = f"frame-{index}-fingerprint"
             dataset.variable = "water_depth"
+    return path
+
+
+def _write_ldb(path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "L001\n     2     2\n       -1.000        0.500\n        3.000        0.500\n",
+        encoding="utf-8",
+    )
     return path
 
 
@@ -367,3 +392,215 @@ def test_plot_map2d_reports_empty_extents_and_invalid_face_count(
             "value",
         )
     assert error.value.code == "V-PLOT-002"
+
+
+@pytest.mark.unit
+def test_map2d_land_and_independent_river_km_overlays_are_cached_and_read_only(
+    tmp_path: Path,
+) -> None:
+    land_path = _write_ldb(tmp_path / "inputs" / "boundary.ldb")
+    labels_path = tmp_path / "inputs" / "labels.csv"
+    labels_path.write_text(
+        "x,y,label,km\n1.0,0.5,13.00_LABEL,13.000\n10.0,10.0,99.00_OUTSIDE,99.000\n",
+        encoding="utf-8",
+    )
+    windows_path = tmp_path / "inputs" / "windows.csv"
+    windows_path.write_text(
+        "x,y,label,km\n1.0,0.5,12.00_WINDOW,12.000\n",
+        encoding="utf-8",
+    )
+    inputs = (land_path, labels_path, windows_path)
+    input_snapshot = snapshot_inputs(inputs)
+    _HOOK_RIVER_LABELS.clear()
+    _HOOK_MAP_TEXTS.clear()
+
+    project, analysis, source = _project_and_source(
+        tmp_path,
+        values=((1.0, 2.0),),
+        map_overrides={
+            "land_boundaries": [land_path],
+            "river_km_labels": {"file": labels_path, "color": "magenta"},
+            "extents_along_river_km": {
+                "file": windows_path,
+                "window_x_m": 0.5,
+                "window_y_m": 0.5,
+            },
+        },
+        hooks=[f"{__name__}:_capture_map_texts"],
+    )
+    diagnostics: list[str] = []
+    first = plot_map2d_group(
+        project,
+        analysis,
+        source,
+        "water_depth",
+        "value",
+        diagnostic=diagnostics.append,
+    )
+
+    cache_files = tuple(source.layout.cache_inputs.glob("ldb_*.nc"))
+    assert len(first.output_paths) == 2
+    assert len(cache_files) == 1
+    assert "Cached land boundary boundary.ldb." in diagnostics
+    assert _HOOK_RIVER_LABELS == [("13.00_LABEL",), ("13.00_LABEL",)]
+    assert all("12.00_WINDOW" not in texts for texts in _HOOK_MAP_TEXTS)
+    cache_mtime = cache_files[0].stat().st_mtime_ns
+
+    diagnostics.clear()
+    second = plot_map2d_group(
+        project,
+        analysis,
+        source,
+        "water_depth",
+        "value",
+        diagnostic=diagnostics.append,
+    )
+    assert set(second.reused_paths) == set(first.output_paths)
+    assert "Reused land-boundary cache for boundary.ldb." in diagnostics
+    assert cache_files[0].stat().st_mtime_ns == cache_mtime
+    assert_inputs_unchanged(input_snapshot, inputs)
+
+    segments = _clip_line(
+        np.array([-1.0, 2.0]),
+        np.array([0.5, 0.5]),
+        (0.0, 1.0, 0.0, 1.0),
+    )
+    assert len(segments) == 1
+    np.testing.assert_allclose(segments[0], [[0.0, 0.5], [1.0, 0.5]])
+
+
+@pytest.mark.unit
+def test_map2d_tiles_use_persistent_cache_and_provider_attribution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tile_module = pytest.importorskip("contextily.tile")
+    calls: list[str] = []
+
+    def fake_fetch(tile_url: str, *args: Any, **kwargs: Any) -> np.ndarray:
+        calls.append(tile_url)
+        return np.full((256, 256, 3), 127, dtype=np.uint8)
+
+    monkeypatch.setattr(tile_module, "_fetch_tile", fake_fetch)
+    tile_cache = tmp_path / "tile-cache"
+    project, analysis, source = _project_and_source(
+        tmp_path / "plot",
+        values=((1.0, 2.0),),
+        map_overrides={"background_tiles": {"provider": "Esri.WorldImagery"}},
+        project_overrides={
+            "crs": "EPSG:3857",
+            "tiles_cache_dir": tile_cache,
+        },
+        hooks=[f"{__name__}:_capture_map_texts"],
+    )
+    _HOOK_MAP_TEXTS.clear()
+    diagnostics: list[str] = []
+    first = plot_map2d_group(
+        project,
+        analysis,
+        source,
+        "water_depth",
+        "value",
+        diagnostic=diagnostics.append,
+    )
+    first_fetch_count = len(calls)
+
+    assert first.output_paths
+    assert first_fetch_count > 0
+    assert any(tile_cache.rglob("output.pkl"))
+    assert any("Esri" in text for texts in _HOOK_MAP_TEXTS for text in texts)
+
+    second = plot_map2d_group(
+        project,
+        analysis,
+        source,
+        "water_depth",
+        "value",
+    )
+    assert set(second.reused_paths) == set(first.output_paths)
+    assert len(calls) == first_fetch_count
+
+
+@pytest.mark.unit
+def test_map2d_tiles_report_offline_fallback_and_missing_optional_dependency(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tile_module = pytest.importorskip("contextily.tile")
+    requests = pytest.importorskip("requests")
+
+    def offline_fetch(*args: Any, **kwargs: Any) -> np.ndarray:
+        raise requests.exceptions.ConnectionError("offline test")
+
+    monkeypatch.setattr(tile_module, "_fetch_tile", offline_fetch)
+    project, analysis, source = _project_and_source(
+        tmp_path / "offline",
+        values=((1.0, 2.0),),
+        map_overrides={"background_tiles": {}},
+        project_overrides={
+            "crs": "EPSG:3857",
+            "tiles_cache_dir": tmp_path / "offline-cache",
+        },
+    )
+    diagnostics: list[str] = []
+    result = plot_map2d_group(
+        project,
+        analysis,
+        source,
+        "water_depth",
+        "value",
+        diagnostic=diagnostics.append,
+    )
+    assert result.output_paths
+    assert any("V-ENV-002" in message for message in diagnostics)
+
+    from d3dplot.plotting.views import decorations
+
+    original_import = decorations.import_module
+
+    def without_contextily(name: str) -> Any:
+        if name == "contextily":
+            raise ImportError("contextily intentionally hidden in test")
+        return original_import(name)
+
+    monkeypatch.setattr(decorations, "import_module", without_contextily)
+    project, analysis, source = _project_and_source(
+        tmp_path / "missing-extra",
+        values=((1.0, 2.0),),
+        map_overrides={"background_tiles": {}},
+        project_overrides={"crs": "EPSG:3857"},
+    )
+    with pytest.raises(Map2DPlotError) as error:
+        plot_map2d_group(
+            project,
+            analysis,
+            source,
+            "water_depth",
+            "value",
+        )
+    assert error.value.code == "V-ENV-001"
+
+
+@pytest.mark.unit
+def test_map2d_invalid_overlay_inputs_have_stable_validation_codes(
+    tmp_path: Path,
+) -> None:
+    project, analysis, source = _project_and_source(
+        tmp_path / "invalid-land",
+        values=((1.0, 2.0),),
+        map_overrides={"land_boundaries": [tmp_path / "missing.ldb"]},
+    )
+    with pytest.raises(Map2DPlotError) as error:
+        plot_map2d_group(project, analysis, source, "water_depth", "value")
+    assert error.value.code == "V-LDB-001"
+
+    invalid_labels = tmp_path / "invalid-labels.csv"
+    invalid_labels.write_text("invalid\n", encoding="utf-8")
+    project, analysis, source = _project_and_source(
+        tmp_path / "invalid-river-km",
+        values=((1.0, 2.0),),
+        map_overrides={"river_km_labels": {"file": invalid_labels}},
+    )
+    with pytest.raises(Map2DPlotError) as error:
+        plot_map2d_group(project, analysis, source, "water_depth", "value")
+    assert error.value.code == "V-RKM-001"
