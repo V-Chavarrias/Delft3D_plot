@@ -11,6 +11,7 @@ from pathlib import Path
 
 _HASH_BLOCK_SIZE = 1024 * 1024
 _DIGEST_SIZE = 32
+CACHE_SCHEMA_VERSION = 2
 
 
 def canonical_json(value: Mapping[str, object]) -> str:

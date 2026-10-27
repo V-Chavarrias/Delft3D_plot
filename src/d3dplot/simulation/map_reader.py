@@ -48,6 +48,7 @@ class _NetCDF4Module(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class _PlanMapping:
+    plan_index: int
     n_faces: int
     n_edges: int
     partition_offset: _Array
@@ -94,6 +95,21 @@ class MapReader:
             simulation,
             merge_plan_path,
         )
+
+    def plan_index(self, subrun_index: int) -> int:
+        """Return the inspected merge-plan index assigned to a sub-run."""
+        mapping = self._plans_by_subrun.get(subrun_index)
+        if mapping is None:
+            raise MapReaderError(
+                _issue(
+                    "V-OUT-020",
+                    "error",
+                    self._simulation.root,
+                    f"No merge plan is assigned to sub-run {subrun_index}.",
+                    "Run inspection again to rebuild the merge plan.",
+                )
+            )
+        return mapping.plan_index
 
     @contextmanager
     def session(self, subrun_index: int) -> Iterator[MapReaderSession]:
@@ -610,6 +626,7 @@ def _load_plan_mappings(
                 )
             )
         mappings[int(subrun_index)] = _PlanMapping(
+            plan_index=plan_index,
             n_faces=int(plan_n_faces[plan_index]),
             n_edges=int(plan_n_edges[plan_index]),
             partition_offset=arrays["partition_offset"][plan_index],

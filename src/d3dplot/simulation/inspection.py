@@ -30,6 +30,7 @@ from d3dplot.simulation.time_utils import (
     timezone_from_offset,
 )
 from d3dplot.store import (
+    CACHE_SCHEMA_VERSION,
     OutputLayout,
     OutputWriteError,
     OutputWriteGuard,
@@ -43,7 +44,7 @@ from d3dplot.validate.report import ValidationIssue, ValidationReport
 _PARTITION_NAME = re.compile(r"(.+)_(\d{4})(_map\.nc)", flags=re.IGNORECASE)
 _TIME_TOLERANCE_S = 1.0
 _COORDINATE_TOLERANCE_M = 0.001
-_CACHE_SCHEMA_VERSION = 2
+_CACHE_SCHEMA_VERSION = CACHE_SCHEMA_VERSION
 _ALGORITHM_VERSION = "2"
 _FACE_DOMAIN = "mesh2d_flowelem_domain"
 _FACE_GLOBALNR = "mesh2d_flowelem_globalnr"

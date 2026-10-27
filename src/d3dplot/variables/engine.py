@@ -96,12 +96,12 @@ class QuantityTimeSession:
 
     def get(self, request: str | QuantityRequest) -> _Array:
         """Return one quantity, preserving any alias-specific parameters."""
+        spec = self.resolve_spec(request)
         normalized_request = (
             QuantityRequest(requested_name=request)
             if isinstance(request, str)
             else request
         )
-        spec = self._resolve_requested_spec(normalized_request.requested_name)
         values = self._compute(
             spec,
             normalized_request,
@@ -111,6 +111,15 @@ class QuantityTimeSession:
         if normalized_request.sum_fractions:
             values = _sum_fractions(values, spec)
         return np.asarray(values, dtype=np.float64)
+
+    def resolve_spec(self, request: str | QuantityRequest) -> VariableSpec:
+        """Resolve request metadata, including plug-in and present raw quantities."""
+        normalized_request = (
+            QuantityRequest(requested_name=request)
+            if isinstance(request, str)
+            else request
+        )
+        return self._resolve_requested_spec(normalized_request.requested_name)
 
     def _resolve_requested_spec(self, name: str) -> VariableSpec:
         spec = self._engine._by_identifier.get(name.strip().casefold())

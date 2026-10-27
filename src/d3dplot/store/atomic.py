@@ -10,6 +10,7 @@ from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TextIO
 
 from d3dplot.store.guard import OutputWriteError, OutputWriteGuard
 from d3dplot.store.layout import OutputLayout
@@ -111,6 +112,26 @@ def atomic_write_text(
             stream.write(content)
             stream.flush()
             os.fsync(stream.fileno())
+
+
+@contextmanager
+def guarded_text_stream(
+    path: str | Path,
+    guard: OutputWriteGuard,
+    *,
+    exclusive: bool = False,
+) -> Iterator[TextIO]:
+    """Open a guarded UTF-8 stream for line-flushed diagnostic output."""
+    destination = guard.validate_target(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination = guard.validate_target(path)
+    with destination.open(
+        "x" if exclusive else "w",
+        encoding="utf-8",
+        newline="\n",
+        buffering=1,
+    ) as stream:
+        yield stream
 
 
 def atomic_write_json(

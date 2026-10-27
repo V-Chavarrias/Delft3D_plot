@@ -6,9 +6,11 @@ from d3dplot.store.atomic import (
     atomic_write_bytes,
     atomic_write_json,
     atomic_write_text,
+    guarded_text_stream,
     initialize_output_root,
 )
 from d3dplot.store.fingerprint import (
+    CACHE_SCHEMA_VERSION,
     canonical_json,
     fingerprint_artifact,
     fingerprint_model_output,
@@ -27,6 +29,7 @@ __all__ = [
     "OutputLayout",
     "OutputWriteError",
     "OutputWriteGuard",
+    "CACHE_SCHEMA_VERSION",
     "atomic_path",
     "atomic_write_bytes",
     "atomic_write_json",
@@ -35,6 +38,7 @@ __all__ = [
     "fingerprint_artifact",
     "fingerprint_model_output",
     "fingerprint_small_input",
+    "guarded_text_stream",
     "initialize_output_root",
     "is_path_within",
     "resolve_output_root",

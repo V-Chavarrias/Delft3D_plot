@@ -25,6 +25,7 @@ from d3dplot.store import (
     fingerprint_artifact,
     fingerprint_model_output,
     fingerprint_small_input,
+    guarded_text_stream,
     initialize_output_root,
     resolve_output_root,
 )
@@ -173,6 +174,26 @@ def test_atomic_writers_replace_files_and_remove_failed_temporaries(
 
     assert text_path.read_text(encoding="utf-8") == "first\nsecond\n"
     assert not list(root.rglob("*.tmp"))
+
+
+@pytest.mark.unit
+def test_guarded_text_stream_flushes_lines_and_rejects_unsafe_targets(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "output"
+    guard = initialize_output_root(root, tool_version="0.1.0")
+    path = root / "logs" / "run.dia"
+
+    with guarded_text_stream(path, guard) as stream:
+        stream.write("first line\n")
+        stream.flush()
+        assert path.read_text(encoding="utf-8") == "first line\n"
+        stream.write("second line\n")
+
+    assert path.read_bytes() == b"first line\nsecond line\n"
+    with pytest.raises(OutputWriteError, match="outside output root"):
+        with guarded_text_stream(tmp_path / "outside.dia", guard):
+            pytest.fail("Unsafe diagnostic targets must not be opened.")
 
 
 @pytest.mark.unit

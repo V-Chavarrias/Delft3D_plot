@@ -167,6 +167,15 @@ def test_validate_accepts_registered_and_present_raw_variables(
     assert (
         tmp_path / "generated" / "reference" / "d3dplot" / "cache" / "merge_plan.nc"
     ).is_file()
+    diagnostics = tuple(
+        (tmp_path / "generated" / "reference" / "d3dplot" / "logs").glob(
+            "d3dplot_*.dia"
+        )
+    )
+    assert len(diagnostics) == 1
+    assert "Validation summary: valid=True" in diagnostics[0].read_text(
+        encoding="utf-8"
+    )
 
 
 @pytest.mark.integration
@@ -207,6 +216,11 @@ def test_inspect_builds_and_reuses_cache_for_selected_simulation(
     assert "cache built" in first.stdout
     assert (output_root / "smt" / "d3dplot" / "cache" / "merge_plan.nc").is_file()
     assert not (output_root / "plain" / "d3dplot").exists()
+    diagnostics = tuple(
+        (output_root / "smt" / "d3dplot" / "logs").glob("d3dplot_*.dia")
+    )
+    assert len(diagnostics) == 1
+    assert "Inspection cache built" in diagnostics[0].read_text(encoding="utf-8")
 
     second = runner.invoke(
         app,

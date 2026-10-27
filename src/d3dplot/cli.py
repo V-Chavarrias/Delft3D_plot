@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Read-only inspection, configuration validation, and setup commands."""
+"""Configuration validation, guarded cache inspection, and setup commands."""
 
 from __future__ import annotations
 
@@ -15,8 +15,10 @@ from typing import Annotated, Literal, Protocol, cast
 import typer
 import yaml
 
+from d3dplot import __version__
 from d3dplot.config.io import dump_config, dump_json_schema, load_config_data
 from d3dplot.config.project import ProjectConfig, SimulationConfig
+from d3dplot.execution.diagnostics import DiagnosticLog
 from d3dplot.simulation.discover import (
     Simulation,
     discover_simulation,
@@ -251,38 +253,115 @@ def validate(
         raise typer.Exit(code=2) from error
 
     config, static_report = validate_config(data)
+    if config is None:
+        _emit_report(static_report, report_format)
+        raise typer.Exit(code=1)
+
+    diagnostics = _make_diagnostic_log(
+        config,
+        config.simulations,
+        configuration=configuration,
+        command_line=(
+            "d3dplot",
+            "validate",
+            str(configuration),
+            "--format",
+            report_format,
+        ),
+        output_is_valid=not any(
+            issue.code == "V-OUT-041" for issue in static_report.issues
+        ),
+    )
+    if diagnostics is None:
+        report = _validate_project(config, static_report)
+        _emit_report(report, report_format)
+        if not report.is_valid:
+            raise typer.Exit(code=1)
+        return
+
+    with diagnostics as diagnostic_log:
+        report = _validate_project(config, static_report, diagnostic_log)
+        _emit_report(report, report_format)
+        if not report.is_valid:
+            diagnostic_log.error("Validation failed.")
+            raise typer.Exit(code=1)
+
+
+def _validate_project(
+    config: ProjectConfig,
+    static_report: ValidationReport,
+    diagnostics: DiagnosticLog | None = None,
+) -> ValidationReport:
     issues = list(static_report.issues)
     discovered: list[tuple[str, tuple[_SubRunHeader, ...]]] = []
     inspection_candidates: list[tuple[SimulationConfig, Simulation]] = []
 
-    if config is not None:
-        for simulation_config in config.simulations:
-            simulation, discovery_report = discover_simulation(simulation_config.path)
-            issues.extend(discovery_report.issues)
-            if simulation is None:
-                continue
-            inspection_candidates.append((simulation_config, simulation))
-            headers, header_report = _read_subrun_headers(simulation)
-            issues.extend(header_report.issues)
-            if header_report.is_valid:
-                discovered.append((simulation_config.label, headers))
-        _validate_variable_requests(config, discovered, issues)
-        if not any(issue.level == "error" for issue in issues):
-            for simulation_config, simulation in inspection_candidates:
-                _, inspection_report = build_inspection_cache(
-                    simulation,
-                    OutputLayout.for_simulation(simulation_config, config.output),
-                    crs=config.crs,
-                    time_zone=config.time_zone,
-                    check_boundary_duplicates=config.check_boundary_duplicates,
-                    forbidden_roots=config.output.forbidden_roots,
-                )
-                issues.extend(inspection_report.issues)
+    if diagnostics is not None:
+        diagnostics.record_validation_issues(static_report.issues)
+
+    for simulation_config in config.simulations:
+        simulation, discovery_report = discover_simulation(simulation_config.path)
+        issues.extend(discovery_report.issues)
+        if diagnostics is not None:
+            diagnostics.info(
+                f"Simulation discovery: label={simulation_config.label}; "
+                f"path={simulation_config.path}."
+            )
+            diagnostics.record_validation_issues(discovery_report.issues)
+        if simulation is None:
+            continue
+        inspection_candidates.append((simulation_config, simulation))
+        if diagnostics is not None:
+            map_file_count = sum(len(subrun.map_files) for subrun in simulation.subruns)
+            diagnostics.info(
+                f"Simulation found: label={simulation_config.label}; "
+                f"kind={simulation.kind.value}; "
+                f"subruns={len(simulation.subruns)}; map_files={map_file_count}."
+            )
+        headers, header_report = _read_subrun_headers(simulation)
+        issues.extend(header_report.issues)
+        if diagnostics is not None:
+            diagnostics.record_validation_issues(header_report.issues)
+        if header_report.is_valid:
+            discovered.append((simulation_config.label, headers))
+
+    previous_issue_count = len(issues)
+    _validate_variable_requests(config, discovered, issues)
+    if diagnostics is not None:
+        diagnostics.record_validation_issues(issues[previous_issue_count:])
+    if not any(issue.level == "error" for issue in issues):
+        for simulation_config, simulation in inspection_candidates:
+            result, inspection_report = build_inspection_cache(
+                simulation,
+                OutputLayout.for_simulation(simulation_config, config.output),
+                crs=config.crs,
+                time_zone=config.time_zone,
+                check_boundary_duplicates=config.check_boundary_duplicates,
+                forbidden_roots=config.output.forbidden_roots,
+            )
+            issues.extend(inspection_report.issues)
+            if diagnostics is not None:
+                diagnostics.record_validation_issues(inspection_report.issues)
+                if result is not None:
+                    cache_state = "reused" if result.cache_reused else "built"
+                    diagnostics.info(
+                        f"Inspection cache {cache_state}: "
+                        f"simulation={simulation_config.label}; "
+                        f"merge_plans={result.plan_count}; "
+                        f"duration={result.duration_seconds:.3f} s."
+                    )
+    elif diagnostics is not None:
+        diagnostics.info(
+            "Inspection cache work skipped because validation errors were found."
+        )
 
     report = ValidationReport(tuple(issues))
-    _emit_report(report, report_format)
-    if not report.is_valid:
-        raise typer.Exit(code=1)
+    if diagnostics is not None:
+        diagnostics.info(
+            f"Validation summary: valid={report.is_valid}; "
+            f"errors={len(report.errors)}; warnings={len(report.warnings)}."
+        )
+    return report
 
 
 @app.command()
@@ -329,13 +408,71 @@ def inspect(
             )
             raise typer.Exit(code=2)
 
+    diagnostics = _make_diagnostic_log(
+        config,
+        simulation_configs,
+        configuration=configuration,
+        command_line=(
+            ("d3dplot", "inspect", str(configuration))
+            if simulation_label is None
+            else (
+                "d3dplot",
+                "inspect",
+                str(configuration),
+                "--simulation",
+                simulation_label,
+            )
+        ),
+        output_is_valid=True,
+    )
+    if diagnostics is None:
+        report, results = _inspect_project(config, static_report, simulation_configs)
+        _emit_inspection_report(report, results)
+        if not report.is_valid:
+            raise typer.Exit(code=1)
+        return
+
+    with diagnostics as diagnostic_log:
+        report, results = _inspect_project(
+            config,
+            static_report,
+            simulation_configs,
+            diagnostic_log,
+        )
+        _emit_inspection_report(report, results)
+        if not report.is_valid:
+            diagnostic_log.error("Inspection failed.")
+            raise typer.Exit(code=1)
+
+
+def _inspect_project(
+    config: ProjectConfig,
+    static_report: ValidationReport,
+    simulation_configs: list[SimulationConfig],
+    diagnostics: DiagnosticLog | None = None,
+) -> tuple[ValidationReport, list[tuple[str, InspectionResult]]]:
     issues = list(static_report.issues)
     results: list[tuple[str, InspectionResult]] = []
+    if diagnostics is not None:
+        diagnostics.record_validation_issues(static_report.issues)
     for simulation_config in simulation_configs:
         simulation, discovery_report = discover_simulation(simulation_config.path)
         issues.extend(discovery_report.issues)
+        if diagnostics is not None:
+            diagnostics.info(
+                f"Simulation discovery: label={simulation_config.label}; "
+                f"path={simulation_config.path}."
+            )
+            diagnostics.record_validation_issues(discovery_report.issues)
         if simulation is None:
             continue
+        if diagnostics is not None:
+            map_file_count = sum(len(subrun.map_files) for subrun in simulation.subruns)
+            diagnostics.info(
+                f"Simulation found: label={simulation_config.label}; "
+                f"kind={simulation.kind.value}; "
+                f"subruns={len(simulation.subruns)}; map_files={map_file_count}."
+            )
         result, inspection_report = build_inspection_cache(
             simulation,
             OutputLayout.for_simulation(simulation_config, config.output),
@@ -345,10 +482,33 @@ def inspect(
             forbidden_roots=config.output.forbidden_roots,
         )
         issues.extend(inspection_report.issues)
+        if diagnostics is not None:
+            diagnostics.record_validation_issues(inspection_report.issues)
         if result is not None:
             results.append((simulation_config.label, result))
+            if diagnostics is not None:
+                cache_state = "reused" if result.cache_reused else "built"
+                diagnostics.info(
+                    f"Inspection cache {cache_state}: "
+                    f"simulation={simulation_config.label}; "
+                    f"merge_plans={result.plan_count}; "
+                    f"duration={result.duration_seconds:.3f} s."
+                )
 
     report = ValidationReport(tuple(issues))
+    if diagnostics is not None:
+        diagnostics.info(
+            f"Inspection summary: valid={report.is_valid}; "
+            f"simulations={len(results)}; errors={len(report.errors)}; "
+            f"warnings={len(report.warnings)}."
+        )
+    return report, results
+
+
+def _emit_inspection_report(
+    report: ValidationReport,
+    results: list[tuple[str, InspectionResult]],
+) -> None:
     _emit_report(report)
     for label, result in results:
         cache_state = "reused" if result.cache_reused else "built"
@@ -357,8 +517,56 @@ def inspect(
             f"{result.reference_subrun}, cache {cache_state} "
             f"({result.duration_seconds:.2f} s): {result.merge_plan_path}"
         )
-    if not report.is_valid:
-        raise typer.Exit(code=1)
+
+
+def _make_diagnostic_log(
+    config: ProjectConfig,
+    involved_simulations: list[SimulationConfig],
+    *,
+    configuration: Path,
+    command_line: tuple[str, ...],
+    output_is_valid: bool,
+) -> DiagnosticLog | None:
+    """Create logs in the reference root and each simulation used by a command."""
+    if not output_is_valid:
+        return None
+
+    reference = config.reference_simulation
+    if isinstance(reference, str):
+        reference_simulation = next(
+            (item for item in config.simulations if item.label == reference),
+            None,
+        )
+    else:
+        reference_simulation = (
+            config.simulations[reference]
+            if 0 <= reference < len(config.simulations)
+            else None
+        )
+    if reference_simulation is None:
+        raise ValueError("The configured reference simulation could not be resolved.")
+
+    ordered_simulations = (reference_simulation, *involved_simulations)
+    layouts: list[OutputLayout] = []
+    seen_roots: set[Path] = set()
+    for simulation in ordered_simulations:
+        if (
+            simulation.output_dir is None
+            and config.output.root is None
+            and not simulation.path.is_dir()
+        ):
+            return None
+        layout = OutputLayout.for_simulation(simulation, config.output)
+        if layout.root not in seen_roots:
+            layouts.append(layout)
+            seen_roots.add(layout.root)
+    return DiagnosticLog.for_project(
+        tuple(layouts),
+        tool_version=__version__,
+        command_line=command_line,
+        forbidden_roots=config.output.forbidden_roots,
+        configuration_path=configuration,
+    )
 
 
 @app.command()

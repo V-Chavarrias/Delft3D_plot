@@ -1,6 +1,6 @@
 # Delft3D_plot (Python): Architecture and Implementation Plan
 
-Status: **v6.40; WP 1.10–1.11 and WP 2.1–2.2 are implemented locally. WP 2.2a's quantity engine and synthetic acceptance are implemented and validated locally on `feat/quantity-engine`: 19 raw and 23 derived specifications, read-once dependency caching, global grid geometry, and the 2D v1 formulas. P-drive r209/Rijn acceptance for WP 2.1–2.2a remains deferred until local development is complete (D65). The engine retains source choices; writing them to `.dia` is part of WP 2.3. D66 resolves unset explicit-time tolerance as unbounded nearest-output matching; D67 places edge merge-plan support in WP 2.2; D68 records the Matlab-compatible velocity-direction and grain-size percentile conventions; D69 preserves Matlab time selectors with one-based indices and vector sentinels; D70 corrects `ba_mor` to thresholded active sediment area; D71 confirms map-time intervals and the previous-output fallback for water-level rate.** The CLI provides read-only `info`/`variables`, schema output, configuration/variable validation with guarded grid, merge-plan, and time-quality cache inspection, a dedicated `inspect` command, and a no-overwrite starter configuration. The package foundations, quantity engine, configuration system, validation framework, synthetic cases, simulation inspection, and first CLI commands are in place; analyses are not yet implemented. See [the synthetic case generator](https://github.com/V-Chavarrias/Delft3D_plot/blob/main/tools/synthetic_smt/README.md). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
+Status: **v6.45; WP 1.10–1.11 and WP 2.1–2.2a are implemented locally. WP 2.2a's quantity engine and synthetic acceptance are complete and validated on `feat/quantity-engine` (commit `e890c45`): 19 raw and 23 derived specifications, read-once dependency caching, global grid geometry, and the 2D v1 formulas. WP 2.3 execution foundations are implemented and validated locally on `feat/execution`: the shared process-task planner, deterministic BLAKE2b sharding, cache decisions wired to one-pass NetCDF fingerprint reads, resource-aware worker selection, serial/spawn executors, guarded line-flushed `.dia`/`.log` diagnostics, atomic run-summary CSV persistence, and `run_process_stage` orchestration. WP 3.1 map2d quantity processing is implemented and validated on synthetic data; its tests cover water depth, Froude number, vorticity, selected d50, water-level rate, NetCDF cache metadata, and V-VAR-005 for retained vector components. All 191 CI-eligible tests pass; Ruff, formatting, targeted strict mypy, strict MkDocs, and `git diff --check` pass. End-to-end CLI `run` integration and map2d plotting remain. CLI `validate` and `inspect` emit diagnostics. P-drive r209/Rijn acceptance for WP 2.1–2.2a remains deferred until local development is complete (D65). D66 resolves unset explicit-time tolerance as unbounded nearest-output matching; D67 places edge merge-plan support in WP 2.2; D68 records the Matlab-compatible velocity-direction and grain-size percentile conventions; D69 preserves Matlab time selectors with one-based indices and vector sentinels; D70 corrects `ba_mor` to thresholded active sediment area; D71 confirms map-time intervals and the previous-output fallback for water-level rate.** The CLI provides read-only `info`/`variables`, schema output, configuration/variable validation with guarded grid, merge-plan, and time-quality cache inspection, a dedicated `inspect` command, and a no-overwrite starter configuration. The package foundations, quantity engine, configuration system, validation framework, synthetic cases, simulation inspection, execution foundations, and map2d processing are in place; plotting remains. See [the synthetic case generator](https://github.com/V-Chavarrias/Delft3D_plot/blob/main/tools/synthetic_smt/README.md). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
 
 Document map:
 * §0 Session handover
@@ -33,8 +33,8 @@ Document map:
 
 | Item | Location | State |
 |------|----------|-------|
-| Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `feat/quantity-engine`, local and unpushed; WP 2.2 complete; WP 2.2a in progress; WP 2.1 and 2.2 P-drive acceptance deferred per D65 |
-| Plan (this file) | `docs/architecture.md` | v6.40 |
+| Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `feat/execution`, local and unpushed; WP 2.2a complete; WP 2.3 execution foundations validated; WP 3.1 complete; P-drive acceptance deferred per D65 |
+| Plan (this file) | `docs/architecture.md` | v6.45 |
 | Licence | `LICENSE` | GPL-3.0 |
 | Synthetic SMT and plain FM test case generator | `tools/synthetic_smt/` | Implemented and verified locally (§13.3) |
 | Land-boundary converter (`.mat` cache → `.ldb`) | `tools/mat_to_ldb.py` | Implemented. Used to recreate the Maas land boundary (D45) |
@@ -42,7 +42,7 @@ Document map:
 | Recreated Maas land boundary | `data_local/maas/j21_ldb.ldb` (55.7 MB) | Git-ignored. 174 220 polylines, 2 343 057 points; read by HYDROLIB-core in 22 s, identical to the `.mat` |
 | HYDROLIB-core modifications | §14.1–§14.3 | WP 0.1 (`54011e0d`) and both DIMR fixes (`3e4f7317`, `96d07c87`) are integrated locally on `feat/mdu_morphology_keywords`; the external-library fix is also committed on `fix/dimr-external-libraries` |
 | Python environment | `.venv/` (uv, Python 3.12) | Git-ignored. dfm_tools and HYDROLIB-core are installed editable from the local checkouts; HYDROLIB-core is currently on `feat/mdu_morphology_keywords` with WP 0.1 and the DIMR fix |
-| Package `d3dplot` | `pyproject.toml`, `src/d3dplot/` | WP 1.1–1.11 foundations and WP 2.1–2.2 output/time-axis implementations are complete locally; WP 2.2a quantity engine and synthetic acceptance are complete on `feat/quantity-engine`; WP 2.3 execution is next |
+| Package `d3dplot` | `pyproject.toml`, `src/d3dplot/` | WP 1.1–1.11 foundations and WP 2.1–2.2a output, time-axis, and quantity-engine implementations are complete locally; WP 2.3 execution foundations and WP 3.1 map2d processing are implemented and locally validated |
 | Configuration design | §2 decisions D57–D59, D69–D70 | Nested `times` object, Matlab-compatible one-based time indices, configurable active-sediment threshold, and shared `map.render`; WP 1.3 complete locally; plugin config integration deferred to the analysis registry |
 | Validation framework | `src/d3dplot/validate/` | WP 1.4 complete locally: report serialization and static V-CFG-001..004 checks |
 | Model-input adapters | `src/d3dplot/model_input/` | WP 1.5 implemented locally; MDU, `.mor`, `.sed`, DIMR, V-MDU-001, and real r209 read-only validation complete |
@@ -51,9 +51,9 @@ Document map:
 | Output store | `src/d3dplot/store/` | WP 1.8 implemented locally; guarded marked roots, atomic writers, fingerprints, and input snapshots are tested |
 | Labels | `src/d3dplot/labels/` | WP 1.9 implemented locally; 141 variable aliases, 127 complete translations, and 22 unit types are packaged and tested |
 | Variables | `src/d3dplot/variables/` | WP 1.10 and WP 2.2a complete locally; 19 raw and 23 derived v1 specs, dependency resolution, per-time caching, formula callbacks, grid operators, aliases, NetCDF candidates, suggestions, and generated documentation |
-| CLI | `src/d3dplot/cli.py` | WP 1.11 and WP 2.1 implementation: console and module entry points; `info`, `variables`, `schema`, `validate`, `inspect`, and no-overwrite `init` |
+| CLI | `src/d3dplot/cli.py` | WP 1.11 and WP 2.1 implementation: console and module entry points; `info`, `variables`, `schema`, `validate`, `inspect`, and no-overwrite `init`; `validate` and `inspect` now write guarded `.dia` diagnostics and a debug `.log` |
 | Synthetic-case pytest fixture | `tests/conftest.py` | Session-scoped fixture generates and verifies in pytest's temporary folder (WP 1.2) |
-| CI and documentation site | `.github/workflows/ci.yml`, `mkdocs.yml` | 176 CI-eligible tests, strict mypy, strict docs, Ruff/format, and `git diff --check` pass locally; remote CI not run |
+| CI and documentation site | `.github/workflows/ci.yml`, `mkdocs.yml` | All 191 CI-eligible tests pass; strict MkDocs, targeted strict mypy, Ruff/format, and `git diff --check` pass; remote CI not run |
 | Matlab reference results of the synthetic case | `data_local/synthetic_smt_01/simulations/r00*/mat`, `fig` | **Done** (2026-10-26): r001 37 mat + 1071 PNG, r002 37 mat + 858 PNG. Protected: `generate.py --force` refuses to delete them without `--discard-matlab-reference` |
 | Agent guidance for development | `AGENTS.md`, `.github/instructions/plotting.instructions.md`, `.github/skills/{add-analysis-or-option,upstream-contribution}` | Done (§13.6) |
 
@@ -129,7 +129,9 @@ APIs the design relies on (check them first when upgrading):
 14. **WP 1.10** is complete locally on `feat/variables`: the registry covers 10 raw and 23 derived v1 quantities, resolves canonical names, Matlab aliases, and registered NetCDF candidates case-insensitively, and raises V-VAR-001 with canonical suggestions. Generated `docs/variables.md` is tested against the registry; the three missing label translations were added. All 115 CI-eligible tests, strict mypy, changed-file Ruff/format checks, and strict MkDocs pass. The registry is metadata-only; computation callbacks remain WP 2.2a/b.
 15. **WP 1.11** is complete locally on `feat/cli-part-1`: added the `d3dplot` console entry point and `python -m d3dplot`, plus `info`, `variables`, `schema`, `validate`, and `init`. `info`/`variables` read the first map-file header per sub-run for variables and CRS; the initial `validate` scope combined configuration checks, V-VAR name/raw-field availability checks, and simulation discovery without building an inspect cache (D63). `init` writes commented YAML and refuses to overwrite a target. WP 2.1 now adds cache inspection to `validate` and the dedicated `inspect` command (D64).
 16. **WP 2.1 implementation** is on `feat/inspect-phase`: partition identity, topology signatures, time-consistent reference selection, coordinate fallback, merge plans, grid geometry, atomic guarded caches, and CLI integration are implemented. Synthetic tests compare scattered values with dfm_tools, cover cache reuse, plain-FM coordinate matching, corrupt reference selection, invalid identity, and changed topologies; validation also builds/reuses caches when earlier checks have no errors. Read-only r209 discovery found 195 sub-runs and no issues in 200.628 s, but the full inspect run did not finish after more than 20 minutes and was stopped at the user's request. Its output was directed to and cleaned from local temporary storage.
-17. **WP 2.2 implementation** is complete locally on `feat/map-reader-time-axis`: the face/edge `MapReader`, edge merge plan, `times.nc`, fixed-offset precedence, restart-boundary checks, duplicate resolution, selection, cross-simulation matching, and corrupt-output policies are implemented. Local synthetic tests reproduce all nine rows of `expected/time_axis.csv`, verify face/edge scattering and corrupt-partition metadata, and cover V-OUT-030/031/032/033 and V-TIME-002/010/011/012. P-drive acceptance remains deferred until local-data work is complete (D65), with any final model-data run read-only and its `output.root` on a local drive. **WP 2.2a, the quantity engine, is in progress on `feat/quantity-engine`.**
+17. **WP 2.2 implementation** is complete locally on `feat/map-reader-time-axis`: the face/edge `MapReader`, edge merge plan, `times.nc`, fixed-offset precedence, restart-boundary checks, duplicate resolution, selection, cross-simulation matching, and corrupt-output policies are implemented. Local synthetic tests reproduce all nine rows of `expected/time_axis.csv`, verify face/edge scattering and corrupt-partition metadata, and cover V-OUT-030/031/032/033 and V-TIME-002/010/011/012. P-drive acceptance remains deferred until local-data work is complete (D65), with any final model-data run read-only and its `output.root` on a local drive. **WP 2.2a is complete on `feat/quantity-engine`, commit `e890c45`; WP 2.3 is underway on `feat/execution`.**
+18. **WP 2.3 execution foundations** are implemented and locally validated on `feat/execution`: cross-analysis task grouping by simulation/sub-run/time block, stable sharding, fingerprint-policy decisions populated from one-pass NetCDF reads, CPU/memory-aware worker limits, serial and `spawn` executors with failure isolation, worker environment and logging-queue setup, run summaries, and guarded `.dia`/`.log` diagnostics. `validate` and `inspect` record provenance, validation findings, and cache outcomes. `run_process_stage` connects the executor to task diagnostics and guarded atomic run-summary CSV output. The 13 execution tests pass; full end-to-end CLI `run` integration remains.
+19. **WP 3.1 map2d processing** is implemented and locally validated on the synthetic SMT case. The processor requests raw and derived quantities from the quantity engine, writes fingerprinted/guarded NetCDF cache files, records quantity choices in `.dia`, and rejects retained vector dimensions with V-VAR-005. The integration test verifies `water_depth`, `froude_number`, `vorticity`, selected `d50`, and `water_level_rate`; WP 3.2 plotting and complete CLI `run` wiring remain.
 
 ---
 
@@ -1147,7 +1149,8 @@ Every task key contains the subject (and the reference label for simulation diff
 * `MPLBACKEND=Agg`;
 * `OMP_NUM_THREADS=1` and `OPENBLAS_NUM_THREADS=1` (no nested parallelism, D31);
 * `HDF5_USE_FILE_LOCKING=FALSE` (reading NetCDF4 files on network drives; read-only access);
-* logging through a `QueueHandler` to the main process.
+* logging through a `QueueHandler` to the main process;
+* the task callable and its read-only worker context are sent once to each spawned worker during initialisation; individual task submissions then contain only the `ProcessTask`.
 
 **Sharding**: `--shard i/N` executes only the tasks whose **stable digest** satisfies `int.from_bytes(blake2b(task.key.encode()).digest()[:8], "big") % N == i`. Python's `hash()` is randomised per process and must not be used. Task keys are canonical strings (e.g. `process|r001|subrun=3`), frozen by tests. This is the building block for SLURM arrays.
 
@@ -1269,7 +1272,7 @@ The map settings form one configuration block, `MapViewConfig` (§10.1), used as
 
 ### 7.17 Inputs are read-only (D14)
 
-1. **Single write path**: every write goes through `store.atomic` with the **write guard**. It refuses any target outside an output root that contains `.d3dplot-output`. The marker is created only in a new or empty folder.
+1. **Single write path**: every write goes through `store.atomic` with the **write guard**. It refuses any target outside an output root that contains `.d3dplot-output`. The marker is created only in a new or empty folder. Cache, data, and configuration outputs use atomic replacement; the streaming `.dia` and `.log` files are deliberate exceptions because diagnostic progress and worker records must remain visible after a crash. They open exclusively through `guarded_text_stream` in `store.atomic` and use the same guard.
 2. Nothing is written next to inputs. Parsed copies of inputs live in `cache/inputs/`.
 3. Inputs are opened read-only: netCDF4 `mode="r"`, rasterio `"r"`, `open(…, "rb")`.
 4. `clean` only deletes inside marked roots and only files it recognises (a fingerprint attribute or a known name). It never follows links out of the root.
@@ -1300,6 +1303,7 @@ The map settings form one configuration block, `MapViewConfig` (§10.1), used as
   7. footer: end time, total duration, outcome, and `** INFO   : d3dplot finished` as the last line (or `** ERROR  : d3dplot stopped` with the reason).
   
   The file is written to the reference simulation's root, and a copy goes to every other simulation root involved, so each simulation's `d3dplot/` folder documents the work done on it. Messages are flushed line by line, so the file is useful even after a crash. The tool's own `.dia` files live in `d3dplot/logs/`, never in model output folders, so they cannot be confused with D-Flow FM's `.dia` files by the status detection (§7.11).
+  * **Implementation status (WP 2.3):** `validate` and `inspect` write guarded `.dia` copies with configuration provenance, validation findings, discovery/inspection outcomes, and cache state, plus a guarded reference `.log` for debug and worker records. `run_process_stage` connects task outcomes to diagnostics and the guarded atomic run-summary CSV writer. No CLI run command or model-value worker invokes this orchestrator yet; those are wired as processing stages are implemented.
 * **Provenance**:
   * `config/run_<timestamp>.yaml` and `config/latest.yaml`: the resolved configuration, with all defaults and the tool version;
   * the run summary at the end of the log and in `tables/run_<timestamp>.csv`;
@@ -1366,7 +1370,7 @@ Local read-only r209 validation completed in **99.283 s**: 195 sub-runs, 8,580 m
 * measurements → windows per (extent, time) (§7.15);
 * tiles per extent (optional).
 
-**Process** (inside the shared `ProcessTask` per simulation × sub-run, §7.13): for each requested time in that sub-run, the quantity engine (§7.9a) returns the global face array of each requested quantity and selection (raw or derived, e.g. `froude_number`, `vorticity`). M2D writes them to `data/map2d/<variable>/<selection>/<time>.nc`.
+**Process** (inside the shared `ProcessTask` per simulation × sub-run, §7.13): for each requested time in that sub-run, the quantity engine (§7.9a) returns the global face array of each requested quantity and selection (raw or derived, e.g. `froude_number`, `vorticity`). M2D writes them to `cache/data/map2d/<requested-variable>/<selection>/<time>.nc`.
 * Variables: `values(face)`.
 * Attributes: fingerprint, hydrodynamic and morphological time (ISO, with offset), sub-run, variable, units, selection.
 
@@ -1383,6 +1387,7 @@ Images = times × extents × colour-limit sets. Differences between simulations 
 * A variable missing in some sub-runs → error V-VAR-002, listing the sub-runs.
 * A requested time with a corrupt partition → `on_corrupt_output` (§7.6).
 * An extent with no faces → warning, and the extent is skipped.
+* A selected quantity retaining a non-singleton extra dimension → error V-VAR-005; map2d cache files contain one value per face.
 
 ### 8.2 `river_km_statistics` (Matlab SMB)
 
@@ -1731,7 +1736,7 @@ Codes are stable, documented, and tested one by one. **E** = error, **W** = warn
 | V-VAR-002 | E | Variable or required raw input missing in some sub-runs |
 | V-VAR-003 | E | Fraction or layer index out of range |
 | V-VAR-004 | E | Variable has dimensions other than those declared in its `VariableSpec` |
-| V-VAR-005 | E | After selection, a variable keeps more than one extra dimension (SMB allows one `component` dimension) |
+| V-VAR-005 | E | After selection, a variable keeps extra dimensions unsupported by the analysis (SMB allows one `component` dimension; map2d requires scalar face values) |
 | V-VAR-006 | E | A `line` quantity (section quantity, §7.9a) requested without a line sampling; in v1 always an error, because PRF comes later (D55) |
 | V-RKM-001 | E | River-km file unreadable or wrong format |
 | V-RKM-002 | E | Rijntakken tags without a `track`; or several generic branches without `branches` |
@@ -2099,7 +2104,7 @@ Per D65, use generated local cases for development, automated tests, and perform
 
 | WP | Content | Done when |
 |----|---------|-----------|
-| 3.1 | Process through the quantity engine (raw and derived quantities, selections, files §9.5) | Values equal the analytic fields, incl. `froude_number` and `vorticity` |
+| 3.1 | Process through the quantity engine (raw and derived quantities, selections, files §9.5) | Implemented and locally validated: the synthetic integration test verifies `water_depth`, `froude_number`, `vorticity`, selected `d50`, and `water_level_rate` cache values/metadata, plus V-VAR-005 for retained extra dimensions |
 | 3.2 | Plot: **common finalisation** (§7.14a: style, language, hooks with `hooks_mode`, metadata, writer), **shared views** (§7.14b: `MapView`, `MapDecorations`, `ExtentSet` incl. windows along a river-km file separate from the label file), templates, visible-face subsets, render modes, comparisons incl. regridding, naming | Image baselines; `--fresh-figures` identical; hook test (one added line per image); windows file ≠ labels file test |
 | 3.3 | Overlays: `.ldb` (HYDROLIB-core `PolyFile` + cache), river-km labels, background tiles (contextily + persistent cache, D42) | Shown in the baseline images; tiles test uses a pre-filled cache (no network in CI) |
 | 3.4 | Map measurements: catalogue, rasters (VRT, factor, mosaic, resampling), polygons (filters, id matching), differences, panel, `color_limits_from_measurements` | Synthetic catalogue cases (inside/outside tolerance, cm factor, shifted grid, shuffled polygons) correct |
@@ -2346,6 +2351,11 @@ The complete model-quantity catalog (all v1 raw and derived registry entries, al
 
 | Version | Content |
 |---------|---------|
+| v6.45 | Implemented and validated the WP 3.1 map2d quantity processor: guarded fingerprinted NetCDF outputs, quantity-choice diagnostics, scalar-dimension validation, and synthetic acceptance for raw/derived/selected quantities. Revalidated `run_process_stage` diagnostics and summaries; all 191 CI-eligible tests pass, along with strict MkDocs, targeted strict mypy, Ruff/format, and `git diff --check` |
+| v6.44 | Connected process-task execution to diagnostics and atomic run-summary CSV persistence through `run_process_stage`; process workers now receive the task callable once through the spawn initializer, avoiding repeated context serialization. Added integration coverage for contextual callables and diagnostic/summary output. Validation of this increment is pending |
+| v6.43 | Wired one-pass NetCDF fingerprint reads into cache-aware process-task planning with `OutputCacheRequest`/`read_output_cache_states`; matching outputs are omitted and stale outputs are scheduled. Added synthetic resumability coverage. All 189 CI-eligible tests, strict mypy, changed-file Ruff/format, and strict MkDocs pass. A five-run local benchmark over 100 temporary NetCDF outputs measured 0.198 s median for fingerprint indexing and 0.224 s for complete cache-state construction. Processing-stage data I/O and runner/summary integration remain |
+| v6.42 | Continued WP 2.3 on `feat/execution`: added one-pass NetCDF fingerprint indexing, unique task-key validation, a guarded debug `.log` with worker queue handlers, and atomic run-summary CSV persistence; validated cache reads, process logging, and summary output locally. Process-stage data I/O, cache-aware task planning, and end-to-end `run` integration remain |
+| v6.41 | Started WP 2.3 on `feat/execution`: added shared time-block planning, stable sharding, per-output cache decisions, resource-aware worker sizing, serial/spawn execution with task-failure isolation, worker logging-queue setup, run summaries, and guarded line-flushed `.dia` diagnostics for `validate` and `inspect`; added synthetic diagnostic coverage for duplicate times and corrupt-partition masking; process-stage integration and complete `.log`/summary persistence remain |
 | v6.40 | Completed the WP 2.2a quantity engine and local synthetic acceptance; 176 CI-eligible tests, strict mypy, strict docs, Ruff/format, and `git diff --check` pass locally; a one-time 20-quantity synthetic benchmark (median of three runs) improved from 0.067 s without shared caching to 0.046 s with it, reducing raw reads from 31 to 16 (1.47×); documented full-distribution grain-size scalars and the unverified `RhoSol` default; deferred `.dia` choice logging to WP 2.3 and real r209/Rijn acceptance per D65 |
 | v6.39 | Recorded D71: water-level rate uses map-output intervals, reads `mesh2d_s0` when available, falls back to the preceding map output, and is NaN at the first output |
 | v6.38 | Clarified that NaN in a Matlab time-selector vector selects all and positive Inf can accompany one-based indices; documented the equivalent `include_last` mapping |
