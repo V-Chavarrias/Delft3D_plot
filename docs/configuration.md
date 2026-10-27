@@ -203,6 +203,23 @@ defaults and effective analysis figure, reprocess, and replot settings. File
 writers are supplied by the caller so runtime outputs can go through the
 store's write guard.
 
+## Plotting and provenance replay
+
+`d3dplot plot project.yaml` renders configured map2d analyses from existing
+processed caches; it does not reopen model output. Each run stores its fully
+resolved configuration as `config/run_<timestamp>.yaml` and updates
+`config/latest.yaml` under the reference simulation's `d3dplot/` output folder.
+The command also accepts that output folder (or its `config/latest.yaml`) as
+input. Use repeated `--set path=value` options for temporary overrides, and
+`--simulation`, `--variable`, `--only`, or `--fresh-figures` to narrow or rebuild
+the plot stage.
+
+Each PNG records the resolved configuration and the identity needed to replay
+that figure. `d3dplot replot path/to/figure.png` regenerates only that map2d
+figure; it does not regenerate the other frames or movies. `replot` accepts the
+same repeated `--set` overrides. It reports `V-PLOT-005` when the PNG lacks
+valid d3dplot provenance or its recorded figure can no longer be reproduced.
+
 ## JSON Schema
 
 `d3dplot.config.dump_json_schema()` returns the JSON Schema for the project

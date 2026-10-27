@@ -153,8 +153,21 @@ def plot_map2d_group(
     reference: Map2DPlotSource | None = None,
     diagnostic: DiagnosticSink | None = None,
     fresh_figures: bool = False,
+    analysis_index: int = 0,
+    provenance_path: Path | None = None,
+    only_output_path: Path | None = None,
 ) -> Map2DPlotResult:
     """Plot one variable/comparison group without reopening model output."""
+    if isinstance(analysis_index, bool) or analysis_index < 0:
+        raise ValueError("analysis_index cannot be negative.")
+    target_output_path = (
+        only_output_path.resolve(strict=False) if only_output_path is not None else None
+    )
+    if provenance_path is not None and not provenance_path.is_file():
+        raise FileNotFoundError(
+            f"Resolved configuration does not exist: {provenance_path}"
+        )
+
     spec = get_variable_spec(variable)
     if spec.location.value != "face":
         raise Map2DPlotError(
@@ -456,7 +469,12 @@ def plot_map2d_group(
                         color_index,
                         window.index,
                     )
-                    if analysis.movie is not None:
+                    if (
+                        target_output_path is not None
+                        and output_path.resolve(strict=False) != target_output_path
+                    ):
+                        continue
+                    if analysis.movie is not None and target_output_path is None:
                         movie_frames.setdefault((window.index, color_index), []).append(
                             (output_time, output_path)
                         )
@@ -609,7 +627,22 @@ def plot_map2d_group(
                             f"plot|{output_subject}|{variable}|{comparison}|"
                             f"{time_text}|extent={window.index}|color={color_index}"
                         ),
+                        "d3dplot_replot_key": canonical_json(
+                            {
+                                "analysis_index": analysis_index,
+                                "simulation_label": source.label,
+                                "variable": variable,
+                                "comparison": comparison,
+                                "time": output_time.isoformat(),
+                                "extent_index": window.index,
+                                "color_index": color_index,
+                            }
+                        ),
                     }
+                    if provenance_path is not None:
+                        metadata["d3dplot_provenance"] = str(
+                            provenance_path.resolve(strict=False)
+                        )
                     snapshot = (
                         FigureSnapshot.capture(view.figure)
                         if hooks and figure_config.hooks_mode == "per_image"
@@ -636,7 +669,7 @@ def plot_map2d_group(
         if view is not None:
             close_figure(view.figure)
             view = None
-        if analysis.movie is not None:
+        if analysis.movie is not None and target_output_path is None:
             for (extent_index, color_index), ordered_frames in sorted(
                 movie_frames.items()
             ):

@@ -8,6 +8,7 @@ import os
 from collections.abc import Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from importlib import import_module
 from pathlib import Path
 from typing import Annotated, Literal, Protocol, cast
@@ -16,9 +17,23 @@ import typer
 import yaml
 
 from d3dplot import __version__
-from d3dplot.config.io import dump_config, dump_json_schema, load_config_data
+from d3dplot.analyses.map2d.plot import Map2DPlotError
+from d3dplot.config.io import (
+    apply_overrides,
+    dump_config,
+    dump_json_schema,
+    dump_resolved_config,
+    load_config_data,
+    write_resolved_config,
+)
 from d3dplot.config.project import ProjectConfig, SimulationConfig
 from d3dplot.execution.diagnostics import DiagnosticLog
+from d3dplot.plotting.stage import (
+    Map2DPlotStageResult,
+    ReplotTarget,
+    plot_map2d_stage,
+    read_replot_metadata,
+)
 from d3dplot.simulation.discover import (
     Simulation,
     discover_simulation,
@@ -36,7 +51,12 @@ from d3dplot.simulation.status import (
     detect_simulation_status,
     inspect_simulation_status,
 )
-from d3dplot.store import OutputLayout
+from d3dplot.store import (
+    OutputLayout,
+    OutputWriteError,
+    atomic_write_text,
+    initialize_output_root,
+)
 from d3dplot.validate import (
     ValidationIssue,
     ValidationReport,
@@ -567,6 +587,327 @@ def _make_diagnostic_log(
         forbidden_roots=config.output.forbidden_roots,
         configuration_path=configuration,
     )
+
+
+@app.command()
+def plot(
+    configuration: Annotated[
+        Path,
+        typer.Argument(
+            help="Resolved YAML configuration or a d3dplot output directory.",
+        ),
+    ],
+    set_values: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--set",
+            help="Override a configuration value (repeat for multiple overrides).",
+        ),
+    ] = None,
+    simulation_label: Annotated[
+        str | None,
+        typer.Option("--simulation", help="Plot only this configured simulation."),
+    ] = None,
+    variable: Annotated[
+        str | None,
+        typer.Option("--variable", help="Plot only this configured variable."),
+    ] = None,
+    analysis_name: Annotated[
+        str | None,
+        typer.Option("--only", help="Plot only this configured analysis."),
+    ] = None,
+    fresh_figures: Annotated[
+        bool,
+        typer.Option(
+            "--fresh-figures",
+            help="Rebuild figures instead of reusing matching PNGs.",
+        ),
+    ] = False,
+) -> None:
+    """Render figures from persisted analysis caches."""
+    if set_values is None:
+        set_values = []
+    try:
+        configuration_path = _resolve_plot_configuration(configuration)
+        config, report = validate_config(load_config_data(configuration_path))
+        if config is None or not report.is_valid:
+            _emit_report(report)
+            raise typer.Exit(code=1)
+        if set_values:
+            config = apply_overrides(config, set_values)
+            config, report = validate_config(config.model_dump(mode="json"))
+            if config is None or not report.is_valid:
+                _emit_report(report)
+                raise typer.Exit(code=1)
+        involved = (
+            list(config.simulations)
+            if simulation_label is None
+            else [item for item in config.simulations if item.label == simulation_label]
+        )
+        if simulation_label is not None and not involved:
+            raise ValueError(
+                f"Configured simulation label not found: {simulation_label}"
+            )
+        command_line_parts = ["d3dplot", "plot", str(configuration_path)]
+        for override in set_values:
+            command_line_parts.extend(("--set", override))
+        if simulation_label is not None:
+            command_line_parts.extend(("--simulation", simulation_label))
+        if variable is not None:
+            command_line_parts.extend(("--variable", variable))
+        if analysis_name is not None:
+            command_line_parts.extend(("--only", analysis_name))
+        if fresh_figures:
+            command_line_parts.append("--fresh-figures")
+        command_line = tuple(command_line_parts)
+        diagnostics = _make_diagnostic_log(
+            config,
+            involved,
+            configuration=configuration_path,
+            command_line=command_line,
+            output_is_valid=True,
+        )
+        result = _run_plot_stage(
+            config,
+            diagnostics=diagnostics,
+            simulation_label=simulation_label,
+            variable=variable,
+            analysis_name=analysis_name,
+            fresh_figures=fresh_figures,
+        )
+    except typer.Exit:
+        raise
+    except (
+        Map2DPlotError,
+        OSError,
+        OutputWriteError,
+        ValueError,
+        yaml.YAMLError,
+    ) as error:
+        typer.echo(f"Plot failed: {_format_cli_error(error)}", err=True)
+        raise typer.Exit(code=1) from error
+
+    typer.echo(
+        f"Plot complete: {len(result.output_paths)} figure(s) written, "
+        f"{len(result.reused_paths)} reused, "
+        f"{len(result.movie_paths)} movie(s) written, "
+        f"{len(result.reused_movie_paths)} reused."
+    )
+
+
+@app.command()
+def replot(
+    figure: Annotated[
+        Path,
+        typer.Argument(
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            help="PNG figure produced by d3dplot.",
+        ),
+    ],
+    set_values: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--set",
+            help="Override a configuration value (repeat for multiple overrides).",
+        ),
+    ] = None,
+) -> None:
+    """Regenerate one figure using its embedded configuration provenance."""
+    if set_values is None:
+        set_values = []
+    try:
+        figure_path = figure.expanduser().resolve(strict=True)
+        configuration_path, target = read_replot_metadata(figure_path)
+        config, report = validate_config(load_config_data(configuration_path))
+        if config is None or not report.is_valid:
+            _emit_report(report)
+            raise typer.Exit(code=1)
+        if set_values:
+            config = apply_overrides(config, set_values)
+            config, report = validate_config(config.model_dump(mode="json"))
+            if config is None or not report.is_valid:
+                _emit_report(report)
+                raise typer.Exit(code=1)
+        if target.simulation_label not in {item.label for item in config.simulations}:
+            raise ValueError(
+                "Figure metadata simulation is not present in the resolved config."
+            )
+        involved = [
+            item for item in config.simulations if item.label == target.simulation_label
+        ]
+        command_line = (
+            "d3dplot",
+            "replot",
+            str(figure_path),
+            *(argument for override in set_values for argument in ("--set", override)),
+        )
+        diagnostics = _make_diagnostic_log(
+            config,
+            involved,
+            configuration=configuration_path,
+            command_line=command_line,
+            output_is_valid=True,
+        )
+        _run_plot_stage(
+            config,
+            diagnostics=diagnostics,
+            target=target,
+            target_path=figure_path,
+            fresh_figures=True,
+        )
+    except typer.Exit:
+        raise
+    except (
+        Map2DPlotError,
+        OSError,
+        OutputWriteError,
+        ValueError,
+        yaml.YAMLError,
+    ) as error:
+        typer.echo(f"Replot failed: {_format_cli_error(error)}", err=True)
+        raise typer.Exit(code=1) from error
+
+    typer.echo(f"Replotted {figure_path}.")
+
+
+def _resolve_plot_configuration(configuration: Path) -> Path:
+    path = configuration.expanduser().resolve(strict=True)
+    if path.is_dir():
+        candidates: tuple[Path, ...] = (
+            path / "config" / "latest.yaml",
+            path / "latest.yaml",
+        )
+        if path.name.casefold() == "config":
+            candidates = (path / "latest.yaml",)
+        for candidate in candidates:
+            if candidate.is_file():
+                return candidate.resolve(strict=True)
+        raise ValueError(
+            f"No resolved config/latest.yaml found in output directory: {path}"
+        )
+    if not path.is_file():
+        raise ValueError(f"Configuration is not a regular file: {path}")
+    return path
+
+
+def _run_plot_stage(
+    config: ProjectConfig,
+    *,
+    diagnostics: DiagnosticLog | None,
+    simulation_label: str | None = None,
+    variable: str | None = None,
+    analysis_name: str | None = None,
+    fresh_figures: bool = False,
+    target: ReplotTarget | None = None,
+    target_path: Path | None = None,
+) -> Map2DPlotStageResult:
+    def execute(diagnostic_log: DiagnosticLog | None) -> Map2DPlotStageResult:
+        try:
+            replayable_config = _canonical_resolved_config(config)
+            provenance_path = _write_resolved_provenance(replayable_config)
+            if diagnostic_log is not None:
+                diagnostic_log.info(f"Resolved configuration saved: {provenance_path}.")
+            result = plot_map2d_stage(
+                replayable_config,
+                provenance_path=provenance_path,
+                analysis_name=analysis_name,
+                simulation_label=simulation_label,
+                variable=variable,
+                fresh_figures=fresh_figures,
+                target=target,
+                target_path=target_path,
+                diagnostic=(
+                    diagnostic_log.info if diagnostic_log is not None else None
+                ),
+            )
+            if diagnostic_log is not None:
+                diagnostic_log.info(
+                    "Plot summary: "
+                    f"written={len(result.output_paths)}; "
+                    f"reused={len(result.reused_paths)}; "
+                    f"movies_written={len(result.movie_paths)}; "
+                    f"movies_reused={len(result.reused_movie_paths)}."
+                )
+            return result
+        except (Map2DPlotError, OSError, OutputWriteError, ValueError) as error:
+            if diagnostic_log is not None:
+                diagnostic_log.error(f"Plot failed: {_format_cli_error(error)}")
+            raise
+
+    if diagnostics is None:
+        return execute(None)
+    with diagnostics as diagnostic_log:
+        return execute(diagnostic_log)
+
+
+def _canonical_resolved_config(config: ProjectConfig) -> ProjectConfig:
+    """Use the exact defaulted, absolute-path configuration that replay will load."""
+    data = yaml.safe_load(
+        dump_resolved_config(
+            config,
+            __version__,
+            base_dir=Path.cwd(),
+        )
+    )
+    if not isinstance(data, dict):
+        raise ValueError("Resolved configuration must contain a mapping.")
+    return ProjectConfig.model_validate(data)
+
+
+def _format_cli_error(error: Exception) -> str:
+    if isinstance(error, Map2DPlotError):
+        return f"{error.code}: {error}"
+    return str(error)
+
+
+def _write_resolved_provenance(config: ProjectConfig) -> Path:
+    reference = _reference_simulation_config(config)
+    layout = OutputLayout.for_simulation(reference, config.output)
+    guard = initialize_output_root(
+        layout,
+        tool_version=__version__,
+        forbidden_roots=config.output.forbidden_roots,
+    )
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
+    run_path = layout.config / f"run_{timestamp}.yaml"
+    latest_path = layout.config / "latest.yaml"
+
+    def writer(path: Path, content: str) -> None:
+        atomic_write_text(path, content, guard)
+
+    write_resolved_config(
+        config,
+        run_path,
+        writer,
+        __version__,
+        base_dir=Path.cwd(),
+    )
+    write_resolved_config(
+        config,
+        latest_path,
+        writer,
+        __version__,
+        base_dir=Path.cwd(),
+    )
+    return run_path.resolve(strict=True)
+
+
+def _reference_simulation_config(config: ProjectConfig) -> SimulationConfig:
+    reference = config.reference_simulation
+    if isinstance(reference, str):
+        for simulation in config.simulations:
+            if simulation.label == reference:
+                return simulation
+        raise ValueError(f"Configured reference simulation not found: {reference}")
+    try:
+        return config.simulations[reference]
+    except IndexError as error:
+        raise ValueError(
+            f"Configured reference simulation index is out of range: {reference}"
+        ) from error
 
 
 @app.command()

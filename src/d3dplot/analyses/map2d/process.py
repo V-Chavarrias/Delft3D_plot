@@ -398,12 +398,17 @@ def map2d_output_path(
 ) -> Path:
     """Return the stable data-cache path for one quantity selection and time."""
     variable = quote(request.requested_name.casefold(), safe="-_.")
-    selection = _selection_label(_request_variable_name(request), request)
+    selection = map2d_selection_label(request)
     timestamp = entry.time.astimezone(UTC)
     filename = timestamp.strftime("%Y%m%dT%H%M%S")
     if timestamp.microsecond:
         filename += f".{timestamp.microsecond:06d}"
     return layout.cache_data / "map2d" / variable / selection / f"{filename}.nc"
+
+
+def map2d_selection_label(request: QuantityRequest) -> str:
+    """Return the cache directory label for one configured quantity selection."""
+    return _selection_label(_request_variable_name(request), request)
 
 
 def _selection_label(variable: str, request: QuantityRequest) -> str:
@@ -570,4 +575,5 @@ __all__ = [
     "Map2DProcessResult",
     "Map2DTaskProcessor",
     "map2d_output_path",
+    "map2d_selection_label",
 ]

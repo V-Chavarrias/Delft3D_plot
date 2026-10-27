@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Sequence
-from pathlib import Path
+from datetime import date, datetime
+from os import name as os_name
+from pathlib import Path, PureWindowsPath
 from typing import Any, TypeAlias
 
 import yaml
@@ -94,12 +96,24 @@ def write_json_schema(path: str | Path, writer: TextWriter) -> None:
     writer(Path(path), dump_json_schema())
 
 
-def dump_resolved_config(config: ProjectConfig, tool_version: str) -> str:
+def dump_resolved_config(
+    config: ProjectConfig,
+    tool_version: str,
+    *,
+    base_dir: str | Path | None = None,
+) -> str:
     """Serialize all defaults and analysis-level effective figure settings."""
     if not tool_version or "\n" in tool_version or "\r" in tool_version:
         raise ValueError("tool_version must be a non-empty single-line value")
 
-    data: dict[str, Any] = config.model_dump(mode="json")
+    python_data = config.model_dump(mode="python")
+    data = _resolve_serialized_paths(
+        config.model_dump(mode="json"),
+        python_data,
+        Path.cwd() if base_dir is None else Path(base_dir),
+    )
+    if not isinstance(data, dict):
+        raise TypeError("Project configuration serialization must be a mapping.")
     analyses_data: list[dict[str, Any]] = data["analyses"]
     for index, analysis in enumerate(config.analyses):
         analyses_data[index]["figure"] = config.effective_figure(analysis).model_dump(
@@ -117,9 +131,54 @@ def write_resolved_config(
     path: str | Path,
     writer: TextWriter,
     tool_version: str,
+    *,
+    base_dir: str | Path | None = None,
 ) -> None:
     """Write the resolved YAML through the caller's guarded writer."""
-    writer(Path(path), dump_resolved_config(config, tool_version))
+    writer(
+        Path(path),
+        dump_resolved_config(config, tool_version, base_dir=base_dir),
+    )
+
+
+def _resolve_serialized_paths(
+    serialized: Any,
+    python_value: Any,
+    base_dir: Path,
+) -> Any:
+    if isinstance(python_value, Path):
+        path_text = str(python_value.expanduser())
+        if os_name != "nt" and PureWindowsPath(path_text).drive:
+            return path_text
+        path = Path(path_text)
+        if not path.is_absolute():
+            path = base_dir.expanduser() / path
+        return str(path.resolve(strict=False))
+
+    if isinstance(python_value, datetime):
+        return python_value.isoformat()
+    if isinstance(python_value, date):
+        return python_value.isoformat()
+
+    if isinstance(python_value, dict) and isinstance(serialized, dict):
+        return {
+            key: _resolve_serialized_paths(
+                serialized[key],
+                value,
+                base_dir,
+            )
+            for key, value in python_value.items()
+        }
+
+    if isinstance(python_value, (list, tuple)) and isinstance(serialized, list):
+        if len(python_value) != len(serialized):
+            raise ValueError("Configuration serialization changed sequence length.")
+        return [
+            _resolve_serialized_paths(encoded, value, base_dir)
+            for encoded, value in zip(serialized, python_value, strict=True)
+        ]
+
+    return serialized
 
 
 def _parse_override_path(path: str) -> list[str | int]:

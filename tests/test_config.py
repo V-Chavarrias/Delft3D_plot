@@ -22,6 +22,7 @@ from d3dplot.config import (
     config_json_schema,
     dump_config,
     dump_json_config,
+    dump_resolved_config,
     load_config,
     load_config_data,
     write_resolved_config,
@@ -329,6 +330,16 @@ def test_resolved_config_writer_uses_injected_writer() -> None:
     assert resolved.effective_reprocess(
         resolved_analysis
     ) == config.effective_reprocess(config.analyses[0])
+
+
+@pytest.mark.unit
+def test_resolved_config_makes_relative_paths_replayable(tmp_path: Path) -> None:
+    config = ProjectConfig.model_validate(_minimal_data())
+
+    text = dump_resolved_config(config, "0.1.0", base_dir=tmp_path)
+    resolved = yaml.safe_load(text)
+
+    assert Path(resolved["simulations"][0]["path"]) == (tmp_path / "model").resolve()
 
 
 @pytest.mark.unit
