@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from importlib import import_module
-from typing import Any
+from typing import Any, Literal
 
 import matplotlib
 
@@ -38,6 +38,9 @@ class MapView:
     axes: Axes
     colorbar: Colorbar
     mappable: ScalarMappable
+    measurement_axes: Axes | None
+    measurement_artist: Any
+    measurement_kind: str | None
     window: ExtentWindow
     grid: UgridGrid
     render_mode: str
@@ -61,6 +64,7 @@ class MapView:
         colorbar_label: str,
         initial_limits: tuple[float | None, float | None] | None = None,
         decorations: MapDecorations | None = None,
+        measurement_panel: bool = False,
     ) -> MapView:
         if window.faces.size == 0:
             raise MapViewError(f"Extent {window.name!r} contains no visible faces.")
@@ -105,8 +109,21 @@ class MapView:
                 image_values,
                 image_extent,
             )
-        figure, axes = plt.subplots()
-        figure.subplots_adjust(left=0.08, right=0.86, bottom=0.08, top=0.92)
+        figure = plt.figure()
+        if measurement_panel:
+            axes = figure.add_subplot(1, 2, 1)
+            measurement_axes: Axes | None = figure.add_subplot(1, 2, 2)
+            figure.subplots_adjust(
+                left=0.06,
+                right=0.86,
+                bottom=0.08,
+                top=0.92,
+                wspace=0.12,
+            )
+        else:
+            axes = figure.add_subplot(1, 1, 1)
+            measurement_axes = None
+            figure.subplots_adjust(left=0.08, right=0.86, bottom=0.08, top=0.92)
         axes.set_xlim(window.bounds[0], window.bounds[1])
         axes.set_ylim(window.bounds[2], window.bounds[3])
         if decorations is not None:
@@ -153,13 +170,19 @@ class MapView:
         axes.set_xlim(window.bounds[0], window.bounds[1])
         axes.set_ylim(window.bounds[2], window.bounds[3])
         axes.set_aspect(map_config.aspect)
-        colorbar = figure.colorbar(mappable, ax=axes)
+        colorbar_axes = (
+            (axes, measurement_axes) if measurement_axes is not None else axes
+        )
+        colorbar = figure.colorbar(mappable, ax=colorbar_axes)
         colorbar.set_label(colorbar_label)
         view = cls(
             figure=figure,
             axes=axes,
             colorbar=colorbar,
             mappable=mappable,
+            measurement_axes=measurement_axes,
+            measurement_artist=None,
+            measurement_kind=None,
             window=window,
             grid=grid,
             render_mode=render_mode,
@@ -172,6 +195,80 @@ class MapView:
         )
         view.update(values, limits=initial_limits)
         return view
+
+    def update_measurements(
+        self,
+        measurement: Any,
+        *,
+        title: str,
+        limits: tuple[float | None, float | None] | None,
+        edge_color: str,
+        aspect: Literal["auto", "equal"],
+    ) -> None:
+        """Update the measurement panel without recreating the model map."""
+        axes = self.measurement_axes
+        if axes is None:
+            if measurement is not None:
+                raise MapViewError("Measurement data was provided without a panel.")
+            return
+        if measurement is None:
+            if self.measurement_artist is not None:
+                self.measurement_artist.remove()
+                self.measurement_artist = None
+                self.measurement_kind = None
+            axes.set_title(title)
+            axes.set_xlim(self.window.bounds[0], self.window.bounds[1])
+            axes.set_ylim(self.window.bounds[2], self.window.bounds[3])
+            axes.set_aspect(aspect)
+            return
+
+        kind = measurement.kind
+        if self.measurement_kind != kind:
+            if self.measurement_artist is not None:
+                self.measurement_artist.remove()
+            self.measurement_artist = None
+            self.measurement_kind = kind
+        if kind == "raster":
+            image_extent = (
+                measurement.bounds[0],
+                measurement.bounds[2],
+                measurement.bounds[1],
+                measurement.bounds[3],
+            )
+            if not isinstance(self.measurement_artist, AxesImage):
+                self.measurement_artist = axes.imshow(
+                    measurement.values,
+                    extent=image_extent,
+                    origin="upper",
+                    interpolation="nearest",
+                    cmap=self.mappable.get_cmap(),
+                )
+            else:
+                self.measurement_artist.set_data(measurement.values)
+                self.measurement_artist.set_extent(image_extent)
+            self.measurement_artist.set_clim(
+                *_resolved_limits(measurement.values, limits)
+            )
+        elif kind == "polygons":
+            polygons, values = _measurement_polygons(measurement)
+            if not isinstance(self.measurement_artist, PolyCollection):
+                self.measurement_artist = PolyCollection(
+                    polygons,
+                    cmap=self.mappable.get_cmap(),
+                    edgecolors=edge_color,
+                    linewidths=0.4,
+                )
+                axes.add_collection(self.measurement_artist)
+            else:
+                self.measurement_artist.set_verts(polygons)
+            self.measurement_artist.set_array(values)
+            self.measurement_artist.set_clim(*_resolved_limits(values, limits))
+        else:
+            raise MapViewError(f"Unknown measurement render kind {kind!r}.")
+        axes.set_title(title)
+        axes.set_xlim(self.window.bounds[0], self.window.bounds[1])
+        axes.set_ylim(self.window.bounds[2], self.window.bounds[3])
+        axes.set_aspect(aspect)
 
     def update(
         self,
@@ -218,6 +315,37 @@ def _face_polygons(grid: UgridGrid, face_indices: _Array) -> list[_Array]:
             raise MapViewError(f"Grid face {face_index} has invalid node connectivity.")
         polygons.append(nodes[node_indices])
     return polygons
+
+
+def _measurement_polygons(measurement: Any) -> tuple[list[_Array], _Array]:
+    polygons: list[_Array] = []
+    values: list[float] = []
+    for geometry, value in zip(
+        measurement.polygons,
+        measurement.values,
+        strict=True,
+    ):
+        for polygon in _polygon_parts(geometry):
+            coordinates = np.asarray(polygon.exterior.coords, dtype=np.float64)
+            if coordinates.shape[0] < 4:
+                continue
+            polygons.append(coordinates)
+            values.append(float(value))
+    return polygons, np.asarray(values, dtype=np.float64)
+
+
+def _polygon_parts(geometry: Any) -> tuple[Any, ...]:
+    if geometry is None or geometry.is_empty:
+        return ()
+    if geometry.geom_type == "Polygon":
+        return (geometry,)
+    if geometry.geom_type == "MultiPolygon":
+        return tuple(geometry.geoms)
+    if geometry.geom_type == "GeometryCollection":
+        return tuple(
+            polygon for part in geometry.geoms for polygon in _polygon_parts(part)
+        )
+    return ()
 
 
 def _render_mode(

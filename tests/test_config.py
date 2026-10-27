@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,8 @@ from d3dplot.config import (
     load_config_data,
     write_resolved_config,
 )
+from d3dplot.config.measurements import MapMeasurementsConfig
+from d3dplot.config.project import PathsConfig
 from d3dplot.config.selections import IndicesSelection, TimeRange, TimesConfig
 
 
@@ -255,6 +258,25 @@ def test_fixed_utc_offset_validation() -> None:
     data["time_zone"] = "+14:01"
     with pytest.raises(ValidationError):
         ProjectConfig.model_validate(data)
+
+
+@pytest.mark.unit
+def test_map_measurement_time_zone_and_path_resolution(tmp_path: Path) -> None:
+    measurement = MapMeasurementsConfig.model_validate(
+        {"catalogue": "measurements.csv", "time_zone": "+01:30"}
+    )
+    assert measurement.time_zone == "+01:30"
+
+    paths = PathsConfig()
+    relative = paths.resolve_path("measurements.csv", base_dir=tmp_path)
+    assert relative == (tmp_path / "measurements.csv").resolve()
+
+    if os.name == "nt":
+        mapped = paths.resolve_path("/p/measurements/file.tif")
+        assert mapped == Path(r"P:\measurements\file.tif").resolve(strict=False)
+    else:
+        mapped = paths.resolve_path(r"P:\measurements\file.tif")
+        assert mapped == Path("/p/measurements/file.tif")
 
 
 @pytest.mark.unit

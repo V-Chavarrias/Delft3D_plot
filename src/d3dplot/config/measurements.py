@@ -47,6 +47,10 @@ class MapMeasurementsConfig(ConfigModel):
     """Measurements overlaid on a map analysis."""
 
     catalogue: Path = Field(description="CSV or YAML measurement catalogue.")
+    time_zone: FixedUTCOffset | None = Field(
+        default=None,
+        description="Fixed UTC offset for naive catalogue timestamps.",
+    )
     time_tolerance: Duration = Field(
         default=timedelta(days=30),
         description="Maximum time difference between model and measurement data.",

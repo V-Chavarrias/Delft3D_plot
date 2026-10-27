@@ -27,6 +27,17 @@ from d3dplot.execution.cache import (
     read_cache_fingerprints,
 )
 from d3dplot.labels import label
+from d3dplot.measurements.catalogue import (
+    MapMeasurementCatalogue,
+    MapMeasurementError,
+    inspect_map_catalogue,
+)
+from d3dplot.measurements.map2d import (
+    PreparedMapMeasurement,
+    measurement_range,
+    prepare_map_measurement,
+    scale_map_measurement,
+)
 from d3dplot.plotting.finalize import (
     FigureContext,
     FigureHookError,
@@ -103,6 +114,7 @@ class Map2DPlotSource:
     guard: OutputWriteGuard
     grid_path: Path
     frames: tuple[Map2DPlotFrame, ...]
+    model_time_zone: str | None = None
 
     def __post_init__(self) -> None:
         if not self.label or self.label != self.label.strip():
@@ -166,6 +178,18 @@ def plot_map2d_group(
     )
     output_layout = target_source.layout
     output_guard = target_source.guard
+    measurement_settings = next(
+        (
+            settings
+            for key, settings in analysis.measurements.items()
+            if key.casefold() == variable.casefold()
+        ),
+        None,
+    )
+    show_measurements = measurement_settings is not None and comparison in {
+        "value",
+        "difference_time",
+    }
     messages: list[str] = []
     written: list[Path] = []
     reused: list[Path] = []
@@ -179,6 +203,11 @@ def plot_map2d_group(
     reference_dataset: UgridDataset | None = None
     view: MapView | None = None
     try:
+        if measurement_settings is not None and not show_measurements:
+            report(
+                f"Measurements for {variable!r} are omitted for simulation "
+                f"comparison {comparison!r}."
+            )
         current_dataset = open_ugrid(source.grid_path)
         reference_dataset = (
             current_dataset
@@ -187,6 +216,7 @@ def plot_map2d_group(
         )
         current_grid = current_dataset.grid
         target_grid = reference_dataset.grid
+        model_crs = _model_crs(target_grid, project.crs)
         current_grid_fingerprint = _grid_fingerprint(source.grid_path)
         target_grid_fingerprint = _grid_fingerprint(target_source.grid_path)
         extent_set = ExtentSet.create(
@@ -225,6 +255,41 @@ def plot_map2d_group(
         )
         color_limits = _color_limit_sets(analysis, variable, comparison)
         style_hash = _config_fingerprint(project, analysis)
+        measurement_catalogue: MapMeasurementCatalogue | None = None
+        if show_measurements and measurement_settings is not None:
+            time_zone = (
+                measurement_settings.time_zone
+                or source.model_time_zone
+                or project.time_zone
+            )
+            measurement_catalogue = inspect_map_catalogue(
+                measurement_settings.catalogue,
+                project.paths,
+                output_layout,
+                output_guard,
+                time_zone=time_zone,
+                diagnostic=report,
+            )
+        measurement_baselines: dict[int, PreparedMapMeasurement | None] = {}
+        if (
+            show_measurements
+            and comparison == "difference_time"
+            and measurement_catalogue is not None
+            and measurement_settings is not None
+        ):
+            for window in extent_set.windows:
+                if window.faces.size == 0:
+                    continue
+                measurement_baselines[window.index] = prepare_map_measurement(
+                    measurement_catalogue,
+                    measurement_settings,
+                    source.frames[0].time,
+                    window.bounds,
+                    model_crs,
+                    output_layout,
+                    output_guard,
+                    diagnostic=report,
+                )
 
         first_current: _FloatArray | None = None
         first_current_fingerprint: str | None = None
@@ -315,12 +380,65 @@ def plot_map2d_group(
                         "faces; it was skipped."
                     )
                     continue
+                measurement: PreparedMapMeasurement | None = None
+                if (
+                    show_measurements
+                    and measurement_catalogue is not None
+                    and measurement_settings is not None
+                ):
+                    if comparison == "difference_time":
+                        baseline = measurement_baselines.get(window.index)
+                        if baseline is None:
+                            report(
+                                f"V-MEA-004: measurement difference omitted at "
+                                f"{output_time.isoformat()} because no baseline "
+                                "measurement was selected."
+                            )
+                        else:
+                            measurement = prepare_map_measurement(
+                                measurement_catalogue,
+                                measurement_settings,
+                                output_time,
+                                window.bounds,
+                                model_crs,
+                                output_layout,
+                                output_guard,
+                                comparison="difference_time",
+                                baseline=baseline,
+                                diagnostic=report,
+                            )
+                    else:
+                        measurement = prepare_map_measurement(
+                            measurement_catalogue,
+                            measurement_settings,
+                            output_time,
+                            window.bounds,
+                            model_crs,
+                            output_layout,
+                            output_guard,
+                            diagnostic=report,
+                        )
+                scaled_measurement = scale_map_measurement(measurement, scale)
+                measurement_limits = measurement_range(measurement)
                 for color_index, configured_limits in enumerate(color_limits):
                     limits = _limits_for_time(
                         configured_limits,
                         analysis.map.color_limits_mode,
                         output_time,
                     )
+                    if (
+                        measurement_settings is not None
+                        and measurement_settings.color_limits_from_measurements
+                        and measurement_limits is not None
+                    ):
+                        if limits is None:
+                            limits = measurement_limits
+                        else:
+                            lower, upper = limits
+                            limits = (
+                                measurement_limits[0] if lower is None else lower,
+                                measurement_limits[1] if upper is None else upper,
+                            )
                     limits = _scaled_limits(limits, scale)
                     output_path = _figure_path(
                         output_layout,
@@ -347,6 +465,8 @@ def plot_map2d_group(
                         data_fingerprints.append(first_reference_fingerprint)
                     if regrid_fingerprint is not None:
                         data_fingerprints.append(regrid_fingerprint)
+                    if measurement is not None:
+                        data_fingerprints.append(measurement.fingerprint)
                     fingerprint = fingerprint_artifact(
                         kind="figure",
                         schema_version=CACHE_SCHEMA_VERSION,
@@ -363,6 +483,11 @@ def plot_map2d_group(
                             "subject": output_subject,
                             "variable": variable,
                             "color_limits": limits,
+                            "measurement_fingerprint": (
+                                measurement.fingerprint
+                                if measurement is not None
+                                else None
+                            ),
                         },
                         inputs=(
                             style_hash,
@@ -407,9 +532,42 @@ def plot_map2d_group(
                             colorbar_label=unit_label,
                             initial_limits=limits,
                             decorations=decorations,
+                            measurement_panel=show_measurements,
                         )
                     view.update(map_values, limits=limits)
                     view.axes.set_title(title)
+                    measurement_label = label(
+                        "measurement",
+                        project.language,
+                        "quantity",
+                    )
+                    measurement_title = measurement_label.text
+                    if scaled_measurement is not None:
+                        measurement_title = (
+                            f"{measurement_label.text} — "
+                            f"{scaled_measurement.mean_time.isoformat()}"
+                        )
+                    panel_limits = limits
+                    if panel_limits is None:
+                        panel_clim = view.mappable.get_clim()
+                        panel_limits = (float(panel_clim[0]), float(panel_clim[1]))
+                    view.update_measurements(
+                        scaled_measurement,
+                        title=measurement_title,
+                        limits=panel_limits,
+                        edge_color=(
+                            measurement_settings.edge_color
+                            if measurement_settings is not None
+                            else "black"
+                        ),
+                        aspect=analysis.map.aspect,
+                    )
+                    axes_context: dict[str, Any] = {
+                        "model": view.axes,
+                        "colorbar": view.colorbar.ax,
+                    }
+                    if view.measurement_axes is not None:
+                        axes_context["measurements"] = view.measurement_axes
                     context = FigureContext(
                         analysis="map2d",
                         view="map",
@@ -418,12 +576,13 @@ def plot_map2d_group(
                         simulation=output_subject,
                         time=output_time,
                         extent=window.bounds,
-                        axes={"model": view.axes, "colorbar": view.colorbar.ax},
+                        axes=axes_context,
                         data={
                             "values": map_values,
                             "face_indices": window.faces,
                             "river_km": decorations.visible_river_km(window.bounds),
                             "time": output_time,
+                            "measurements": scaled_measurement,
                         },
                         labels={
                             "quantity": quantity_label.quantity,
@@ -470,6 +629,8 @@ def plot_map2d_group(
     except MapDecorationsError as error:
         raise Map2DPlotError(error.code, str(error)) from error
     except ExtentSetError as error:
+        raise Map2DPlotError(error.code, str(error)) from error
+    except MapMeasurementError as error:
         raise Map2DPlotError(error.code, str(error)) from error
     except (CacheFingerprintReadError, MapViewError) as error:
         raise Map2DPlotError("V-PLOT-002", str(error)) from error
@@ -746,6 +907,14 @@ def _colormap_for(analysis: Map2DConfig, variable: str) -> str:
         ),
         "viridis",
     )
+
+
+def _model_crs(grid: Any, configured_crs: str | None) -> str | None:
+    grid_crs = getattr(grid, "crs", None)
+    if grid_crs is None or str(grid_crs).casefold() in {"epsg:0", "0"}:
+        return configured_crs
+    to_string = getattr(grid_crs, "to_string", None)
+    return str(to_string()) if callable(to_string) else str(grid_crs)
 
 
 def _figure_path(

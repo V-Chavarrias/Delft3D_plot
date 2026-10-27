@@ -10,9 +10,11 @@ from typing import Any
 import netCDF4
 import numpy as np
 import pytest
+import rasterio
 import xarray as xr
 import xugrid as xu
 from PIL import Image
+from rasterio.transform import from_origin
 
 from _input_snapshot import assert_inputs_unchanged, snapshot_inputs
 from d3dplot import __version__
@@ -39,6 +41,8 @@ _HOOK_AXES_COUNTS: list[int] = []
 _HOOK_MAPPABLE_ZORDERS: list[float] = []
 _HOOK_RIVER_LABELS: list[tuple[str, ...]] = []
 _HOOK_MAP_TEXTS: list[tuple[str, ...]] = []
+_HOOK_MEASUREMENT_AXES: list[bool] = []
+_HOOK_SHARED_MEASUREMENT_LIMITS: list[tuple[float, float, float, float] | None] = []
 
 
 def _capture_plot_state(figure: Any, context: Any) -> None:
@@ -62,6 +66,34 @@ def _capture_map_texts(figure: Any, context: Any) -> None:
     _HOOK_MAP_TEXTS.append(tuple(text.get_text() for text in axes.texts))
 
 
+def _capture_measurement_axes(figure: Any, context: Any) -> None:
+    has_measurements = "measurements" in context.axes
+    _HOOK_MEASUREMENT_AXES.append(has_measurements)
+    if not has_measurements:
+        _HOOK_SHARED_MEASUREMENT_LIMITS.append(None)
+        return
+    model_axes = context.axes["model"]
+    measurement_axes = context.axes["measurements"]
+    model_mappable = (
+        model_axes.collections[0] if model_axes.collections else model_axes.images[0]
+    )
+    measurement_mappable = (
+        measurement_axes.collections[0]
+        if measurement_axes.collections
+        else measurement_axes.images[0]
+    )
+    model_limits = model_mappable.get_clim()
+    measurement_limits = measurement_mappable.get_clim()
+    _HOOK_SHARED_MEASUREMENT_LIMITS.append(
+        (
+            float(model_limits[0]),
+            float(model_limits[1]),
+            float(measurement_limits[0]),
+            float(measurement_limits[1]),
+        )
+    )
+
+
 def _project_and_source(
     tmp_path: Path,
     *,
@@ -70,6 +102,7 @@ def _project_and_source(
     map_overrides: dict[str, Any] | None = None,
     figure_overrides: dict[str, Any] | None = None,
     project_overrides: dict[str, Any] | None = None,
+    measurement_overrides: dict[str, Any] | None = None,
     hooks: list[str] | None = None,
     with_hook: bool = False,
     grid_faces: int = 2,
@@ -97,6 +130,8 @@ def _project_and_source(
         "variables": ["water_depth"],
         "map": map_config,
     }
+    if measurement_overrides is not None:
+        analysis_config["measurements"] = measurement_overrides
     if figure_overrides is not None:
         analysis_config["figure"] = figure_overrides
     project_data: dict[str, Any] = {
@@ -604,3 +639,90 @@ def test_map2d_invalid_overlay_inputs_have_stable_validation_codes(
     with pytest.raises(Map2DPlotError) as error:
         plot_map2d_group(project, analysis, source, "water_depth", "value")
     assert error.value.code == "V-RKM-001"
+
+
+@pytest.mark.unit
+def test_measurement_panel_is_hook_visible_and_omitted_for_simulation_differences(
+    tmp_path: Path,
+) -> None:
+    _HOOK_MEASUREMENT_AXES.clear()
+    _HOOK_SHARED_MEASUREMENT_LIMITS.clear()
+    measurement_dir = tmp_path / "measurement-input"
+    measurement_dir.mkdir()
+    raster_path = measurement_dir / "measurements.tif"
+    with rasterio.open(
+        raster_path,
+        "w",
+        driver="GTiff",
+        height=1,
+        width=2,
+        count=1,
+        dtype="float32",
+        crs="EPSG:28992",
+        transform=from_origin(0.0, 1.0, 1.0, 1.0),
+        nodata=-9999.0,
+    ) as dataset:
+        dataset.write(np.array([[4.0, 8.0]], dtype=np.float32), 1)
+    catalogue = measurement_dir / "measurements.csv"
+    catalogue.write_text(
+        "time,file,factor\n2021-01-01T00:00:00Z,measurements.tif,1\n",
+        encoding="utf-8",
+    )
+    project, analysis, source = _project_and_source(
+        tmp_path / "plot",
+        values=((1.0, 2.0), (3.0, 4.0)),
+        project_overrides={"crs": "EPSG:28992"},
+        measurement_overrides={
+            "water_depth": {
+                "catalogue": catalogue,
+                "time_tolerance": "2 days",
+                "spatial_margin_m": 0,
+                "color_limits_from_measurements": True,
+            }
+        },
+        hooks=[f"{__name__}:_capture_measurement_axes"],
+    )
+
+    measured = plot_map2d_group(
+        project,
+        analysis,
+        source,
+        "water_depth",
+        "value",
+        fresh_figures=True,
+    )
+    assert len(measured.output_paths) == 2
+    assert _HOOK_MEASUREMENT_AXES == [True, True]
+    assert _HOOK_SHARED_MEASUREMENT_LIMITS == [
+        (4.0, 8.0, 4.0, 8.0),
+        (4.0, 8.0, 4.0, 8.0),
+    ]
+    first_pixels = {path: _pixels(path) for path in measured.output_paths}
+    measured_again = plot_map2d_group(
+        project,
+        analysis,
+        source,
+        "water_depth",
+        "value",
+        fresh_figures=True,
+    )
+    assert measured_again.output_paths == measured.output_paths
+    for path in measured_again.output_paths:
+        np.testing.assert_array_equal(_pixels(path), first_pixels[path])
+
+    simulation_difference = plot_map2d_group(
+        project,
+        analysis,
+        source,
+        "water_depth",
+        "difference_simulation",
+        reference=source,
+        fresh_figures=True,
+    )
+    assert len(simulation_difference.output_paths) == 2
+    assert _HOOK_MEASUREMENT_AXES == [True, True, True, True, False, False]
+    assert _HOOK_SHARED_MEASUREMENT_LIMITS[-2:] == [None, None]
+    assert any(
+        "omitted for simulation comparison" in message
+        for message in (simulation_difference.messages)
+    )

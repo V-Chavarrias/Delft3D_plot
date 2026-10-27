@@ -79,6 +79,46 @@ fields explicitly set there.
 `labels.extra_dictionaries` lists additional translation CSVs. See
 [Labels](./labels.md) for their format and the label-building API.
 
+## Map measurements
+
+Map2d measurements are configured per variable. CSV catalogues require `time`,
+`file`, and `factor` columns; YAML catalogues use the same fields and may also
+specify `type`, `crs`, and `value_field`. Catalogue entries accept GeoTIFF,
+VRT, and CF raster NetCDF files, or polygon Shapefiles and GeoPackages.
+Relative catalogue paths resolve from the working directory, while relative
+source-file paths resolve from the catalogue's directory. `paths.mappings`
+translates configured paths when moving between Windows and Linux.
+
+```yaml
+analyses:
+  - analysis: map2d
+    variables: [bed_level]
+    measurements:
+      bed_level:
+        catalogue: ./measurements/bed_level.csv
+        time_zone: "+01:00"
+        time_tolerance: 30 days
+        spatial_margin_m: 1000
+        mosaic: first
+        color_limits_from_measurements: true
+        polygon_filters:
+          preset: rws_vakken
+```
+
+Naive catalogue timestamps use `measurements.<variable>.time_zone`, then the
+model/project fixed UTC offset, and otherwise UTC. A file's values are
+multiplied by its catalogue `factor`. Raster tiles are aligned with nearest
+neighbour resampling and mosaicked in catalogue order; `mosaic` may be `first`,
+`last`, or `mean`. `time_tolerance` and `spatial_margin_m` select the files for
+each plotted time and extent. Polygon values can be filtered with explicit
+fields or the `rws_vakken` preset. Time differences match polygons by ID, then
+geometry, then record order with a count check; simulation differences do not
+display measurements. Measurements appear in a side-by-side panel sharing the
+model's colormap and limits. `color_limits_from_measurements` uses measurement
+values for automatically selected limits. Set `project.crs` when the model grid
+does not provide a usable CRS; measurement plotting does not infer the map CRS
+from the measurement files.
+
 ## Defaults and supported analyses
 
 If omitted, `times.at` defaults to `all`, `times.axis` to `hydrodynamic`, and

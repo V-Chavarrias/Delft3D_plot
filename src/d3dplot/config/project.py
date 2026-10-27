@@ -3,8 +3,9 @@
 
 from __future__ import annotations
 
+import os
 import re
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Annotated, Literal, TypeAlias
 
 from pydantic import Field, PositiveInt, StrictInt, StrictStr, field_validator
@@ -61,6 +62,52 @@ class PathsConfig(ConfigModel):
         default_factory=lambda: {"p:\\": "/p/"},
         description="Case-insensitive path prefixes mapped between operating systems.",
     )
+
+    def resolve_path(
+        self,
+        value: str | Path,
+        *,
+        base_dir: str | Path | None = None,
+    ) -> Path:
+        """Resolve a configured path, applying mappings for the other OS."""
+        raw_path = str(value)
+        if not raw_path:
+            raise ValueError("configured path must not be empty")
+
+        windows_drive = PureWindowsPath(raw_path).drive
+        mappings = list(self.mappings.items())
+        if os.name == "nt":
+            mappings = [(target, source) for source, target in mappings]
+
+        normalized_path = raw_path.replace("\\", "/")
+        case_insensitive = os.name == "nt" or bool(windows_drive)
+        for source, target in sorted(
+            mappings,
+            key=lambda pair: len(pair[0]),
+            reverse=True,
+        ):
+            normalized_source = source.replace("\\", "/")
+            if not normalized_source.endswith("/"):
+                normalized_source += "/"
+            source_key = (
+                normalized_source.casefold() if case_insensitive else normalized_source
+            )
+            path_key = (
+                normalized_path.casefold() if case_insensitive else normalized_path
+            )
+            if not path_key.startswith(source_key):
+                continue
+            suffix = normalized_path[len(normalized_source) :]
+            target_path = Path(target).expanduser()
+            suffix_parts = tuple(part for part in suffix.split("/") if part)
+            return target_path.joinpath(*suffix_parts).resolve(strict=False)
+
+        if windows_drive and os.name != "nt":
+            raise ValueError(f"Windows path {raw_path!r} has no matching path mapping")
+        path = Path(raw_path).expanduser()
+        if not path.is_absolute():
+            path = Path(base_dir).expanduser() / path if base_dir is not None else path
+        return path.resolve(strict=False)
 
 
 class SlurmConfig(ConfigModel):
