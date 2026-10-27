@@ -1,6 +1,6 @@
 # Delft3D_plot (Python): Architecture and Implementation Plan
 
-Status: **v6.45; WP 1.10–1.11 and WP 2.1–2.2a are implemented locally. WP 2.2a's quantity engine and synthetic acceptance are complete and validated on `feat/quantity-engine` (commit `e890c45`): 19 raw and 23 derived specifications, read-once dependency caching, global grid geometry, and the 2D v1 formulas. WP 2.3 execution foundations are implemented and validated locally on `feat/execution`: the shared process-task planner, deterministic BLAKE2b sharding, cache decisions wired to one-pass NetCDF fingerprint reads, resource-aware worker selection, serial/spawn executors, guarded line-flushed `.dia`/`.log` diagnostics, atomic run-summary CSV persistence, and `run_process_stage` orchestration. WP 3.1 map2d quantity processing is implemented and validated on synthetic data; its tests cover water depth, Froude number, vorticity, selected d50, water-level rate, NetCDF cache metadata, and V-VAR-005 for retained vector components. All 191 CI-eligible tests pass; Ruff, formatting, targeted strict mypy, strict MkDocs, and `git diff --check` pass. End-to-end CLI `run` integration and map2d plotting remain. CLI `validate` and `inspect` emit diagnostics. P-drive r209/Rijn acceptance for WP 2.1–2.2a remains deferred until local development is complete (D65). D66 resolves unset explicit-time tolerance as unbounded nearest-output matching; D67 places edge merge-plan support in WP 2.2; D68 records the Matlab-compatible velocity-direction and grain-size percentile conventions; D69 preserves Matlab time selectors with one-based indices and vector sentinels; D70 corrects `ba_mor` to thresholded active sediment area; D71 confirms map-time intervals and the previous-output fallback for water-level rate.** The CLI provides read-only `info`/`variables`, schema output, configuration/variable validation with guarded grid, merge-plan, and time-quality cache inspection, a dedicated `inspect` command, and a no-overwrite starter configuration. The package foundations, quantity engine, configuration system, validation framework, synthetic cases, simulation inspection, execution foundations, and map2d processing are in place; plotting remains. See [the synthetic case generator](https://github.com/V-Chavarrias/Delft3D_plot/blob/main/tools/synthetic_smt/README.md). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
+Status: **v6.48; WP 1.10–1.11, WP 2.1–2.2a, WP 2.3 execution foundations, WP 3.1 map2d processing, and core WP 3.2 map2d plotting are implemented locally.** WP 2.3 and WP 3.1 were committed on `feat/execution` (commit `735fb38`); WP 3.2 reads only persisted map caches and has synthetic coverage for polygon/raster rendering, comparisons with regridding, cache reuse, hook isolation, and pixel-identical fresh rendering. When hooks are configured, figures are rebuilt by default so arbitrary hook mutations cannot leak between images; draw-once rendering remains in effect when no hooks are configured. Map overlays/measurements and complete CLI `run` integration remain. The quantity engine, time selection (D69), active-sediment threshold (D70), water-level-rate interval (D71), date-relative colour limits (D72), and hook isolation (D73) decisions are recorded. P-drive r209/Rijn acceptance remains deferred until local development is complete (D65). The CLI provides read-only `info`/`variables`, schema output, configuration/variable validation with guarded grid, merge-plan, and time-quality cache inspection, a dedicated `inspect` command, and a no-overwrite starter configuration. See [the synthetic case generator](https://github.com/V-Chavarrias/Delft3D_plot/blob/main/tools/synthetic_smt/README.md). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
 
 Document map:
 * §0 Session handover
@@ -33,8 +33,8 @@ Document map:
 
 | Item | Location | State |
 |------|----------|-------|
-| Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `feat/execution`, local and unpushed; WP 2.2a complete; WP 2.3 execution foundations validated; WP 3.1 complete; P-drive acceptance deferred per D65 |
-| Plan (this file) | `docs/architecture.md` | v6.45 |
+| Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `feat/map2d-plotting`, local and unpushed; WP 2.2a, WP 2.3 execution, WP 3.1, and core WP 3.2 complete; P-drive acceptance deferred per D65 |
+| Plan (this file) | `docs/architecture.md` | v6.48 |
 | Licence | `LICENSE` | GPL-3.0 |
 | Synthetic SMT and plain FM test case generator | `tools/synthetic_smt/` | Implemented and verified locally (§13.3) |
 | Land-boundary converter (`.mat` cache → `.ldb`) | `tools/mat_to_ldb.py` | Implemented. Used to recreate the Maas land boundary (D45) |
@@ -42,7 +42,7 @@ Document map:
 | Recreated Maas land boundary | `data_local/maas/j21_ldb.ldb` (55.7 MB) | Git-ignored. 174 220 polylines, 2 343 057 points; read by HYDROLIB-core in 22 s, identical to the `.mat` |
 | HYDROLIB-core modifications | §14.1–§14.3 | WP 0.1 (`54011e0d`) and both DIMR fixes (`3e4f7317`, `96d07c87`) are integrated locally on `feat/mdu_morphology_keywords`; the external-library fix is also committed on `fix/dimr-external-libraries` |
 | Python environment | `.venv/` (uv, Python 3.12) | Git-ignored. dfm_tools and HYDROLIB-core are installed editable from the local checkouts; HYDROLIB-core is currently on `feat/mdu_morphology_keywords` with WP 0.1 and the DIMR fix |
-| Package `d3dplot` | `pyproject.toml`, `src/d3dplot/` | WP 1.1–1.11 foundations and WP 2.1–2.2a output, time-axis, and quantity-engine implementations are complete locally; WP 2.3 execution foundations and WP 3.1 map2d processing are implemented and locally validated |
+| Package `d3dplot` | `pyproject.toml`, `src/d3dplot/` | WP 1.1–1.11 foundations, WP 2.1–2.3 execution, WP 3.1 processing, and core WP 3.2 map plotting are implemented locally; overlays/measurements and complete CLI `run` integration remain |
 | Configuration design | §2 decisions D57–D59, D69–D70 | Nested `times` object, Matlab-compatible one-based time indices, configurable active-sediment threshold, and shared `map.render`; WP 1.3 complete locally; plugin config integration deferred to the analysis registry |
 | Validation framework | `src/d3dplot/validate/` | WP 1.4 complete locally: report serialization and static V-CFG-001..004 checks |
 | Model-input adapters | `src/d3dplot/model_input/` | WP 1.5 implemented locally; MDU, `.mor`, `.sed`, DIMR, V-MDU-001, and real r209 read-only validation complete |
@@ -53,7 +53,7 @@ Document map:
 | Variables | `src/d3dplot/variables/` | WP 1.10 and WP 2.2a complete locally; 19 raw and 23 derived v1 specs, dependency resolution, per-time caching, formula callbacks, grid operators, aliases, NetCDF candidates, suggestions, and generated documentation |
 | CLI | `src/d3dplot/cli.py` | WP 1.11 and WP 2.1 implementation: console and module entry points; `info`, `variables`, `schema`, `validate`, `inspect`, and no-overwrite `init`; `validate` and `inspect` now write guarded `.dia` diagnostics and a debug `.log` |
 | Synthetic-case pytest fixture | `tests/conftest.py` | Session-scoped fixture generates and verifies in pytest's temporary folder (WP 1.2) |
-| CI and documentation site | `.github/workflows/ci.yml`, `mkdocs.yml` | All 191 CI-eligible tests pass; strict MkDocs, targeted strict mypy, Ruff/format, and `git diff --check` pass; remote CI not run |
+| CI and documentation site | `.github/workflows/ci.yml`, `mkdocs.yml` | All 196 CI-eligible tests pass; strict MkDocs, strict mypy over all 68 source files, Ruff/format, and `git diff --check` pass; remote CI not run |
 | Matlab reference results of the synthetic case | `data_local/synthetic_smt_01/simulations/r00*/mat`, `fig` | **Done** (2026-10-26): r001 37 mat + 1071 PNG, r002 37 mat + 858 PNG. Protected: `generate.py --force` refuses to delete them without `--discard-matlab-reference` |
 | Agent guidance for development | `AGENTS.md`, `.github/instructions/plotting.instructions.md`, `.github/skills/{add-analysis-or-option,upstream-contribution}` | Done (§13.6) |
 
@@ -131,7 +131,8 @@ APIs the design relies on (check them first when upgrading):
 16. **WP 2.1 implementation** is on `feat/inspect-phase`: partition identity, topology signatures, time-consistent reference selection, coordinate fallback, merge plans, grid geometry, atomic guarded caches, and CLI integration are implemented. Synthetic tests compare scattered values with dfm_tools, cover cache reuse, plain-FM coordinate matching, corrupt reference selection, invalid identity, and changed topologies; validation also builds/reuses caches when earlier checks have no errors. Read-only r209 discovery found 195 sub-runs and no issues in 200.628 s, but the full inspect run did not finish after more than 20 minutes and was stopped at the user's request. Its output was directed to and cleaned from local temporary storage.
 17. **WP 2.2 implementation** is complete locally on `feat/map-reader-time-axis`: the face/edge `MapReader`, edge merge plan, `times.nc`, fixed-offset precedence, restart-boundary checks, duplicate resolution, selection, cross-simulation matching, and corrupt-output policies are implemented. Local synthetic tests reproduce all nine rows of `expected/time_axis.csv`, verify face/edge scattering and corrupt-partition metadata, and cover V-OUT-030/031/032/033 and V-TIME-002/010/011/012. P-drive acceptance remains deferred until local-data work is complete (D65), with any final model-data run read-only and its `output.root` on a local drive. **WP 2.2a is complete on `feat/quantity-engine`, commit `e890c45`; WP 2.3 is underway on `feat/execution`.**
 18. **WP 2.3 execution foundations** are implemented and locally validated on `feat/execution`: cross-analysis task grouping by simulation/sub-run/time block, stable sharding, fingerprint-policy decisions populated from one-pass NetCDF reads, CPU/memory-aware worker limits, serial and `spawn` executors with failure isolation, worker environment and logging-queue setup, run summaries, and guarded `.dia`/`.log` diagnostics. `validate` and `inspect` record provenance, validation findings, and cache outcomes. `run_process_stage` connects the executor to task diagnostics and guarded atomic run-summary CSV output. The 13 execution tests pass; full end-to-end CLI `run` integration remains.
-19. **WP 3.1 map2d processing** is implemented and locally validated on the synthetic SMT case. The processor requests raw and derived quantities from the quantity engine, writes fingerprinted/guarded NetCDF cache files, records quantity choices in `.dia`, and rejects retained vector dimensions with V-VAR-005. The integration test verifies `water_depth`, `froude_number`, `vorticity`, selected `d50`, and `water_level_rate`; WP 3.2 plotting and complete CLI `run` wiring remain.
+19. **WP 3.1 map2d processing** is implemented and locally validated on the synthetic SMT case. The processor requests raw and derived quantities from the quantity engine, writes fingerprinted/guarded NetCDF cache files, records quantity choices in `.dia`, and rejects retained vector dimensions with V-VAR-005. The integration test verifies `water_depth`, `froude_number`, `vorticity`, selected `d50`, and `water_level_rate`.
+20. **Core WP 3.2 map2d plotting** is implemented and locally validated with synthetic UGRID/cache tests. It consumes map caches only, caches visible-face subsets, reuses draw-once polygon/raster views, applies comparisons and centroid regridding, honours fixed and Matlab-compatible `days_since` limits, snapshots hook changes per image, and routes PNGs through common finalisation and the guarded writer. Overlays/measurements and complete CLI `run` wiring remain.
 
 ---
 
@@ -202,7 +203,7 @@ Status: **A** = agreed with the user; **P** = proposed in this plan and awaiting
 | D26 | Cache values in **float32** by default (`output.dtype: float64` optional). Computations (selections, SMB statistics, differences) are done in float64 in memory; only the stored values are float32 | User: faster reading and writing, enough for visualisation. float32 has ~7 significant digits: 1 mm on a bed level of 1 000 m | A (v6.3; replaces float64) |
 | D27 | **Unit of work of the process stage**: one `ProcessTask` per (simulation × sub-run × **block of times**), serving **all analyses** at once. It opens the sub-run's map files once, asks the quantity engine for every quantity any analysis needs at the times of the block (each raw variable read once), and lets each analysis reduce the arrays in memory and write its own files (one per analysis, quantity, selection, time). Only outputs whose fingerprint is missing or stale are computed; tasks with nothing missing are skipped. Tasks run in parallel; SMT parallelises over sub-runs, plain FM over time blocks (§7.13). Revised in v6.5–v6.7; originally one task per (simulation × sub-run × analysis) | Avoids reading the same variable once per analysis; plain FM simulations (one sub-run) also run in parallel (§7.13, §7.9a) | A |
 | D28 | Environment and packaging with **uv** + `pyproject.toml` (hatchling) | Already used, fast, pip-compatible; GDAL via rasterio wheels | A |
-| D29 | Draw-once plotting with matplotlib `PolyCollection` directly; xugrid only for grid objects and rasterising | Speed (§7.14) | A |
+| D29 | Draw-once plotting with matplotlib `PolyCollection` directly; xugrid only for grid objects and rasterising | Speed (§7.14); visible faces are selected from cached geometry and static artists are reused within each plot group | A |
 | D30 | Windows path length: keep paths short and warn above 240 characters | P-drive paths are long; Windows MAX_PATH is 260 | A |
 | D31 | No dask in the processing path. Parallelism only at task level, with single-threaded libraries in workers | Avoids nested parallelism and memory blow-ups | A |
 | D32 | Configuration: pydantic v2 models; YAML read with `yaml.safe_load`; CLI with typer | Typed, schema export | A |
@@ -245,6 +246,8 @@ Status: **A** = agreed with the user; **P** = proposed in this plan and awaiting
 | D69 | Preserve Matlab time-selector semantics in `times.at`: `NaN` anywhere in a selector vector selects all outputs; positive `Inf` selects the last output and may be combined with one-based integer indices; integer selectors are one-based (`1` is the first output). Python configuration also accepts the readable `all` and `last` spellings and `{indices: [...], include_last: true}` for the mixed form | User requested Matlab behavior and selected one-based indexing for both integer forms | A |
 | D70 | `ba_mor` is `morphological_active_area`, not morphological volume: return face area when total sediment thickness is at least `active_sediment_thickness_threshold_m` (default `0.001 m`), otherwise zero. The threshold is configurable per analysis | Matlab `gdm_read_data_map_ba_mor` applies `Ltot_thres = 1e-3` and zeros area only when `Ltot < Ltot_thres`; user clarified the physical meaning and requested a configurable threshold | A |
 | D71 | Water-level rate uses the interval between consecutive map outputs. When `mesh2d_s0` is available, compute `(s1 − s0)/Δt`; otherwise compute `(s1[current] − s1[previous])/Δt`. The first output has no preceding map interval and returns NaN. The source choice is recorded in the diagnostic file | User clarified the reference behavior after the Matlab reader's `timestep` use was found to conflict with the original wording | A |
+| D72 | `color_limits_mode: {days_since: date}` sets each frame's colour limits to `[0, max((time_UTC − date_at_UTC_midnight).days, 0)]`, retaining fractional days and overriding configured numeric bounds | Matches Matlab `gdm_plot_M2D.fcn_clims_type` (`clims_type=2`) | A |
+| D73 | When hooks are configured, `figure.hooks_mode` defaults to `rebuild`: create a fresh figure for every image so arbitrary hook mutations cannot leak between frames. With no hooks, continue reusing the draw-once template. `per_image` remains an explicit opt-in to snapshot/restore of common mutations | User selected rebuilding hooked images as the safe behavior; snapshots cannot undo every possible Matplotlib mutation | A |
 
 ## 3. Review of the plan (v6)
 
@@ -1166,7 +1169,7 @@ Every task key contains the subject (and the reference label for simulation diff
   * static decorations: land boundaries, river-km labels, tiles, fixed weirs;
   * colour bar and labels;
   * the measurement panel if configured.
-* **Loop**: for each time, `collection.set_array(values[visible])` and update the title; for each colour-limit set, `collection.set_clim(...)` → save.
+* **Loop**: for each time, `collection.set_array(values[visible])` and update the title; for each colour-limit set, `collection.set_clim(...)` → save. `color_limits_mode: {days_since: date}` overrides each set with `[0, max(elapsed_UTC_days, 0)]` for that frame (D72).
 * **Line template** (SMB profiles, time series): axes, structures/hooks and measurement artists are created once; only line data change.
 * **Render modes** (`map.render`, shared by map2d and river-km diagnostic maps):
   * `polygons`;
@@ -1195,8 +1198,8 @@ Steps, in this order:
 7. **Diagnostic file**: one `** INFO` line per saved figure group (count, folder), errors with the hook name.
 
 Draw-once and hooks: a hook can change anything, so after hooks the figure is no longer a clean template. Policy `hooks_mode`:
-* `per_image` *(default)*: before calling hooks, the template state is snapshotted (artists list); after saving, the artists added by hooks are removed and changed properties restored. Hooks thus see each image fresh.
-* `rebuild`: the figure is rebuilt for every image (slow, always correct).
+* `rebuild` *(default)*: when hooks are configured, rebuild the figure for every image. Hooks may mutate arbitrary Matplotlib state, so this is the only mode that guarantees isolation. When no hooks are configured, retain draw-once template reuse.
+* `per_image`: explicit performance opt-in; snapshot and restore added artists and common text/axes properties after each image. Arbitrary mutations may not be restored.
 
 A test runs a hook that adds a line and changes the title and checks that every saved image contains exactly one such line.
 
@@ -1374,10 +1377,12 @@ Local read-only r209 validation completed in **99.283 s**: 195 sub-runs, 8,580 m
 * Variables: `values(face)`.
 * Attributes: fingerprint, hydrodynamic and morphological time (ISO, with offset), sub-run, variable, units, selection.
 
-**Plot** (`PlotGroupTask` per simulation × variable × comparison × block of times):
-* for every extent: build the map template once;
-* for every time: compute the comparison (§7.12) and update the data and title;
-* for every colour-limit set: set the limits and save.
+**Plot** (`PlotGroupTask` per subject × variable × comparison × extent × block of times):
+* Read the fingerprinted map2d data files only; model output is not reopened.
+* Build an `ExtentSet` from the full model, explicit windows, and optional windows from `extents_along_river_km` (fixed CSV format §9.1). Cache each visible-face subset as `cache/geometry/extent_<hash>.nc`, fingerprinted from the grid and bounds. An extent with no faces is reported and skipped.
+* Build a shared `MapView` template once per group from the inspected UGRID mesh and visible faces. `map.render: polygons` uses a matplotlib `PolyCollection`; `raster` uses xugrid rasterisation at the figure's pixel resolution; `auto` selects raster when visible faces exceed screen pixels.
+* For every time: apply the comparison (§7.12), update the map values and title, and for every colour-limit set update limits and save. `color_limits_mode: {days_since: date}` uses `[0, max(elapsed_UTC_days, 0)]` per frame (D72); `figure.display_scale` scales both values and limits. Cross-simulation differences use the reference grid; regridders are constructed once per grid pair.
+* Run every image through `plotting.finalize.finalize_figure` and the guarded PNG writer. The group reuses the template when no hooks are configured; with hooks, `figure.hooks_mode: rebuild` creates a fresh view for every image by default, while the explicit `per_image` mode snapshots common mutations.
 
 Images = times × extents × colour-limit sets. Differences between simulations are stored under the reference simulation's figures.
 
@@ -1753,6 +1758,9 @@ Codes are stable, documented, and tested one by one. **E** = error, **W** = warn
 | V-MEA-004 | W | No measurement within the tolerance for a plot time (lists the nearest) |
 | V-MEA-005 | E | Variable or statistic not in the profile file (with aliases/equivalences) |
 | V-MEA-006 | E | `.mat` is v7.3 (HDF5), not supported in v1 |
+| V-PLOT-001 | W | Configured map extent contains no visible faces; list the extent and skip it |
+| V-PLOT-002 | E | Required map2d data/grid/extent cache is missing, unreadable, or has invalid geometry or face count |
+| V-PLOT-003 | E | Invalid map comparison request or incompatible simulation/time match (identify the missing reference or mismatched key) |
 | V-LDB-001 | E | `.ldb` unreadable (or a non-`.ldb` land boundary given) |
 | V-ENV-001 | E | Optional dependency missing for a requested feature (tiles, movies) |
 | V-ENV-002 | W | Background tiles not available (no network and not cached); figures drawn without background |
@@ -1763,7 +1771,9 @@ Codes are stable, documented, and tested one by one. **E** = error, **W** = warn
 ### 13.1 Engineering standards
 
 * `pyproject.toml` (hatchling, `src/` layout), uv lock file, Python 3.11–3.13.
-* ruff (lint + format) and mypy (strict for `src/`), run through pre-commit.
+* ruff (lint + format; Python 3.11 syntax target) and mypy (strict for `src/`;
+  Python 3.12 type target because NumPy 2.5 stubs use PEP 695), run through
+  pre-commit. The mypy target does not change the supported runtime range.
 * Conventional commits + commitizen → semver, `CHANGELOG.md`; protected `main`; pull requests with CI.
 * SPDX header `GPL-3.0-or-later` in every source file.
 * Docstrings (numpy style). MkDocs site with:
@@ -2105,7 +2115,7 @@ Per D65, use generated local cases for development, automated tests, and perform
 | WP | Content | Done when |
 |----|---------|-----------|
 | 3.1 | Process through the quantity engine (raw and derived quantities, selections, files §9.5) | Implemented and locally validated: the synthetic integration test verifies `water_depth`, `froude_number`, `vorticity`, selected `d50`, and `water_level_rate` cache values/metadata, plus V-VAR-005 for retained extra dimensions |
-| 3.2 | Plot: **common finalisation** (§7.14a: style, language, hooks with `hooks_mode`, metadata, writer), **shared views** (§7.14b: `MapView`, `MapDecorations`, `ExtentSet` incl. windows along a river-km file separate from the label file), templates, visible-face subsets, render modes, comparisons incl. regridding, naming | Image baselines; `--fresh-figures` identical; hook test (one added line per image); windows file ≠ labels file test |
+| 3.2 | Plot from persisted map2d caches: **common finalisation** (§7.14a: style, language, hooks with `hooks_mode`, metadata, guarded writer), **shared views** (§7.14b: `MapView`, `ExtentSet`, draw-once templates, fingerprinted visible-face subsets, polygon/raster/auto render modes, comparisons incl. regridding, naming) | Synthetic tests cover polygon/raster rendering, time and simulation comparisons with regridding, effective figure settings and `days_since` limits, fresh-figure hook isolation by default plus explicit per-image snapshots, pixel-identical `--fresh-figures`, extent-cache and figure-cache reuse, and V-PLOT-001/002. Map decorations and overlays remain WP 3.3 |
 | 3.3 | Overlays: `.ldb` (HYDROLIB-core `PolyFile` + cache), river-km labels, background tiles (contextily + persistent cache, D42) | Shown in the baseline images; tiles test uses a pre-filled cache (no network in CI) |
 | 3.4 | Map measurements: catalogue, rasters (VRT, factor, mosaic, resampling), polygons (filters, id matching), differences, panel, `color_limits_from_measurements` | Synthetic catalogue cases (inside/outside tolerance, cm factor, shifted grid, shuffled polygons) correct |
 | 3.5 | Provenance, `replot`, `plot --set`, movies | Replot reproduces identical images |
@@ -2351,6 +2361,8 @@ The complete model-quantity catalog (all v1 raw and derived registry entries, al
 
 | Version | Content |
 |---------|---------|
+| v6.48 | Implemented D73: rebuild each hooked image by default to guarantee isolation from arbitrary Matplotlib mutations; keep draw-once rendering when hooks are absent and retain snapshots as an explicit performance opt-in. All 196 CI-eligible tests pass, as do strict mypy (68 source files), Ruff/format, strict MkDocs, and `git diff --check` |
+| v6.46 | Committed WP 2.3 execution orchestration and WP 3.1 map2d quantity processing (`735fb38`); all 191 CI-eligible tests and local quality checks pass. Started WP 3.2 design: map plots consume persisted data caches, cache visible-face subsets, reuse draw-once templates, support configured comparisons/render modes, and route figures through common finalisation and a guarded writer |
 | v6.45 | Implemented and validated the WP 3.1 map2d quantity processor: guarded fingerprinted NetCDF outputs, quantity-choice diagnostics, scalar-dimension validation, and synthetic acceptance for raw/derived/selected quantities. Revalidated `run_process_stage` diagnostics and summaries; all 191 CI-eligible tests pass, along with strict MkDocs, targeted strict mypy, Ruff/format, and `git diff --check` |
 | v6.44 | Connected process-task execution to diagnostics and atomic run-summary CSV persistence through `run_process_stage`; process workers now receive the task callable once through the spawn initializer, avoiding repeated context serialization. Added integration coverage for contextual callables and diagnostic/summary output. Validation of this increment is pending |
 | v6.43 | Wired one-pass NetCDF fingerprint reads into cache-aware process-task planning with `OutputCacheRequest`/`read_output_cache_states`; matching outputs are omitted and stale outputs are scheduled. Added synthetic resumability coverage. All 189 CI-eligible tests, strict mypy, changed-file Ruff/format, and strict MkDocs pass. A five-run local benchmark over 100 temporary NetCDF outputs measured 0.198 s median for fingerprint indexing and 0.224 s for complete cache-state construction. Processing-stage data I/O and runner/summary integration remain |

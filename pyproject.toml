@@ -92,7 +92,7 @@ src = ["src", "tests"]
 select = ["B", "E", "F", "I", "UP"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12" # NumPy 2.5 stubs use PEP 695; Ruff still targets py311.
 mypy_path = "src"
 files = ["src/d3dplot"]
 strict = true

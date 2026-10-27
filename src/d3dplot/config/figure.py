@@ -148,8 +148,8 @@ class FigureConfig(ConfigModel):
         description="Output formats supported by the v1 writer registry.",
     )
     hooks_mode: Literal["per_image", "rebuild"] = Field(
-        default="per_image",
-        description="Restore hook changes per image or rebuild the figure each time.",
+        default="rebuild",
+        description="Rebuild hooked figures by default; per_image snapshots changes.",
     )
     x_limits: AxisLimits | None = Field(
         default=None,

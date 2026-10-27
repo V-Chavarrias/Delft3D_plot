@@ -66,23 +66,40 @@ Fingerprints use BLAKE2b over deterministic, sorted-key JSON:
   and an optional hydrodynamic time. Nested parameters are canonicalized
   recursively, so key ordering does not affect the result.
 
-  ## Map2d data cache
+## Map2d data cache
 
-  Processed map values are stored at
-  `cache/data/map2d/<requested-variable>/<selection>/<yyyymmddTHHMMSS>.nc`.
-  Each file contains `values(face)` in the configured cache dtype (float32 by
-  default), compressed with zlib level 4 and using NaN as the fill value. The
-  global attributes record the recursive fingerprint, canonical parameters,
-  hydrodynamic and morphological times, sub-run/local index, variable,
-  selection, inspected grid path, and merge-plan index. The variable carries its
-  units and long name.
+Processed map values are stored at
+`cache/data/map2d/<requested-variable>/<selection>/<yyyymmddTHHMMSS>.nc`.
+Each file contains `values(face)` in the configured cache dtype (float32 by
+default), compressed with zlib level 4 and using NaN as the fill value. The
+global attributes record the recursive fingerprint, canonical parameters,
+hydrodynamic and morphological times, sub-run/local index, variable, selection,
+inspected grid path, and merge-plan index. The variable carries its units and
+long name.
 
-  Writes use `atomic_path` beneath the marked output root. Fingerprints include
-  the sub-run map files, MDU and optional morphology/sediment inputs, the
-  fingerprinted inspected grid and merge plan, selection, corrupt-output policy,
-  cache dtype, and hydrodynamic time. A retained non-singleton extra dimension is
-  reported as V-VAR-005 instead of being silently flattened into the face axis.
+Writes use `atomic_path` beneath the marked output root. Fingerprints include
+the sub-run map files, MDU and optional morphology/sediment inputs, the
+fingerprinted inspected grid and merge plan, selection, corrupt-output policy,
+cache dtype, and hydrodynamic time. A retained non-singleton extra dimension is
+reported as V-VAR-005 instead of being silently flattened into the face axis.
 
-  The test helper in `tests/_input_snapshot.py` captures each input's resolved
-  path, size, modification time, and content hash before an operation, then
-  asserts those values remain unchanged afterward.
+## Map2d geometry and figures
+
+Visible-face subsets are cached as
+`cache/geometry/extent_<hash>.nc`. The `faces` variable contains the
+visible grid-face indices as int32, with the extent bounds and fingerprint in
+global attributes. Cross-grid comparisons may cache an xugrid centroid
+regridder at `cache/geometry/regrid_<hash>.nc`.
+
+Map images are stored below `figures/<series>/<subject>/` with the variable,
+comparison, hydrodynamic time, colour-limit index, and extent index in the
+filename. PNG metadata records the tool version, project/analysis configuration
+hash, figure fingerprint, and task key. Figure fingerprints include the
+processed cache fingerprints, inspected grid, extent, effective figure/map
+settings, and figure-hook source hashes. A matching image is reused when
+`replot` is `if_changed`; `--fresh-figures` always rebuilds it. PNGs and
+geometry caches are written atomically through the marked-root guard.
+
+The test helper in `tests/_input_snapshot.py` captures each input's resolved
+path, size, modification time, and content hash before an operation, then
+asserts those values remain unchanged afterward.
