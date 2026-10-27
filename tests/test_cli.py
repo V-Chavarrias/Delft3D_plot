@@ -248,7 +248,7 @@ def test_validate_reports_registered_raw_variable_missing_from_map(
     configuration = _write_config(
         tmp_path,
         synthetic_case / "simulations" / "r001",
-        ["chezy"],
+        ["mean_grain_size_geometric_output"],
     )
 
     result = runner.invoke(

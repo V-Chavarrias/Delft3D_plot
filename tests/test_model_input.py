@@ -113,10 +113,9 @@ def test_generated_synthetic_mdu_mor_and_sed_are_parsed(
         fraction.sediment_type == "bedload"
         for fraction in model_input.sediment.fractions
     )
-    assert all(
-        fraction.solid_density_kg_m3 == pytest.approx(2650.0)
-        for fraction in model_input.sediment.fractions
-    )
+    assert [
+        fraction.solid_density_kg_m3 for fraction in model_input.sediment.fractions
+    ] == pytest.approx([2650.0, 2700.0, 2650.0])
 
 
 @pytest.mark.unit

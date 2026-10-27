@@ -265,31 +265,50 @@ class TimeAxis:
                 selected = [max(collapsed, key=lambda entry: _hydro_order(entry))]
         elif isinstance(at, IndicesSelection):
             for index in at.indices:
-                if index < 0 or index >= len(self.entries):
+                if index < 1 or index > len(self.entries):
                     issues.append(
                         _issue(
                             "V-TIME-010",
                             "error",
                             (
-                                f"Output index {index} is outside the merged time "
-                                f"axis of length {len(self.entries)}."
+                                f"Output index {index} is outside the one-based "
+                                f"merged time axis of length {len(self.entries)}."
                             ),
-                            "Choose an index from the inspected time axis.",
+                            (
+                                "Choose a one-based index between 1 and "
+                                f"{len(self.entries)}."
+                            ),
                         )
                     )
                     continue
-                entry = self.entries[index]
+                entry = self.entries[index - 1]
                 if _axis_time(entry, config.axis) is None:
                     issues.append(
                         _issue(
                             "V-TIME-010",
                             "error",
                             (f"Output index {index} has no usable {config.axis} time."),
-                            "Choose an output with a valid time on the selected axis.",
+                            (
+                                "Choose a one-based output index with a valid time "
+                                "on the selected axis."
+                            ),
                         )
                     )
                     continue
                 selected.append(entry)
+            if at.include_last:
+                collapsed, duplicate_groups = _collapse_duplicates(
+                    candidates,
+                    config.axis,
+                    _duplicate_tolerance(config.axis),
+                    duplicate_policy,
+                    requested_time=None,
+                )
+                duplicates.extend(duplicate_groups)
+                if collapsed:
+                    selected.append(
+                        max(collapsed, key=lambda entry: _hydro_order(entry))
+                    )
         elif isinstance(at, TimeRange):
             try:
                 start = _request_datetime(

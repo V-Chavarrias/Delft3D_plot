@@ -34,8 +34,15 @@ analyses:
       extents: [[10000, 12000, 20000, 22000]]
 ```
 
-`times.at` accepts `all`, `last`, an explicit list of dates/times, an
-`{indices: [...]}` mapping, or a `{start, end, step}` range. `times.axis` is
+`times.at` accepts `all`, `last`, a one-based integer index, an explicit list
+of dates/times, an `{indices: [...]}` mapping, or a `{start, end, step}` range.
+`NaN` is an alias for `all`; any NaN in a Matlab-style selector vector selects
+all outputs. Positive `Inf` is an alias for `last` and may be combined with
+one-based integer indices; use `{indices: [1, 3], include_last: true}` for the
+equivalent explicit mapping. Use the readable `all`/`last` spellings in new
+YAML configurations. Integer selectors are one-based to preserve Matlab
+behavior, so `times.at: 1` selects the first output; `{indices: [1, 3]}`
+selects the first and third outputs. `times.axis` is
 `hydrodynamic` or `morphological`; `times.tolerance` accepts durations such as
 `10 days` or ISO-8601 durations. Measurement-matching tolerances remain scoped
 to their measurement settings, for example
@@ -78,6 +85,10 @@ If omitted, `times.at` defaults to `all`, `times.axis` to `hydrodynamic`, and
 `times.tolerance` is unset (`null`), which means unbounded nearest-output
 matching for explicit requests. Setting a tolerance limits selection to outputs
 within that distance. A morphological time axis requires output `morft` values.
+The analysis option `active_sediment_thickness_threshold_m` defaults to
+`0.001` m and controls which faces count toward the `morphological_active_area`
+quantity (`ba_mor`): a face contributes its cell area when total sediment
+thickness is at least the threshold, and zero otherwise.
 
 The default figure style is 10 pt DejaVu Sans, 16 × 10 cm at 150 dpi. Maps use
 the `viridis` colormap, `auto` rendering, and `auto` aspect. The

@@ -11,7 +11,16 @@ import numpy as np
 
 from fields import SubRunTimes
 from mesh import Mesh, Subset
-from params import GENERATOR_VERSION, REFERENCE_TIME, TIME_UNITS, Params
+from params import (
+    GENERATOR_VERSION,
+    GRAVITY_M_S2,
+    REFERENCE_TIME,
+    SEDIMENT_DIAMETERS_M,
+    SEDIMENT_DENSITIES_KG_M3,
+    TIME_UNITS,
+    WATER_DENSITY_KG_M3,
+    Params,
+)
 
 FILL_INT = np.int32(-999)
 FILL_DBL = -999.0
@@ -26,12 +35,42 @@ _FACE_ATTRS = {
     "grid_mapping": "projected_coordinate_system",
 }
 
+_EDGE_ATTRS = {
+    "mesh": "mesh2d",
+    "location": "edge",
+    "coordinates": "mesh2d_edge_x mesh2d_edge_y",
+    "cell_methods": "mesh2d_nEdges: mean",
+    "grid_mapping": "projected_coordinate_system",
+}
+
 _DATA_VARS = {
     "mesh2d_mor_bl": {"long_name": "Time-varying bottom level in flow cell center", "units": "m"},
     "mesh2d_s1": {"standard_name": "sea_surface_height", "long_name": "Water level", "units": "m"},
+    "mesh2d_s0": {"long_name": "Water level at the preceding time step", "units": "m"},
     "mesh2d_waterdepth": {"standard_name": "sea_floor_depth_below_sea_surface", "long_name": "Water depth at pressure points", "units": "m"},
     "mesh2d_ucmag": {"standard_name": "sea_water_speed", "long_name": "Flow element center velocity magnitude", "units": "m s-1"},
+    "mesh2d_ucx": {"long_name": "Eastward flow velocity component", "units": "m s-1"},
+    "mesh2d_ucy": {"long_name": "Northward flow velocity component", "units": "m s-1"},
+    "mesh2d_czs": {"long_name": "Chezy friction coefficient", "units": "m^0.5 s-1"},
     "mesh2d_taus": {"long_name": "Total bed shear stress magnitude", "units": "N m-2"},
+    "mesh2d_thlyr": {"long_name": "Bed layer thickness", "units": "m"},
+    "mesh2d_sxtot": {"long_name": "Total suspended sediment transport x-component", "units": "m2 s-1"},
+    "mesh2d_sytot": {"long_name": "Total suspended sediment transport y-component", "units": "m2 s-1"},
+    "mesh2d_sbcx": {"long_name": "Bed-load sediment transport x-component", "units": "m2 s-1"},
+    "mesh2d_sbcy": {"long_name": "Bed-load sediment transport y-component", "units": "m2 s-1"},
+}
+
+_FACE_EXTRA_DIMS = {
+    "mesh2d_thlyr": ("nBedLayers",),
+    "mesh2d_sxtot": ("nSedTot",),
+    "mesh2d_sytot": ("nSedTot",),
+    "mesh2d_sbcx": ("nSedTot",),
+    "mesh2d_sbcy": ("nSedTot",),
+}
+
+_EDGE_DATA_VARS = {
+    "mesh2d_u1": {"long_name": "Edge-normal velocity", "units": "m s-1"},
+    "mesh2d_hu": {"long_name": "Water depth at edge", "units": "m"},
 }
 
 
@@ -138,7 +177,10 @@ def write_map(path: Path, p: Params, mesh: Mesh, sub: Subset, run: SubRunTimes, 
     """`corrupt_times` reproduces r209 sub-run 0 partition 0021: garbage time/morft and +-1e308 values."""
     path.parent.mkdir(parents=True, exist_ok=True)
     time, morft = run.time.copy(), run.morft.copy()
-    fields = {k: v[:, sub.faces].copy() for k, v in fields.items()}
+    fields = {
+        name: values[:, sub.edges if name in _EDGE_DATA_VARS else sub.faces].copy()
+        for name, values in fields.items()
+    }
     if corrupt_times:
         idx = list(corrupt_times)
         time[idx] = -5.423497149537879e-179
@@ -157,7 +199,12 @@ def write_map(path: Path, p: Params, mesh: Mesh, sub: Subset, run: SubRunTimes, 
              {**_FACE_ATTRS, "standard_name": "altitude", "long_name": "flow element center bedlevel (bl)", "units": "m"},
              fill=FILL_DBL, data=initial_bl[sub.faces])
         for name, attrs in _DATA_VARS.items():
-            _var(ds, name, "f8", ("time", "mesh2d_nFaces"), {**_FACE_ATTRS, **attrs}, fill=FILL_DBL,
+            dimensions = ("time", "mesh2d_nFaces", *_FACE_EXTRA_DIMS.get(name, ()))
+            _var(ds, name, "f8", dimensions, {**_FACE_ATTRS, **attrs}, fill=FILL_DBL,
+                 data=fields[name], zlib=True)
+        for name, attrs in _EDGE_DATA_VARS.items():
+            _var(ds, name, "f8", ("time", "mesh2d_nEdges"),
+                 {**_EDGE_ATTRS, **attrs}, fill=FILL_DBL,
                  data=fields[name], zlib=True)
         _var(ds, "mesh2d_lyrfrac", "f8", ("time", "mesh2d_nFaces", "nBedLayers", "nSedTot"),
              {**_FACE_ATTRS, "long_name": "Volume fraction in a layer of the bed in flow cell center", "units": "-"},
@@ -215,6 +262,8 @@ def write_mdu(
         _fmt("CFLMax", "0.7"),
         "",
         "[physics]",
+        _fmt("Ag", f"{GRAVITY_M_S2:g}"),
+        _fmt("Rhomean", f"{WATER_DENSITY_KG_M3:g}"),
         _fmt("UnifFrictCoef", "40.0"),
         _fmt("UnifFrictType", "0"),
         "",
@@ -266,15 +315,16 @@ def write_mor(path: Path, p: Params):
 
 
 def write_sed(path: Path, p: Params):
-    diameters = [0.0005, 0.002, 0.008][: p.n_fractions]
+    diameters = SEDIMENT_DIAMETERS_M[: p.n_fractions]
+    densities = SEDIMENT_DENSITIES_KG_M3[: p.n_fractions]
     blocks = [
         "[SedimentFileInformation]\n   FileCreatedBy    = synthetic_smt\n   FileVersion      = 02.00\n"
         "[SedimentOverall]\n   Cref             =  1.6000000e+003      [kg/m3]  CSS reference concentration\n"
     ]
-    for k, d in enumerate(diameters, start=1):
+    for k, (d, density) in enumerate(zip(diameters, densities, strict=True), start=1):
         blocks.append(
             f"[Sediment]\n   Name             = #Sediment{k}#\n   SedTyp           = bedload\n"
-            f"   RhoSol           =  2.6500000e+003      [kg/m3]\n   SedDia           =  {d:.4e}      [m]\n"
+            f"   RhoSol           =  {density:.4e}      [kg/m3]\n   SedDia           =  {d:.4e}      [m]\n"
             "   CDryB            =  1.6000000e+003      [kg/m3]\n"
         )
     path.parent.mkdir(parents=True, exist_ok=True)

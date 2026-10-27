@@ -25,7 +25,7 @@ from d3dplot.variables.registry import (
 
 @pytest.mark.unit
 def test_registry_contains_all_v1_raw_and_derived_quantities() -> None:
-    assert len(list_variable_specs(VariableKind.RAW)) == 10
+    assert len(list_variable_specs(VariableKind.RAW)) == 19
     assert len(list_variable_specs(VariableKind.DERIVED)) == 23
     assert get_variable_spec("bed_level").kind is VariableKind.RAW
     assert get_variable_spec("froude_number").kind is VariableKind.DERIVED

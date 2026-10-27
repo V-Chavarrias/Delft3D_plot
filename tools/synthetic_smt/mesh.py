@@ -79,13 +79,15 @@ def _polygon_area_centroid(px: np.ndarray, py: np.ndarray):
     cy = np.zeros(px.shape[0])
     for f in range(px.shape[0]):
         ok = ~np.isnan(px[f])
-        x, y = px[f, ok], py[f, ok]
+        x_absolute, y_absolute = px[f, ok], py[f, ok]
+        x_origin, y_origin = x_absolute[0], y_absolute[0]
+        x, y = x_absolute - x_origin, y_absolute - y_origin
         x1, y1 = np.roll(x, -1), np.roll(y, -1)
         cross = x * y1 - x1 * y
         a = cross.sum() / 2
         area[f] = a
-        cx[f] = ((x + x1) * cross).sum() / (6 * a)
-        cy[f] = ((y + y1) * cross).sum() / (6 * a)
+        cx[f] = x_origin + ((x + x1) * cross).sum() / (6 * a)
+        cy[f] = y_origin + ((y + y1) * cross).sum() / (6 * a)
     return area, cx, cy
 
 

@@ -4,13 +4,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import netCDF4
 import numpy as np
 import pytest
 
 from d3dplot.simulation import Simulation, discover_simulation, inspect_simulation
-from d3dplot.simulation.map_reader import MapReader, MapReaderError
+from d3dplot.simulation.map_reader import MapReader, MapReaderError, MapReaderSession
 from d3dplot.store import OutputLayout
 from d3dplot.variables import (
     VariableKind,
@@ -18,6 +19,22 @@ from d3dplot.variables import (
     VariableSpec,
     get_variable_spec,
 )
+
+
+@pytest.mark.unit
+def test_reader_availability_checks_all_partitions() -> None:
+    spec = get_variable_spec("bed_level")
+    assert spec is not None
+    first = SimpleNamespace(
+        variables={candidate: object() for candidate in spec.netcdf_candidates}
+    )
+    second = SimpleNamespace(variables={spec.netcdf_candidates[-1]: object()})
+    session = object.__new__(MapReaderSession)
+    session._datasets = (first, second)
+
+    assert not session.has_variable(spec)
+    second.variables[spec.netcdf_candidates[0]] = object()
+    assert session.has_variable(spec)
 
 
 @pytest.mark.integration
@@ -67,6 +84,39 @@ def test_reader_scatters_face_and_edge_variables(
         rtol=0,
         atol=1e-12,
     )
+
+
+@pytest.mark.integration
+def test_reader_session_opens_each_partition_once(
+    synthetic_case: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    simulation = _discover(synthetic_case / "simulations" / "r001")
+    inspection, report = inspect_simulation(
+        simulation,
+        OutputLayout(tmp_path / "d3dplot"),
+        forbidden_roots=(),
+    )
+    assert inspection is not None, report.to_text()
+    reader = MapReader(simulation, inspection.merge_plan_path)
+    map_paths = [path.resolve() for path in simulation.subruns[0].map_files]
+    opened: list[Path] = []
+    original_dataset = netCDF4.Dataset
+
+    def counted_dataset(path, *args, **kwargs):
+        resolved = Path(path).resolve()
+        if resolved in map_paths:
+            opened.append(resolved)
+        return original_dataset(path, *args, **kwargs)
+
+    monkeypatch.setattr(netCDF4, "Dataset", counted_dataset)
+    with reader.session(0) as session:
+        first = session.read(get_variable_spec("water_level"), local_index=0)
+        second = session.read(get_variable_spec("water_depth"), local_index=1)
+
+    assert first.values.shape == second.values.shape == (6406,)
+    assert opened == map_paths
 
 
 @pytest.mark.integration

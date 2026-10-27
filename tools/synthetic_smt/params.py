@@ -7,7 +7,13 @@ import math
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 
-GENERATOR_VERSION = "0.2.0"
+GENERATOR_VERSION = "0.3.0"
+
+GRAVITY_M_S2 = 9.813
+WATER_DENSITY_KG_M3 = 1000.0
+SEDIMENT_DIAMETERS_M = (0.0005, 0.002, 0.008)
+SEDIMENT_DENSITIES_KG_M3 = (2650.0, 2700.0, 2650.0)
+ROTATION_RATE_S_1 = 1e-4
 
 TZ = timezone(timedelta(hours=1))
 REFERENCE_TIME = datetime(2021, 2, 8, tzinfo=TZ)

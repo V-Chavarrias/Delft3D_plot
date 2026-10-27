@@ -48,7 +48,9 @@ def test_selects_all_last_indices_and_inclusive_range() -> None:
 
     all_outputs = axis.select(TimesConfig(at="all"))
     last_output = axis.select(TimesConfig(at="last"))
-    indexed_outputs = axis.select(TimesConfig(at=IndicesSelection(indices=[0, 2])))
+    indexed_outputs = axis.select(TimesConfig(at=IndicesSelection(indices=[1, 3])))
+    indexed_and_last = axis.select(TimesConfig(at=[1, float("inf")]))
+    first_output = axis.select(TimesConfig(at=1))
     ranged_outputs = axis.select(
         TimesConfig(
             at=TimeRange(
@@ -62,6 +64,8 @@ def test_selects_all_last_indices_and_inclusive_range() -> None:
     assert all_outputs.entries == entries
     assert last_output.entries == (entries[-1],)
     assert indexed_outputs.entries == (entries[0], entries[2])
+    assert indexed_and_last.entries == (entries[0], entries[2])
+    assert first_output.entries == (entries[0],)
     assert ranged_outputs.entries == entries
     assert all(entry.time.tzinfo is UTC for entry in all_outputs.entries)
 

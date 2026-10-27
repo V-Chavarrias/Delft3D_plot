@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import math
 from datetime import date, datetime, time, timedelta
+from numbers import Real
 from typing import Literal, TypeAlias
 
 from pydantic import Field, NonNegativeInt, PositiveInt, field_validator
@@ -15,11 +17,15 @@ TimeAxis: TypeAlias = Literal["hydrodynamic", "morphological"]
 
 
 class IndicesSelection(ConfigModel):
-    """Select outputs by zero-based index."""
+    """Select outputs by one-based index, matching Matlab time selectors."""
 
-    indices: list[NonNegativeInt] = Field(
+    indices: list[PositiveInt] = Field(
         min_length=1,
-        description="Zero-based indices of model outputs to select.",
+        description="One-based indices of model outputs to select.",
+    )
+    include_last: bool = Field(
+        default=False,
+        description="Also select the last output, matching positive Inf in Matlab.",
     )
 
 
@@ -56,7 +62,8 @@ class TimesConfig(ConfigModel):
     at: TimeSelection = Field(
         default="all",
         description=(
-            "Outputs to select: all, last, explicit dates/times, indices, or a range."
+            "Outputs to select: all/NaN, last/Inf, one-based indices, explicit times, "
+            "or a range."
         ),
     )
     axis: TimeAxis = Field(
@@ -67,6 +74,92 @@ class TimesConfig(ConfigModel):
         default=None,
         description="Maximum distance from an explicit requested time.",
     )
+
+    @field_validator("at", mode="before")
+    @classmethod
+    def normalize_matlab_time_selection(cls, value: object) -> object:
+        if isinstance(value, str):
+            normalized = value.strip().casefold()
+            if normalized in {"nan", ".nan"}:
+                return "all"
+            if normalized in {
+                "inf",
+                "+inf",
+                "infinity",
+                "+infinity",
+                ".inf",
+                "+.inf",
+            }:
+                return "last"
+            if normalized in {"-inf", "-infinity", "-.inf"}:
+                raise ValueError("times.at accepts positive Inf, not negative Inf")
+
+        if isinstance(value, Real) and not isinstance(value, bool):
+            numeric_value = float(value)
+            if math.isnan(numeric_value):
+                return "all"
+            if numeric_value == math.inf:
+                return "last"
+            if numeric_value == -math.inf:
+                raise ValueError("times.at accepts positive Inf, not negative Inf")
+
+        if isinstance(value, int) and not isinstance(value, bool):
+            return {"indices": [value]}
+
+        if isinstance(value, list):
+            indices: list[int] = []
+            include_last = False
+            has_nan = False
+            has_other = False
+            has_negative_infinity = False
+            for item in value:
+                if isinstance(item, str):
+                    normalized = item.strip().casefold()
+                    if normalized in {"nan", ".nan"}:
+                        has_nan = True
+                    elif normalized in {
+                        "inf",
+                        "+inf",
+                        "infinity",
+                        "+infinity",
+                        ".inf",
+                        "+.inf",
+                    }:
+                        include_last = True
+                    elif normalized in {"-inf", "-infinity", "-.inf"}:
+                        has_negative_infinity = True
+                    else:
+                        has_other = True
+                    continue
+                if isinstance(item, Real) and not isinstance(item, bool):
+                    numeric_item = float(item)
+                    if math.isnan(numeric_item):
+                        has_nan = True
+                    elif numeric_item == math.inf:
+                        include_last = True
+                    elif numeric_item == -math.inf:
+                        has_negative_infinity = True
+                    elif numeric_item.is_integer():
+                        indices.append(int(numeric_item))
+                    else:
+                        has_other = True
+                    continue
+                has_other = True
+
+            if has_nan:
+                return "all"
+            if has_negative_infinity:
+                raise ValueError("times.at accepts positive Inf, not negative Inf")
+            if (indices or include_last) and has_other:
+                raise ValueError(
+                    "Do not mix integer indices or Inf with explicit times."
+                )
+            if indices or include_last:
+                if not indices:
+                    return "last"
+                return {"indices": indices, "include_last": include_last}
+
+        return value
 
     @field_validator("at")
     @classmethod

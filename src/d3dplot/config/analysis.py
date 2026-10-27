@@ -36,6 +36,13 @@ class AnalysisConfigBase(ConfigModel):
         default_factory=TimesConfig,
         description="Requested outputs, time axis, and matching tolerance.",
     )
+    active_sediment_thickness_threshold_m: float = Field(
+        default=0.001,
+        ge=0.0,
+        description=(
+            "Minimum total sediment thickness for morphological_active_area (ba_mor)."
+        ),
+    )
     time_matching: Literal["reference", "own"] = Field(
         default="reference",
         description="Match other simulations to the reference times or use their own.",

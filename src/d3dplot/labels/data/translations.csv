@@ -123,7 +123,6 @@ template.background,{quantity} above background,{quantity} boven achtergrond,{qu
 template.standard_deviation,standard deviation {quantity},standaardafwijking {quantity},desviaci?n est?ndar de {quantity},-
 template.difference_above_background,difference in {quantity} above background,verschil in {quantity} boven achtergrond,diferencia de {quantity} sobre el fondo,-
 velocity_vector,velocity vector,snelheidsvector,vector de velocidad,L/T
-morphological_volume,morphological volume,morfologisch volume,volumen morfológico,L3
 grain_size_percentile,grain-size percentile,korrelgroottepercentiel,percentil del tamaño de grano,L
 template.filtered,filtered {quantity},gefilterd {quantity},filtrado de {quantity},-
 template.relative,relative {quantity},relatieve {quantity},relativo a {quantity},-

@@ -8,10 +8,16 @@ from dataclasses import dataclass
 import numpy as np
 
 from mesh import Mesh
-from params import Params, SimulationParams
+from params import (
+    GRAVITY_M_S2,
+    ROTATION_RATE_S_1,
+    WATER_DENSITY_KG_M3,
+    Params,
+    SimulationParams,
+)
 
-RHO = 1000.0
-G = 9.81
+RHO = WATER_DENSITY_KG_M3
+G = GRAVITY_M_S2
 CHEZY = 40.0
 DAY = 86_400.0
 
@@ -82,7 +88,7 @@ def special_faces(p: Params, mesh: Mesh) -> dict[str, np.ndarray]:
 
 
 def map_fields(p: Params, mesh: Mesh, sim: SimulationParams, run: SubRunTimes) -> dict[str, np.ndarray]:
-    """All time-dependent fields of one sub-run on the global mesh: arrays (time, F[, ...])."""
+    """All time-dependent fields on the global faces and edges."""
     nt = len(run.time)
     bl = np.stack([bed_level(p, mesh.face_s, mesh.face_n, run.morft[k], sim.erosion_rate_m_per_day) for k in range(nt)])
     if sim.nan_faces:
@@ -94,12 +100,76 @@ def map_fields(p: Params, mesh: Mesh, sim: SimulationParams, run: SubRunTimes) -
     stage = p.stage_m[run.index]
     bl_finite = np.where(np.isfinite(bl), bl, bed_level(p, mesh.face_s, mesh.face_n, run.morft[:, None], sim.erosion_rate_m_per_day))
     s1, h, u, taus = hydro_fields(p, mesh.face_s[None, :], bl_finite, stage)
+    eastward = 0.6 * u
+    northward = 0.8 * u
+    chezy = np.full_like(u, CHEZY)
+    water_level_initial = s1 - 0.05
+
+    face_index = np.arange(mesh.n_faces)
+    total_thickness = np.asarray([0.0009, 0.001, 0.0011])[face_index % 3]
+    second_layer = np.full(mesh.n_faces, 0.0002)
+    first_layer = total_thickness - second_layer
+    equality_faces = total_thickness == 0.001
+    first_layer[equality_faces] = 0.001
+    second_layer[equality_faces] = 0.0
+    layer_thickness = np.broadcast_to(
+        np.stack((first_layer, second_layer), axis=-1),
+        (nt, mesh.n_faces, p.n_bed_layers),
+    ).copy()
     frac = np.broadcast_to(layer_fractions(p, mesh.face_s), (nt, mesh.n_faces, p.n_bed_layers, p.n_fractions))
+    fraction_scale = np.arange(1, p.n_fractions + 1, dtype=np.float64) * (1 + stage)
+    transport_x = np.broadcast_to(
+        0.1 * fraction_scale,
+        (nt, mesh.n_faces, p.n_fractions),
+    ).copy()
+    transport_y = np.broadcast_to(
+        0.2 * fraction_scale,
+        (nt, mesh.n_faces, p.n_fractions),
+    ).copy()
+    bedload_x = np.broadcast_to(
+        0.03 * fraction_scale,
+        (nt, mesh.n_faces, p.n_fractions),
+    ).copy()
+    bedload_y = np.broadcast_to(
+        0.04 * fraction_scale,
+        (nt, mesh.n_faces, p.n_fractions),
+    ).copy()
+
+    edge_nodes = mesh.edge_nodes
+    edge_dx = mesh.node_x[edge_nodes[:, 1]] - mesh.node_x[edge_nodes[:, 0]]
+    edge_dy = mesh.node_y[edge_nodes[:, 1]] - mesh.node_y[edge_nodes[:, 0]]
+    edge_length = np.hypot(edge_dx, edge_dy)
+    relative_x = mesh.node_x - p.x0
+    relative_y = mesh.node_y - p.y0
+    edge_x = relative_x[edge_nodes].mean(axis=1)
+    edge_y = relative_y[edge_nodes].mean(axis=1)
+    edge_velocity = (
+        -0.5 * ROTATION_RATE_S_1 * edge_y * edge_dx
+        + 0.5 * ROTATION_RATE_S_1 * edge_x * edge_dy
+    ) / edge_length
+    edge_face_indices = np.clip(mesh.edge_faces, 0, mesh.n_faces - 1)
+    edge_face_mask = mesh.edge_faces >= 0
+    edge_depth = np.sum(
+        h[:, edge_face_indices] * edge_face_mask[None, :, :],
+        axis=-1,
+    ) / edge_face_mask.sum(axis=1)[None, :]
+
     return {
         "mesh2d_mor_bl": bl,
         "mesh2d_s1": s1,
+        "mesh2d_s0": water_level_initial,
         "mesh2d_waterdepth": h,
         "mesh2d_ucmag": u,
+        "mesh2d_ucx": eastward,
+        "mesh2d_ucy": northward,
+        "mesh2d_czs": chezy,
         "mesh2d_taus": taus,
+        "mesh2d_thlyr": layer_thickness,
         "mesh2d_lyrfrac": np.array(frac),
+        "mesh2d_sxtot": transport_x,
+        "mesh2d_sytot": transport_y,
+        "mesh2d_sbcx": bedload_x,
+        "mesh2d_sbcy": bedload_y,
+        "mesh2d_u1": np.broadcast_to(edge_velocity, (nt, mesh.edge_nodes.shape[0])).copy(),
+        "mesh2d_hu": edge_depth,
     }

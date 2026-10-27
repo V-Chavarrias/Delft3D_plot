@@ -25,7 +25,7 @@ from d3dplot.config import (
     load_config_data,
     write_resolved_config,
 )
-from d3dplot.config.selections import TimeRange
+from d3dplot.config.selections import IndicesSelection, TimeRange, TimesConfig
 
 
 def _minimal_data() -> dict[str, Any]:
@@ -99,6 +99,7 @@ def test_defaults_and_global_figure_inheritance() -> None:
     assert default_analysis.times.at == "all"
     assert default_analysis.times.axis == "hydrodynamic"
     assert default_analysis.times.tolerance is None
+    assert default_analysis.active_sediment_thickness_threshold_m == 0.001
     assert default_config.status.stale_after == timedelta(hours=1)
     assert default_config.figure.font_size == 10.0
     assert default_config.figure.font_family == "DejaVu Sans"
@@ -321,3 +322,80 @@ def test_times_alias_is_the_nested_times_model() -> None:
     assert times.tolerance == timedelta(minutes=30)
     assert isinstance(times.at, TimeRange)
     assert times.at.step == timedelta(days=1)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "value",
+    [float("nan"), "NaN", ".nan", [1, float("nan")]],
+)
+def test_matlab_nan_selects_all_times(value: object) -> None:
+    assert TimesConfig(at=value).at == "all"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("value", [float("inf"), "Inf", ".inf"])
+def test_matlab_inf_selects_last_time(value: object) -> None:
+    assert TimesConfig(at=value).at == "last"
+
+
+@pytest.mark.unit
+def test_matlab_inf_can_be_combined_with_one_based_indices() -> None:
+    selection = TimesConfig(at=[1, float("inf")]).at
+
+    assert selection == IndicesSelection(indices=[1], include_last=True)
+    assert TimesConfig(at=[1.0, "Inf"]).at == IndicesSelection(
+        indices=[1],
+        include_last=True,
+    )
+
+
+@pytest.mark.unit
+def test_integer_time_selectors_are_one_based_indices() -> None:
+    assert TimesConfig(at=1).at == IndicesSelection(indices=[1])
+    assert TimesConfig(at=[1, 3]).at == IndicesSelection(indices=[1, 3])
+
+
+@pytest.mark.unit
+def test_time_index_selection_rejects_zero() -> None:
+    with pytest.raises(ValidationError):
+        TimesConfig(at=0)
+    with pytest.raises(ValidationError):
+        TimesConfig(at={"indices": [0]})
+    with pytest.raises(ValidationError):
+        TimesConfig(at=[1, float("-inf")])
+
+
+@pytest.mark.unit
+def test_active_sediment_thickness_threshold_is_configurable() -> None:
+    config = ProjectConfig.model_validate(
+        {
+            **_minimal_data(),
+            "analyses": [
+                {
+                    "analysis": "map2d",
+                    "variables": ["ba_mor"],
+                    "active_sediment_thickness_threshold_m": 0.025,
+                }
+            ],
+        }
+    )
+
+    assert config.analyses[0].active_sediment_thickness_threshold_m == 0.025
+
+
+@pytest.mark.unit
+def test_active_sediment_thickness_threshold_cannot_be_negative() -> None:
+    with pytest.raises(ValidationError):
+        ProjectConfig.model_validate(
+            {
+                **_minimal_data(),
+                "analyses": [
+                    {
+                        "analysis": "map2d",
+                        "variables": ["ba_mor"],
+                        "active_sediment_thickness_threshold_m": -0.001,
+                    }
+                ],
+            }
+        )

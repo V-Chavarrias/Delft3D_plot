@@ -4,8 +4,8 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping, Sequence
-from contextlib import AbstractContextManager
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import AbstractContextManager, ExitStack, contextmanager, nullcontext
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
@@ -95,6 +95,42 @@ class MapReader:
             merge_plan_path,
         )
 
+    @contextmanager
+    def session(self, subrun_index: int) -> Iterator[MapReaderSession]:
+        """Open every map partition once for a sub-run and reuse the handles."""
+        subrun = _find_subrun(self._simulation, subrun_index)
+        stack = ExitStack()
+        datasets: list[_NetCDFDataset] = []
+        try:
+            for path in subrun.map_files:
+                try:
+                    with _NETCDF4_READ_LOCK:
+                        dataset = stack.enter_context(
+                            _netcdf4_module().Dataset(path, mode="r")
+                        )
+                except (
+                    EOFError,
+                    IndexError,
+                    OSError,
+                    RuntimeError,
+                    TypeError,
+                    ValueError,
+                ) as error:
+                    raise MapReaderError(
+                        _issue(
+                            "V-OUT-002",
+                            "error",
+                            path,
+                            f"Could not open map partition: {error}",
+                            "Restore or regenerate the affected map output.",
+                        )
+                    ) from error
+                datasets.append(dataset)
+            yield MapReaderSession(self, subrun_index, subrun, datasets)
+        finally:
+            with _NETCDF4_READ_LOCK:
+                stack.close()
+
     def read(
         self,
         spec: VariableSpec,
@@ -102,6 +138,7 @@ class MapReader:
         subrun_index: int,
         local_index: int,
         corrupt_partitions: Sequence[int] = (),
+        _session: MapReaderSession | None = None,
     ) -> MapReadResult:
         """Read one raw variable at one map index in canonical dimension order."""
         if spec.kind is not VariableKind.RAW:
@@ -116,6 +153,11 @@ class MapReader:
                     "Request a grid quantity or use a line-sampling analysis.",
                 )
             )
+
+        if _session is not None and (
+            _session._reader is not self or _session.subrun_index != subrun_index
+        ):
+            raise ValueError("MapReader session does not match this sub-run.")
 
         subrun = _find_subrun(self._simulation, subrun_index)
         plan = self._plans_by_subrun.get(subrun_index)
@@ -197,8 +239,13 @@ class MapReader:
                 partition,
             )
             try:
+                dataset_context = (
+                    _session._dataset_context(partition)
+                    if _session is not None
+                    else _netcdf4_module().Dataset(path, mode="r")
+                )
                 with _NETCDF4_READ_LOCK:
-                    with _netcdf4_module().Dataset(path, mode="r") as dataset:
+                    with dataset_context as dataset:
                         if selected_name is None:
                             selected_name = next(
                                 (
@@ -419,6 +466,66 @@ class MapReader:
             edge_orientation=orientations,
             issues=tuple(issues),
         )
+
+
+class MapReaderSession:
+    """A read-only set of open map partitions belonging to one sub-run."""
+
+    def __init__(
+        self,
+        reader: MapReader,
+        subrun_index: int,
+        subrun: SubRun,
+        datasets: Sequence[_NetCDFDataset],
+    ) -> None:
+        self._reader = reader
+        self.subrun_index = subrun_index
+        self._subrun = subrun
+        self._datasets = tuple(datasets)
+        if len(self._datasets) != len(subrun.map_files):
+            raise ValueError("MapReader session does not cover every partition.")
+
+    def read(
+        self,
+        spec: VariableSpec,
+        *,
+        local_index: int,
+        corrupt_partitions: Sequence[int] = (),
+    ) -> MapReadResult:
+        """Read one variable using this session's already-open map files."""
+        return self._reader.read(
+            spec,
+            subrun_index=self.subrun_index,
+            local_index=local_index,
+            corrupt_partitions=corrupt_partitions,
+            _session=self,
+        )
+
+    def has_variable(self, spec: VariableSpec) -> bool:
+        """Return whether the selected NetCDF candidate exists in every partition."""
+        if spec.kind is not VariableKind.RAW or spec.location is VariableLocation.LINE:
+            return False
+        with _NETCDF4_READ_LOCK:
+            if not self._datasets:
+                return False
+            selected_name = next(
+                (
+                    candidate
+                    for candidate in spec.netcdf_candidates
+                    if candidate in self._datasets[0].variables
+                ),
+                None,
+            )
+            return selected_name is not None and all(
+                selected_name in dataset.variables for dataset in self._datasets[1:]
+            )
+
+    def _dataset_context(
+        self, partition: int
+    ) -> AbstractContextManager[_NetCDFDataset]:
+        if partition < 0 or partition >= len(self._datasets):
+            raise ValueError(f"Invalid partition index {partition}.")
+        return nullcontext(self._datasets[partition])
 
 
 def _load_plan_mappings(

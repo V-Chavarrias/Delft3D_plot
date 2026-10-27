@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import csv
+import json
 from datetime import timedelta
 from pathlib import Path
 
@@ -11,7 +12,17 @@ import numpy as np
 
 from fields import SubRunTimes, map_fields
 from mesh import Mesh
-from params import REFERENCE_TIME, Params, SimulationParams
+from params import (
+    GENERATOR_VERSION,
+    GRAVITY_M_S2,
+    REFERENCE_TIME,
+    ROTATION_RATE_S_1,
+    SEDIMENT_DIAMETERS_M,
+    SEDIMENT_DENSITIES_KG_M3,
+    WATER_DENSITY_KG_M3,
+    Params,
+    SimulationParams,
+)
 from project_inputs import REGIONS, km_of_s
 
 SEGMENT_LENGTH = 250.0
@@ -61,6 +72,7 @@ def write_expected(folder: Path, p: Params, mesh: Mesh, runs: list[SubRunTimes])
 
     for sim in p.simulations:
         _write_smb_stats(folder, p, mesh, runs, sim, axis, seg, n_seg)
+        _write_quantity_expected(folder, p, mesh, runs[0], sim)
 
 
 def _write_smb_stats(folder: Path, p: Params, mesh: Mesh, runs, sim: SimulationParams, axis, seg, n_seg):
@@ -82,3 +94,95 @@ def _write_smb_stats(folder: Path, p: Params, mesh: Mesh, runs, sim: SimulationP
                     "sum_per_length": v.sum() / SEGMENT_LENGTH,
                 })
         _write_csv(folder / f"smb_{sim.label}_{region}_250m.csv", rows)
+
+
+def _write_quantity_expected(
+    folder: Path,
+    p: Params,
+    mesh: Mesh,
+    run: SubRunTimes,
+    sim: SimulationParams,
+) -> None:
+    """Write hand-computable sample outputs for the quantity-engine integration test."""
+    fields = map_fields(p, mesh, sim, run)
+    time_index = 1
+    candidates = np.flatnonzero(
+        (mesh.face_n > -p.channel_half_width)
+        & (mesh.face_n < p.channel_half_width)
+        & (np.arange(mesh.n_faces) % 3 == 1)
+        & (fields["mesh2d_waterdepth"][time_index] > 0.01)
+    )
+    face_index = int(candidates[0])
+    velocity = float(fields["mesh2d_ucmag"][time_index, face_index])
+    depth = float(fields["mesh2d_waterdepth"][time_index, face_index])
+    water_level = float(fields["mesh2d_s1"][time_index, face_index])
+    water_level_initial = float(fields["mesh2d_s0"][time_index, face_index])
+    shear_stress = float(fields["mesh2d_taus"][time_index, face_index])
+    diameters = np.asarray(SEDIMENT_DIAMETERS_M[: p.n_fractions], dtype=np.float64)
+    densities = np.asarray(
+        SEDIMENT_DENSITIES_KG_M3[: p.n_fractions],
+        dtype=np.float64,
+    )
+    relative_density = (densities - WATER_DENSITY_KG_M3) / WATER_DENSITY_KG_M3
+    fraction = fields["mesh2d_lyrfrac"][time_index, face_index, 0]
+    grain_cumulative = np.concatenate(
+        ([0.0], np.cumsum(fraction), [1.0 + 1e-8])
+    )
+    grain_boundaries = np.concatenate(
+        ([diameters[0] / 2.0], diameters, [2.0 * diameters[-1]])
+    )
+    grain_percentiles = {
+        f"d{percentile}": float(
+            np.interp(percentile / 100.0, grain_cumulative, grain_boundaries)
+        )
+        for percentile in (10, 50, 90)
+    }
+    layer_thickness = fields["mesh2d_thlyr"][time_index, face_index]
+    suspended_x = fields["mesh2d_sxtot"][time_index, face_index]
+    suspended_y = fields["mesh2d_sytot"][time_index, face_index]
+    bedload_x = fields["mesh2d_sbcx"][time_index, face_index]
+    bedload_y = fields["mesh2d_sbcy"][time_index, face_index]
+    transport_magnitudes = np.hypot(suspended_x, suspended_y)
+    expected = {
+        "generator_version": GENERATOR_VERSION,
+        "simulation": sim.label,
+        "time_index": time_index,
+        "face_index": face_index,
+        "gravity_m_s2": GRAVITY_M_S2,
+        "water_density_kg_m3": WATER_DENSITY_KG_M3,
+        "sediment_diameters_m": diameters.tolist(),
+        "sediment_densities_kg_m3": densities.tolist(),
+        "froude_number": velocity / np.sqrt(GRAVITY_M_S2 * depth),
+        "specific_discharge_m2_s": velocity * depth,
+        "energy_head_m": water_level + velocity**2 / (2.0 * GRAVITY_M_S2),
+        "shields_number_times_diameter_m": (
+            shear_stress / (GRAVITY_M_S2 * WATER_DENSITY_KG_M3 * relative_density)
+        ).tolist(),
+        "velocity_direction_degrees": float(
+            np.mod(np.degrees(np.arctan2(0.6 * velocity, 0.8 * velocity)), 360.0)
+        ),
+        "velocity_vector_m_s": [0.6 * velocity, 0.8 * velocity],
+        "water_level_rate_m_s": (water_level - water_level_initial)
+        / float(run.time[time_index] - run.time[time_index - 1]),
+        "vorticity_s_1": ROTATION_RATE_S_1,
+        "total_sediment_thickness_m": float(np.sum(layer_thickness)),
+        "morphological_active_area_m2": (
+            float(mesh.face_area[face_index])
+            if np.sum(layer_thickness) >= 0.001
+            else 0.0
+        ),
+        "sediment_transport_magnitude_m2_s": transport_magnitudes.tolist(),
+        "sediment_transport_magnitude_sum_m2_s": float(
+            np.sum(transport_magnitudes)
+        ),
+        "bed_load_transport_magnitude_m2_s": np.hypot(bedload_x, bedload_y).tolist(),
+        "mean_grain_size_arithmetic_m": float(np.sum(fraction * diameters)),
+        "mean_grain_size_geometric_m": float(
+            np.exp(np.sum(fraction * np.log(diameters)))
+        ),
+        **grain_percentiles,
+    }
+    (folder / f"quantities_{sim.label}.json").write_text(
+        json.dumps(expected, indent=2) + "\n",
+        encoding="utf-8",
+    )
