@@ -1,0 +1,94 @@
+{
+  "provider": "rijntakken",
+  "tags": ["RH", "Rhein", "BR", "PK", "WA", "WL", "BO", "NI", "NR", "LE", "IJ"],
+  "ds_pol_km": 0.1,
+  "branch_aliases": {
+    "wl": "wa",
+    "rh": "rhein"
+  },
+  "cutoffs": {
+    "IJ": [[891.9, 896.0], [902.5, 903.0], [905.3, 910.0]]
+  },
+  "tracks": {
+    "WA": {
+      "rules": [
+        {"above_km": 960.15, "branch": "NI", "requires_tag": "NI"},
+        {"above_km": 952.85, "branch": "BO", "requires_tag": "BO"},
+        {"above_km": 867.0, "branch": "WA"},
+        {"above_km": 852.9, "branch": "BR"}
+      ],
+      "default_branch": "Rhein"
+    },
+    "WL": {
+      "rules": [
+        {"above_km": 960.15, "branch": "NI", "requires_tag": "NI"},
+        {"above_km": 952.85, "branch": "BO", "requires_tag": "BO"},
+        {"above_km": 867.0, "branch": "WA"},
+        {"above_km": 852.9, "branch": "BR"}
+      ],
+      "default_branch": "Rhein"
+    },
+    "BO": {
+      "rules": [
+        {"above_km": 960.15, "branch": "NI", "requires_tag": "NI"},
+        {"above_km": 952.85, "branch": "BO", "requires_tag": "BO"},
+        {"above_km": 867.0, "branch": "WA"},
+        {"above_km": 852.9, "branch": "BR"}
+      ],
+      "default_branch": "Rhein"
+    },
+    "NI": {
+      "rules": [
+        {"above_km": 960.15, "branch": "NI", "requires_tag": "NI"},
+        {"above_km": 952.85, "branch": "BO", "requires_tag": "BO"},
+        {"above_km": 867.0, "branch": "WA"},
+        {"above_km": 852.9, "branch": "BR"}
+      ],
+      "default_branch": "Rhein"
+    },
+    "IJ": {
+      "rules": [
+        {"above_km": 878.05, "branch": "IJ"},
+        {"above_km": 867.05, "branch": "PK"},
+        {"above_km": 852.9, "branch": "BR"}
+      ],
+      "default_branch": "Rhein"
+    },
+    "NR": {
+      "rules": [
+        {"above_km": 929.35, "branch": "LE"},
+        {"above_km": 878.08, "branch": "NR"},
+        {"above_km": 867.05, "branch": "PK"},
+        {"above_km": 852.9, "branch": "BR"}
+      ],
+      "default_branch": "Rhein"
+    },
+    "LE": {
+      "rules": [
+        {"above_km": 929.35, "branch": "LE"},
+        {"above_km": 878.08, "branch": "NR"},
+        {"above_km": 867.05, "branch": "PK"},
+        {"above_km": 852.9, "branch": "BR"}
+      ],
+      "default_branch": "Rhein"
+    },
+    "PK": {
+      "rules": [],
+      "default_branch": "PK",
+      "valid_range_km": [867.05, 878.05]
+    },
+    "BR": {
+      "rules": [],
+      "default_branch": "BR"
+    },
+    "RH": {
+      "rules": [],
+      "default_branch": "Rhein"
+    },
+    "Rhein": {
+      "rules": [],
+      "default_branch": "Rhein"
+    }
+  },
+  "cutoff_tolerance_km": 0.01
+}

@@ -95,7 +95,11 @@ class RiverKmConfig(ConfigModel):
     track: str | None = Field(default=None, description="Optional river track name.")
     branches: list[str] = Field(
         default_factory=list,
-        description="Optional river branches to include.",
+        description=(
+            "Optional generic-provider branch labels: one branch broadcast to all "
+            "km centres, or one branch per centre. Rijntakken and Maas branches "
+            "are resolved by their providers."
+        ),
     )
     half_width_m: PositiveFloat = Field(
         default=1000.0,

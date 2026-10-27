@@ -140,6 +140,13 @@ the `viridis` colormap, `auto` rendering, and `auto` aspect. The
 `river_km_statistics` analysis defaults to `mean_area_weighted` and the
 `profile` view.
 
+River-km files use the fixed comma-delimited `x, y, label, km` format. The
+branch is the label suffix after the first underscore and is matched
+case-insensitively. Rijntakken files require `river_km.track`; Maas files switch
+from `MA` to `BM` at 230.5 km only when `BM` is present. For a generic file with
+multiple branch tags, set `river_km.branches` to one branch to use throughout or
+one branch per requested km centre.
+
 The current schema recognizes the built-in `map2d` and `river_km_statistics`
 analyses. Plugin configuration models will be discovered and included in
 validation and JSON Schema when the planned `d3dplot.analyses` registry is

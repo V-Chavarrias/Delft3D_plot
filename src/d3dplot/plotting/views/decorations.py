@@ -17,7 +17,7 @@ from matplotlib.collections import LineCollection
 from d3dplot import __version__
 from d3dplot.config.figure import Extent, FigureConfig, MapViewConfig
 from d3dplot.config.project import ProjectConfig
-from d3dplot.plotting.views.river_km import (
+from d3dplot.river_km.file import (
     RiverKmPoint,
     read_river_km_points,
 )

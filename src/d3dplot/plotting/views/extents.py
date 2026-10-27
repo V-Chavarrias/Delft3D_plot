@@ -13,7 +13,7 @@ import netCDF4
 from d3dplot import __version__
 from d3dplot.config.figure import Extent, MapViewConfig
 from d3dplot.execution.cache import read_cache_fingerprints
-from d3dplot.plotting.views.river_km import RiverKmFileError, read_river_km_points
+from d3dplot.river_km.file import RiverKmFileError, read_river_km_points
 from d3dplot.store import (
     CACHE_SCHEMA_VERSION,
     OutputLayout,

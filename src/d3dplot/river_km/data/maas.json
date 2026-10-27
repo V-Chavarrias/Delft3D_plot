@@ -1,0 +1,6 @@
+{
+  "provider": "maas",
+  "tags": ["MA", "BM"],
+  "ds_pol_km": 0.1,
+  "maas_switch_km": 230.5
+}
