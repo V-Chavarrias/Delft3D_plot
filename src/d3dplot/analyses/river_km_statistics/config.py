@@ -25,7 +25,6 @@ Statistic: TypeAlias = Literal[
     "sum",
     "sum_per_length",
     "mean_area_weighted",
-    "dominant",
 ]
 View: TypeAlias = Literal[
     "profile",

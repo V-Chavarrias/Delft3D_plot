@@ -1,0 +1,325 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Tests for river-km segment statistics and post-processing."""
+
+from __future__ import annotations
+
+import csv
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import pytest
+from pydantic import ValidationError
+
+from d3dplot import __version__
+from d3dplot.analyses.river_km_statistics.config import (
+    RiverKmStatisticsConfig,
+)
+from d3dplot.analyses.river_km_statistics.process import (
+    RiverKmStatisticsError,
+    bed_slope_streamwise,
+    component_labels,
+    compute_cumulative,
+    compute_segment_statistics,
+    compute_segment_width,
+    compute_time_average,
+    difference_regions,
+    difference_simulation_relative,
+    multiply_by_width,
+    prepare_region_segments,
+)
+from d3dplot.store import OutputLayout, initialize_output_root
+from d3dplot.variables.context import QuantityRequest
+from d3dplot.variables.geometry import GridGeometry
+from d3dplot.variables.registry import get_variable_spec
+
+
+@pytest.mark.unit
+def test_segment_statistics_use_componentwise_finite_masks_and_sample_std() -> None:
+    result = compute_segment_statistics(
+        values=[[1.0, 10.0], [3.0, np.nan], [np.inf, 30.0], [5.0, 50.0]],
+        segment_index=[0, 0, 1, 1],
+        face_area=[1.0, 2.0, 1.0, np.nan],
+        segment_length_m=[2.0, 4.0, 10.0],
+    )
+
+    assert result["mean"][0, 0] == pytest.approx(2.0)
+    assert result["std"][0, 0] == pytest.approx(np.sqrt(2.0))
+    assert result["max"][0, 0] == pytest.approx(3.0)
+    assert result["min"][0, 0] == pytest.approx(1.0)
+    assert result["count"][0, 0] == 2
+    assert result["sum"][0, 0] == pytest.approx(4.0)
+    assert result["sum_per_length"][0, 0] == pytest.approx(2.0)
+    assert result["mean_area_weighted"][0, 0] == pytest.approx(7.0 / 3.0)
+
+    assert result["mean"][0, 1] == pytest.approx(10.0)
+    assert np.isnan(result["std"][0, 1])
+    assert result["count"][0, 1] == 1
+    assert result["mean"][1, 0] == pytest.approx(5.0)
+    assert result["count"][1, 0] == 1
+    assert result["mean"][1, 1] == pytest.approx(40.0)
+    assert result["std"][1, 1] == pytest.approx(np.sqrt(200.0))
+    assert result["mean_area_weighted"][1, 1] == pytest.approx(30.0)
+    assert result["count"][2, 0] == 0
+    assert np.isnan(result["mean"][2, 0])
+    assert np.isnan(result["sum"][2, 0])
+
+
+@pytest.mark.unit
+def test_streamwise_slope_uses_irregular_centres_and_nan_endpoints() -> None:
+    result = bed_slope_streamwise(
+        [[10.0, 2.0], [8.0, 4.0], [4.0, 8.0], [1.0, 10.0]],
+        [1.0, 1.5, 2.5, 4.0],
+    )
+
+    assert np.isnan(result[0]).all()
+    np.testing.assert_allclose(result[1], [-0.004, 0.004])
+    np.testing.assert_allclose(result[2], [-0.0028, 0.0024])
+    assert np.isnan(result[-1]).all()
+
+
+@pytest.mark.unit
+def test_width_multiplication_and_region_difference_preserve_dimensions() -> None:
+    width = compute_segment_width(
+        [4.0, -1.0, np.nan, 6.0],
+        [0, 0, 1, 1],
+        [2.0, 4.0],
+    )
+    np.testing.assert_allclose(width, [2.0, 1.5])
+    np.testing.assert_allclose(
+        multiply_by_width([[3.0, 5.0], [2.0, 4.0]], width),
+        [[6.0, 10.0], [3.0, 6.0]],
+    )
+    np.testing.assert_allclose(
+        difference_regions([5.0, np.nan], [2.0, 1.0]),
+        [3.0, np.nan],
+        equal_nan=True,
+    )
+
+
+@pytest.mark.unit
+def test_time_average_uses_centre_to_corner_durations_and_propagates_nan() -> None:
+    start = datetime(2024, 1, 1, tzinfo=UTC)
+    times = (start, start + timedelta(seconds=2), start + timedelta(seconds=6))
+    values = np.asarray([[0.0, 1.0], [2.0, np.nan], [4.0, 3.0]])
+
+    result = compute_time_average(values, times)
+
+    assert result["mean"][0] == pytest.approx(22.0 / 9.0)
+    expected_variance = (
+        2.0 * (0.0 - 22.0 / 9.0) ** 2
+        + 3.0 * (2.0 - 22.0 / 9.0) ** 2
+        + 4.0 * (4.0 - 22.0 / 9.0) ** 2
+    ) / 9.0
+    assert result["std"][0] == pytest.approx(np.sqrt(expected_variance))
+    assert result["max"][0] == 4.0
+    assert result["min"][0] == 0.0
+    expected_dominant = (
+        (2.0 * 0.0 ** (5.0 / 3.0) + 3.0 * 2.0 ** (5.0 / 3.0) + 4.0 * 4.0 ** (5.0 / 3.0))
+        / 9.0
+    ) ** (3.0 / 5.0)
+    assert result["dominant"][0] == pytest.approx(expected_dominant)
+    assert np.isnan(result["mean"][1])
+    assert np.isnan(result["max"][1])
+    assert np.isnan(result["dominant"][1])
+
+
+@pytest.mark.unit
+def test_cumulative_uses_left_block_durations_and_propagates_nan() -> None:
+    start = datetime(2024, 1, 1, tzinfo=UTC)
+    times = (start, start + timedelta(seconds=2), start + timedelta(seconds=6))
+
+    np.testing.assert_allclose(
+        compute_cumulative([2.0, 3.0, 4.0], times),
+        [0.0, 4.0, 16.0],
+    )
+    np.testing.assert_allclose(
+        compute_cumulative([2.0, np.nan, 4.0], times),
+        [0.0, 4.0, np.nan],
+        equal_nan=True,
+    )
+
+
+@pytest.mark.unit
+def test_relative_simulation_difference_masks_zero_reference() -> None:
+    np.testing.assert_allclose(
+        difference_simulation_relative(
+            [12.0, 1.0, np.nan],
+            [10.0, 0.0, 2.0],
+        ),
+        [20.0, np.nan, np.nan],
+        equal_nan=True,
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "times",
+    [
+        (datetime(2024, 1, 1, tzinfo=UTC),),
+        (
+            datetime(2024, 1, 1, tzinfo=UTC),
+            datetime(2024, 1, 1, tzinfo=UTC),
+        ),
+    ],
+)
+def test_time_average_requires_two_distinct_ordered_outputs(
+    times: tuple[datetime, ...],
+) -> None:
+    with pytest.raises(RiverKmStatisticsError) as error:
+        compute_time_average(np.ones((len(times), 1)), times)
+
+    assert error.value.code == "V-SMB-014"
+
+
+@pytest.mark.unit
+def test_dominant_is_a_time_average_result_not_a_spatial_statistic() -> None:
+    with pytest.raises(ValidationError):
+        RiverKmStatisticsConfig.model_validate(
+            {
+                "variables": ["bed_level"],
+                "regions": [{"name": "region", "polygon": "region.shp"}],
+                "river_km": {
+                    "file": "river.csv",
+                    "sets": {"250m": [0.125, 0.375]},
+                },
+                "statistics": ["dominant"],
+            }
+        )
+
+
+@pytest.mark.unit
+def test_component_labels_follow_retained_quantity_dimensions() -> None:
+    spec = get_variable_spec("layer_fraction")
+    assert component_labels(
+        spec,
+        QuantityRequest("layer_fraction", fractions=(1, 2), layers=(0,)),
+        2,
+        fraction_names=("fine", "coarse"),
+    ) == ("fine", "coarse")
+    assert (
+        component_labels(
+            spec,
+            QuantityRequest("layer_fraction", fractions=(1,), layers=(0,)),
+            0,
+            fraction_names=("fine", "coarse"),
+        )
+        == ()
+    )
+
+
+@pytest.mark.integration
+def test_geometry_cache_reuses_assignment_and_matches_synthetic_segments(
+    synthetic_case: Any,
+    tmp_path: Path,
+) -> None:
+    from expected import EXACT_REGIONS, SEGMENT_LENGTH
+    from mesh import make_centreline, make_mesh
+    from params import Params
+
+    from d3dplot.simulation.discover import discover_simulation
+    from d3dplot.simulation.inspection import inspect_simulation
+
+    simulation, report = discover_simulation(synthetic_case / "simulations" / "r001")
+    assert simulation is not None
+    assert report.is_valid
+    layout = OutputLayout(tmp_path / "d3dplot")
+    inspection, inspection_report = inspect_simulation(
+        simulation,
+        layout,
+        forbidden_roots=(),
+    )
+    assert inspection is not None, inspection_report.to_text()
+    guard = initialize_output_root(
+        layout,
+        tool_version=__version__,
+        forbidden_roots=(),
+    )
+    params = Params()
+    mesh = make_mesh(params, make_centreline(params))
+    count = int(round(params.length / SEGMENT_LENGTH))
+    centres = params.km0 + (np.arange(count, dtype=np.float64) + 0.5) * (
+        SEGMENT_LENGTH / 1000.0
+    )
+    config = RiverKmStatisticsConfig.model_validate(
+        {
+            "variables": ["bed_level"],
+            "regions": [
+                {
+                    "name": name,
+                    "polygon": str(
+                        synthetic_case / "inputs" / "regions" / f"{name}.shp"
+                    ),
+                }
+                for name in EXACT_REGIONS
+            ],
+            "river_km": {
+                "file": str(synthetic_case / "inputs" / "rkm" / "rkm.csv"),
+                "sets": {"250m": centres.tolist()},
+                "half_width_m": 750.0,
+            },
+            "statistics": ["mean", "count", "sum"],
+        }
+    )
+    grid_geometry = GridGeometry.from_path(inspection.grid_paths[0])
+    arguments = (
+        config,
+        grid_geometry,
+        layout,
+        guard,
+        inspection.grid_paths[0],
+        inspection.merge_plan_path,
+    )
+    first = prepare_region_segments(*arguments, model_crs="EPSG:28992")
+    second = prepare_region_segments(*arguments, model_crs="EPSG:28992")
+    assert len(tuple(layout.cache_inputs.glob("river_km_*.nc"))) == 1
+    assert any(
+        "input cache created" in choice.casefold()
+        for item in first
+        for choice in item.choices
+    )
+    assert any(
+        "input cache reused" in choice.casefold()
+        for item in second
+        for choice in item.choices
+    )
+
+    expected_rows: dict[tuple[str, int], list[int]] = {}
+    with (synthetic_case / "expected" / "cells_per_segment_250m.csv").open(
+        newline="", encoding="utf-8"
+    ) as file:
+        for row in csv.DictReader(file):
+            expected_rows[(row["region"], int(row["segment"]))] = [
+                int(global_number) - 1 for global_number in row["globalnr"].split()
+            ]
+    mesh_indices_by_coordinates = {
+        (float(x), float(y)): index
+        for index, (x, y) in enumerate(zip(mesh.face_x, mesh.face_y, strict=True))
+    }
+    grid_to_mesh = np.asarray(
+        [
+            mesh_indices_by_coordinates[(float(x), float(y))]
+            for x, y in zip(
+                grid_geometry.face_x,
+                grid_geometry.face_y,
+                strict=True,
+            )
+        ],
+        dtype=np.int64,
+    )
+    assert len(first) == len(EXACT_REGIONS)
+    for prepared, cached in zip(first, second, strict=True):
+        assert prepared.cache_path.is_file()
+        assert cached.cache_action == "reused"
+        np.testing.assert_array_equal(
+            cached.assignment.segment,
+            prepared.assignment.segment,
+        )
+        for segment_index in range(count):
+            grid_faces = np.flatnonzero(prepared.assignment.segment == segment_index)
+            actual_mesh_indices = sorted(grid_to_mesh[grid_faces].tolist())
+            assert (
+                actual_mesh_indices
+                == expected_rows[(prepared.region_name, segment_index)]
+            )

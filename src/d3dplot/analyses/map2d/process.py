@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC
 from importlib import import_module
@@ -14,6 +14,13 @@ from typing import Any, Literal
 from urllib.parse import quote
 
 from d3dplot import __version__
+from d3dplot.analyses.river_km_statistics.config import RiverKmStatisticsConfig
+from d3dplot.analyses.river_km_statistics.process import (
+    PreparedRegionSegments,
+    RiverKmStatisticsError,
+    prepare_region_segments,
+    write_segment_statistics_cache,
+)
 from d3dplot.execution.cache import CacheFingerprintReadError, read_cache_fingerprints
 from d3dplot.execution.runner import TaskDiagnostic, TaskOutputReport
 from d3dplot.execution.tasks import ProcessTask
@@ -39,8 +46,10 @@ from d3dplot.variables.geometry import GridGeometry
 from d3dplot.variables.registry import (
     UnknownVariableError,
     VariableLocation,
+    VariableSpec,
     get_variable_spec,
 )
+from d3dplot.variables.selection import quantity_selection_label
 
 _Array = Any
 np: Any = import_module("numpy")
@@ -68,7 +77,7 @@ class Map2DProcessResult(TaskOutputReport):
 
 
 class Map2DTaskProcessor:
-    """Spawn-safe worker that reuses inspected inputs across process tasks."""
+    """Shared process worker for map2d and river-km analysis tasks."""
 
     def __init__(
         self,
@@ -79,17 +88,24 @@ class Map2DTaskProcessor:
         guard: OutputWriteGuard,
         *,
         analysis_keys: Sequence[str],
+        river_km_analyses: Mapping[str, RiverKmStatisticsConfig] | None = None,
+        model_crs: str | None = None,
         dtype: Literal["float32", "float64"] = "float32",
         on_corrupt_output: Literal["mask", "error", "skip"] = "mask",
     ) -> None:
         if not simulation_label or simulation_label != simulation_label.strip():
             raise ValueError("simulation_label must be non-empty and trimmed.")
-        if not analysis_keys or any(
-            not key or key != key.strip() for key in analysis_keys
-        ):
-            raise ValueError("At least one trimmed map2d analysis key is required.")
+        if any(not key or key != key.strip() for key in analysis_keys):
+            raise ValueError("Map2d analysis keys must be trimmed and non-empty.")
         if len(set(analysis_keys)) != len(analysis_keys):
             raise ValueError("Map2d analysis keys must be unique.")
+        smb_analyses = dict(river_km_analyses or {})
+        if any(not key or key != key.strip() for key in smb_analyses):
+            raise ValueError("River-km analysis keys must be trimmed and non-empty.")
+        if set(analysis_keys) & set(smb_analyses):
+            raise ValueError("Map2d and river-km analysis keys must be distinct.")
+        if not analysis_keys and not smb_analyses:
+            raise ValueError("At least one analysis key is required.")
         if dtype not in {"float32", "float64"}:
             raise ValueError(f"Unsupported output dtype: {dtype!r}.")
         if on_corrupt_output not in {"mask", "error", "skip"}:
@@ -104,7 +120,10 @@ class Map2DTaskProcessor:
         self._inspection = inspection
         self._layout = layout
         self._guard = guard
-        self._analysis_keys = frozenset(analysis_keys)
+        self._map2d_analysis_keys = frozenset(analysis_keys)
+        self._river_km_analyses = smb_analyses
+        self._analysis_keys = self._map2d_analysis_keys | frozenset(smb_analyses)
+        self._model_crs = model_crs
         self._dtype = dtype
         self._on_corrupt_output = on_corrupt_output
         self._reader: MapReader | None = None
@@ -112,9 +131,13 @@ class Map2DTaskProcessor:
         self._time_axis: TimeAxis | None = None
         self._geometry: dict[int, GridGeometry] = {}
         self._input_fingerprints: dict[int, tuple[str, ...]] = {}
+        self._smb_geometry: dict[
+            tuple[str, int],
+            tuple[PreparedRegionSegments, ...],
+        ] = {}
 
     def __call__(self, task: ProcessTask) -> Map2DProcessResult:
-        """Compute only map2d work assigned to this process task."""
+        """Compute selected map2d and river-km work assigned to this task."""
         if task.simulation_label != self._simulation_label:
             raise ValueError(
                 f"Task simulation {task.simulation_label!r} does not match "
@@ -149,7 +172,7 @@ class Map2DTaskProcessor:
         engine = self._engine
         time_axis = self._time_axis
         if reader is None or engine is None or time_axis is None:
-            raise RuntimeError("Map2d task processor failed to initialize.")
+            raise RuntimeError("Shared process task processor failed to initialize.")
 
         subrun = subruns[task.subrun_index]
         plan_index = reader.plan_index(task.subrun_index)
@@ -170,6 +193,45 @@ class Map2DTaskProcessor:
         output_paths: list[Path] = []
         choices: list[str] = []
         issues: list[ValidationIssue] = []
+        smb_analysis_keys = sorted(
+            {
+                work.analysis_key
+                for _, works in selected_times
+                for work in works
+                if work.analysis_key in self._river_km_analyses
+            }
+        )
+        for analysis_key in smb_analysis_keys:
+            cache_key = (analysis_key, plan_index)
+            if cache_key in self._smb_geometry:
+                continue
+            try:
+                prepared_segments = prepare_region_segments(
+                    self._river_km_analyses[analysis_key],
+                    grid_geometry,
+                    self._layout,
+                    self._guard,
+                    grid_path,
+                    self._inspection.merge_plan_path,
+                    model_crs=self._model_crs,
+                )
+            except RiverKmStatisticsError as error:
+                raise Map2DProcessError(
+                    ValidationIssue(
+                        code=error.code,
+                        level="error",
+                        location=analysis_key,
+                        message=str(error),
+                        hint=(
+                            "Check the configured river-km regions, geometry, and sets."
+                        ),
+                    )
+                ) from error
+            self._smb_geometry[cache_key] = prepared_segments
+            for item in prepared_segments:
+                choices.extend(item.choices)
+                issues.extend(item.issues)
+
         with reader.session(task.subrun_index) as map_session:
             for time_work, analysis_work in selected_times:
                 entry = time_work.entry
@@ -212,6 +274,10 @@ class Map2DTaskProcessor:
                     previous_water_level=previous_water_level,
                 )
                 quantity_session = engine.at_time(map_session, entry, context)
+                quantity_values: dict[
+                    QuantityRequest,
+                    tuple[VariableSpec, _Array],
+                ] = {}
                 for request in requests:
                     spec = quantity_session.resolve_spec(request)
                     if spec.location is not VariableLocation.FACE:
@@ -221,19 +287,34 @@ class Map2DTaskProcessor:
                                 level="error",
                                 location=request.requested_name,
                                 message=(
-                                    f"Map2d quantity {request.requested_name!r} is "
+                                    f"Analysis quantity {request.requested_name!r} is "
                                     f"{spec.location.value}-located; face values are "
                                     "required."
                                 ),
                                 hint=(
-                                    "Request a face-located quantity or use an "
-                                    "analysis designed for this grid location."
+                                    "Request a face-located quantity for map2d or "
+                                    "river-km statistics."
                                 ),
                             )
                         )
                     values = quantity_session.get(request)
-                    values = _face_values(values, grid_geometry.n_faces, request)
-                    selection = _selection_label(spec.name, request)
+                    quantity_values[request] = (spec, values)
+
+                map_requests = tuple(
+                    dict.fromkeys(
+                        request
+                        for work in analysis_work
+                        if work.analysis_key in self._map2d_analysis_keys
+                        for request in work.quantities
+                    )
+                )
+                for request in map_requests:
+                    spec, raw_values = quantity_values[request]
+                    values = _face_values(raw_values, grid_geometry.n_faces, request)
+                    selection = quantity_selection_label(
+                        request,
+                        variable_name=spec.name,
+                    )
                     output_path = map2d_output_path(self._layout, request, entry)
                     parameters = _fingerprint_parameters(
                         spec.name,
@@ -271,12 +352,84 @@ class Map2DTaskProcessor:
                     )
                     output_paths.append(output_path)
 
+                for work in analysis_work:
+                    config = self._river_km_analyses.get(work.analysis_key)
+                    if config is None:
+                        continue
+                    prepared_regions = self._smb_geometry[
+                        (work.analysis_key, plan_index)
+                    ]
+                    width_area: _Array | None = None
+                    if config.multiply_by_width == "flow":
+                        width_area = grid_geometry.face_area
+                    elif config.multiply_by_width == "morphological":
+                        width_request = QuantityRequest(
+                            requested_name="morphological_active_area",
+                            active_sediment_thickness_threshold_m=(
+                                config.active_sediment_thickness_threshold_m
+                            ),
+                        )
+                        width_area = _face_values(
+                            quantity_session.get(width_request),
+                            grid_geometry.n_faces,
+                            width_request,
+                        )
+                    model_sediment = subrun.model_input.sediment
+                    fraction_names = (
+                        tuple(item.name for item in model_sediment.fractions)
+                        if model_sediment is not None
+                        else ()
+                    )
+                    for request in dict.fromkeys(work.quantities):
+                        spec, raw_values = quantity_values[request]
+                        values = _smb_face_values(
+                            raw_values,
+                            grid_geometry.n_faces,
+                            request,
+                        )
+                        for prepared_region in prepared_regions:
+                            try:
+                                output_path = write_segment_statistics_cache(
+                                    self._layout,
+                                    self._guard,
+                                    config,
+                                    prepared_region,
+                                    request,
+                                    spec,
+                                    values,
+                                    grid_geometry.face_area,
+                                    fraction_names,
+                                    entry,
+                                    plan_index,
+                                    grid_path,
+                                    input_fingerprints,
+                                    dtype=self._dtype,
+                                    width_area=width_area,
+                                )
+                            except RiverKmStatisticsError as error:
+                                raise Map2DProcessError(
+                                    ValidationIssue(
+                                        code=error.code,
+                                        level="error",
+                                        location=(
+                                            f"{work.analysis_key}/"
+                                            f"{request.requested_name}"
+                                        ),
+                                        message=str(error),
+                                        hint=(
+                                            "Check the selected quantity dimensions "
+                                            "and river-km analysis settings."
+                                        ),
+                                    )
+                                ) from error
+                            output_paths.append(output_path)
+
                 choices.extend(quantity_session.choices)
                 issues.extend(quantity_session.issues)
 
         for choice in choices:
             _logger.info(
-                "Map2d %s %s: %s",
+                "Process %s %s: %s",
                 task.simulation_label,
                 task.key,
                 choice,
@@ -295,7 +448,8 @@ class Map2DTaskProcessor:
                 issue.message,
             )
         task_diagnostics = [
-            TaskDiagnostic("info", f"Map2d {task.key}: {choice}") for choice in choices
+            TaskDiagnostic("info", f"Process {task.key}: {choice}")
+            for choice in choices
         ]
         task_diagnostics.extend(
             TaskDiagnostic(
@@ -305,7 +459,7 @@ class Map2DTaskProcessor:
             for issue in issues
         )
         task_diagnostics.extend(
-            TaskDiagnostic("info", f"Created map2d cache file: {path}")
+            TaskDiagnostic("info", f"Created processed cache file: {path}")
             for path in output_paths
         )
         return Map2DProcessResult(
@@ -408,21 +562,7 @@ def map2d_output_path(
 
 def map2d_selection_label(request: QuantityRequest) -> str:
     """Return the cache directory label for one configured quantity selection."""
-    return _selection_label(_request_variable_name(request), request)
-
-
-def _selection_label(variable: str, request: QuantityRequest) -> str:
-    parts: list[str] = []
-    if request.fractions is not None:
-        parts.append("fraction-" + "-".join(str(index) for index in request.fractions))
-    if request.layers is not None:
-        parts.append("layer-" + "-".join(str(index) for index in request.layers))
-    if request.sum_fractions:
-        parts.append("sum-fractions")
-    if variable == "morphological_active_area":
-        threshold = format(request.active_sediment_thickness_threshold_m, ".8g")
-        parts.append(f"active-thickness-{threshold.replace('.', 'p')}m")
-    return "-".join(parts) or "all"
+    return quantity_selection_label(request)
 
 
 def _fingerprint_parameters(
@@ -483,6 +623,35 @@ def _face_values(values: _Array, n_faces: int, request: QuantityRequest) -> _Arr
     return result
 
 
+def _smb_face_values(values: _Array, n_faces: int, request: QuantityRequest) -> _Array:
+    result = np.asarray(values, dtype=np.float64)
+    if result.ndim > 1 and result.shape[0] == n_faces:
+        singleton_axes = tuple(
+            axis for axis in range(1, result.ndim) if result.shape[axis] == 1
+        )
+        if singleton_axes:
+            result = np.squeeze(result, axis=singleton_axes)
+    if result.ndim not in {1, 2} or result.shape[0] != n_faces:
+        code = "V-VAR-005" if result.ndim > 1 else "V-VAR-004"
+        raise Map2DProcessError(
+            ValidationIssue(
+                code=code,
+                level="error",
+                location=request.requested_name,
+                message=(
+                    f"River-km quantity {request.requested_name!r} has shape "
+                    f"{result.shape}; expected face values with at most one "
+                    "retained component dimension."
+                ),
+                hint=(
+                    "Select fractions or layers, or reduce the extra dimensions "
+                    "before using river-km statistics."
+                ),
+            )
+        )
+    return result
+
+
 def _previous_entry(
     entries: Sequence[TimeEntry],
     current: TimeEntry,
@@ -500,13 +669,6 @@ def _is_water_level_rate(request: QuantityRequest) -> bool:
         return get_variable_spec(request.requested_name).name == "water_level_rate"
     except UnknownVariableError:
         return False
-
-
-def _request_variable_name(request: QuantityRequest) -> str:
-    try:
-        return get_variable_spec(request.requested_name).name
-    except UnknownVariableError:
-        return request.requested_name.casefold()
 
 
 def _write_data_file(
