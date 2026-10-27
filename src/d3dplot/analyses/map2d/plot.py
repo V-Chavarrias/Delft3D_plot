@@ -46,6 +46,7 @@ from d3dplot.plotting.finalize import (
     close_figure,
     finalize_figure,
 )
+from d3dplot.plotting.movies import MovieWriterError, write_mp4
 from d3dplot.plotting.views.decorations import MapDecorations, MapDecorationsError
 from d3dplot.plotting.views.extents import (
     ExtentSet,
@@ -130,10 +131,12 @@ class Map2DPlotSource:
 
 @dataclass(frozen=True, slots=True)
 class Map2DPlotResult:
-    """Figures written or reused by one map2d plot group."""
+    """Figures and movies written or reused by one map2d plot group."""
 
     output_paths: tuple[Path, ...]
     reused_paths: tuple[Path, ...]
+    movie_paths: tuple[Path, ...]
+    reused_movie_paths: tuple[Path, ...]
     messages: tuple[str, ...]
 
 
@@ -193,6 +196,9 @@ def plot_map2d_group(
     messages: list[str] = []
     written: list[Path] = []
     reused: list[Path] = []
+    movies: list[Path] = []
+    reused_movies: list[Path] = []
+    movie_frames: dict[tuple[int, int], list[tuple[datetime, Path]]] = {}
 
     def report(message: str) -> None:
         messages.append(message)
@@ -450,6 +456,10 @@ def plot_map2d_group(
                         color_index,
                         window.index,
                     )
+                    if analysis.movie is not None:
+                        movie_frames.setdefault((window.index, color_index), []).append(
+                            (output_time, output_path)
+                        )
                     data_fingerprints = [current_fingerprint]
                     if reference_fingerprint is not None:
                         data_fingerprints.append(reference_fingerprint)
@@ -626,11 +636,70 @@ def plot_map2d_group(
         if view is not None:
             close_figure(view.figure)
             view = None
+        if analysis.movie is not None:
+            for (extent_index, color_index), ordered_frames in sorted(
+                movie_frames.items()
+            ):
+                frame_paths = tuple(
+                    path for _, path in sorted(ordered_frames, key=lambda item: item[0])
+                )
+                frame_fingerprints = tuple(
+                    _png_fingerprint(path) for path in frame_paths
+                )
+                if any(value is None for value in frame_fingerprints):
+                    raise Map2DPlotError(
+                        "V-PLOT-002",
+                        "A movie frame is missing a valid figure fingerprint.",
+                    )
+                fingerprint = fingerprint_artifact(
+                    kind="map2d_movie",
+                    schema_version=CACHE_SCHEMA_VERSION,
+                    tool_version=__version__,
+                    algorithm_version="map2d-movie-1",
+                    parameters={
+                        "comparison": comparison,
+                        "duration_s": analysis.movie.duration_s,
+                        "extent_index": extent_index,
+                        "subject": output_subject,
+                        "variable": variable,
+                        "color_index": color_index,
+                    },
+                    inputs=tuple(
+                        value for value in frame_fingerprints if value is not None
+                    ),
+                )
+                movie_path = _movie_path(
+                    output_layout,
+                    project.series,
+                    output_subject,
+                    variable,
+                    comparison,
+                    color_index,
+                    extent_index,
+                )
+                try:
+                    was_reused = write_mp4(
+                        frame_paths,
+                        movie_path,
+                        analysis.movie.duration_s,
+                        fingerprint,
+                        output_guard,
+                    )
+                except MovieWriterError as error:
+                    raise Map2DPlotError(error.code, str(error)) from error
+                if was_reused:
+                    reused_movies.append(movie_path)
+                    report(f"Reused movie {movie_path}.")
+                else:
+                    movies.append(movie_path)
+                    report(f"Saved movie {movie_path}.")
     except MapDecorationsError as error:
         raise Map2DPlotError(error.code, str(error)) from error
     except ExtentSetError as error:
         raise Map2DPlotError(error.code, str(error)) from error
     except MapMeasurementError as error:
+        raise Map2DPlotError(error.code, str(error)) from error
+    except MovieWriterError as error:
         raise Map2DPlotError(error.code, str(error)) from error
     except (CacheFingerprintReadError, MapViewError) as error:
         raise Map2DPlotError("V-PLOT-002", str(error)) from error
@@ -641,7 +710,13 @@ def plot_map2d_group(
             current_dataset.close()
         if reference_dataset is not None and reference_dataset is not current_dataset:
             reference_dataset.close()
-    return Map2DPlotResult(tuple(written), tuple(reused), tuple(messages))
+    return Map2DPlotResult(
+        tuple(written),
+        tuple(reused),
+        tuple(movies),
+        tuple(reused_movies),
+        tuple(messages),
+    )
 
 
 def _read_frame(frame: Map2DPlotFrame, variable: str) -> tuple[_FloatArray, str]:
@@ -934,6 +1009,22 @@ def _figure_path(
     filename = (
         f"{safe_variable}_{comparison}_{timestamp}_c{color_index + 1}"
         f"_e{extent_index + 1}.png"
+    )
+    return layout.figures / series / subject / filename
+
+
+def _movie_path(
+    layout: OutputLayout,
+    series: str,
+    subject: str,
+    variable: str,
+    comparison: _Comparison,
+    color_index: int,
+    extent_index: int,
+) -> Path:
+    safe_variable = quote(variable.casefold(), safe="-_.")
+    filename = (
+        f"{safe_variable}_{comparison}_c{color_index + 1}_e{extent_index + 1}.mp4"
     )
     return layout.figures / series / subject / filename
 

@@ -103,6 +103,7 @@ def _project_and_source(
     figure_overrides: dict[str, Any] | None = None,
     project_overrides: dict[str, Any] | None = None,
     measurement_overrides: dict[str, Any] | None = None,
+    movie_overrides: dict[str, Any] | None = None,
     hooks: list[str] | None = None,
     with_hook: bool = False,
     grid_faces: int = 2,
@@ -132,6 +133,8 @@ def _project_and_source(
     }
     if measurement_overrides is not None:
         analysis_config["measurements"] = measurement_overrides
+    if movie_overrides is not None:
+        analysis_config["movie"] = movie_overrides
     if figure_overrides is not None:
         analysis_config["figure"] = figure_overrides
     project_data: dict[str, Any] = {
@@ -726,3 +729,43 @@ def test_measurement_panel_is_hook_visible_and_omitted_for_simulation_difference
         "omitted for simulation comparison" in message
         for message in (simulation_difference.messages)
     )
+
+
+@pytest.mark.unit
+def test_plot_map2d_writes_movie_from_all_group_frames(
+    tmp_path: Path,
+) -> None:
+    pytest.importorskip("imageio")
+    pytest.importorskip("imageio_ffmpeg")
+    project, analysis, source = _project_and_source(
+        tmp_path,
+        values=((1.0, 2.0), (3.0, 4.0)),
+        movie_overrides={"duration_s": 0.5},
+    )
+
+    result = plot_map2d_group(
+        project,
+        analysis,
+        source,
+        "water_depth",
+        "value",
+        fresh_figures=True,
+    )
+
+    assert len(result.output_paths) == 2
+    assert len(result.movie_paths) == 1
+    assert result.movie_paths[0].is_file()
+    assert result.movie_paths[0].with_suffix(".mp4.json").is_file()
+    assert any("Saved movie" in message for message in result.messages)
+    import imageio.v2 as imageio
+
+    with imageio.get_reader(result.movie_paths[0]) as reader:
+        assert reader.count_frames() == 2
+    reused = plot_map2d_group(
+        project,
+        analysis,
+        source,
+        "water_depth",
+        "value",
+    )
+    assert reused.reused_movie_paths == result.movie_paths

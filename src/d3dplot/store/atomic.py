@@ -60,14 +60,19 @@ def initialize_output_root(
 
 
 @contextmanager
-def atomic_path(path: str | Path, guard: OutputWriteGuard) -> Iterator[Path]:
+def atomic_path(
+    path: str | Path,
+    guard: OutputWriteGuard,
+    *,
+    temporary_suffix: str = ".tmp",
+) -> Iterator[Path]:
     """Yield a same-directory temporary path and atomically replace its target."""
     destination = guard.validate_target(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination = guard.validate_target(path)
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{destination.name}.",
-        suffix=".tmp",
+        suffix=temporary_suffix,
         dir=destination.parent,
     )
     os.close(descriptor)
