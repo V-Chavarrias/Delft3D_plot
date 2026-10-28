@@ -84,6 +84,31 @@ encoding requires the optional `movies` extra (`delft3d-plot[movies]`).
 `labels.extra_dictionaries` lists additional translation CSVs. See
 [Labels](./labels.md) for their format and the label-building API.
 
+## Execution and sharding
+
+```yaml
+execution:
+  executor: processes
+  workers: null
+  shard: null
+  process_block_times: 50
+  slurm:
+    nodes: 1
+    tasks_per_node: 4
+    partition: 4vcpu
+    time_limit: "12:00:00"
+    job_name: null
+```
+
+`execution.shard` uses the zero-based `i/N` form and selects tasks by a stable
+digest of their canonical task keys. The SLURM stub uses
+`execution.slurm.tasks_per_node` as `--cpus-per-task`; only one node per array
+job is currently supported. `d3dplot slurm write project.yaml --dry-run`
+prints the guarded job template without writing. The template expects the
+cluster-visible YAML path in `D3DPLOT_CONFIG`; choose a zero-based array range
+at submission time. Automatic submission and the `d3dplot run` command remain
+deferred.
+
 ## Map measurements
 
 Map2d measurements are configured per variable. CSV catalogues require `time`,

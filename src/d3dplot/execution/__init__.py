@@ -18,6 +18,7 @@ from d3dplot.execution.runner import (
     run_tasks,
     write_run_summary_csv,
 )
+from d3dplot.execution.slurm import render_slurm_script
 from d3dplot.execution.tasks import (
     AnalysisTimeSelection,
     AnalysisTimeWork,
@@ -50,6 +51,7 @@ __all__ = [
     "plan_process_tasks",
     "read_output_cache_states",
     "read_cache_fingerprints",
+    "render_slurm_script",
     "resolve_worker_count",
     "run_process_stage",
     "run_tasks",

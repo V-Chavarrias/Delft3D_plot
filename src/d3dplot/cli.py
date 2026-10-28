@@ -18,13 +18,13 @@ import yaml
 
 from d3dplot import __version__
 from d3dplot.analyses.map2d.plot import Map2DPlotError
-from d3dplot.analyses.river_km_statistics.plot import (
-    RiverKmStatisticsPlotError,
-    plot_river_km_statistics_stage,
-)
 from d3dplot.analyses.river_km_statistics.measurements import (
     ProfileMeasurementError,
     convert_mat_profile_measurements,
+)
+from d3dplot.analyses.river_km_statistics.plot import (
+    RiverKmStatisticsPlotError,
+    plot_river_km_statistics_stage,
 )
 from d3dplot.config.io import (
     apply_overrides,
@@ -36,6 +36,7 @@ from d3dplot.config.io import (
 )
 from d3dplot.config.project import ProjectConfig, SimulationConfig
 from d3dplot.execution.diagnostics import DiagnosticLog
+from d3dplot.execution.slurm import render_slurm_script
 from d3dplot.plotting.stage import (
     PlotStageResult,
     ReplotTarget,
@@ -144,14 +145,19 @@ class _RawVariableAvailability:
 
 app = typer.Typer(
     add_completion=False,
-    help="Inspect simulations and validate d3dplot project configurations.",
+    help="Inspect simulations, validate projects, and generate job templates.",
     no_args_is_help=True,
 )
 measurements_app = typer.Typer(
     help="Convert and inspect measurement inputs.",
     no_args_is_help=True,
 )
+slurm_app = typer.Typer(
+    help="Generate SLURM job-script templates.",
+    no_args_is_help=True,
+)
 app.add_typer(measurements_app, name="measurements")
+app.add_typer(slurm_app, name="slurm")
 
 
 @app.command()
@@ -1061,6 +1067,55 @@ def measurements_convert(
         raise typer.Exit(code=1) from error
     for path in output_paths:
         typer.echo(f"Converted profile measurements: {path}")
+
+
+@slurm_app.command("write")
+def slurm_write(
+    configuration: Annotated[
+        Path,
+        typer.Argument(
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            help="YAML or JSON project configuration.",
+        ),
+    ],
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Print the job-script template without writing output.",
+        ),
+    ] = False,
+) -> None:
+    """Write a non-submitting SLURM array-job template."""
+    try:
+        config, report = validate_config(load_config_data(configuration))
+        if config is None or not report.is_valid:
+            _emit_report(report)
+            raise typer.Exit(code=1)
+        script = render_slurm_script(config.execution.slurm)
+        if dry_run:
+            typer.echo(script, nl=False)
+            return
+
+        reference = _reference_simulation_config(config)
+        layout = OutputLayout.for_simulation(reference, config.output)
+        guard = initialize_output_root(
+            layout,
+            tool_version=__version__,
+            forbidden_roots=config.output.forbidden_roots,
+        )
+        target = layout.config / "slurm_array.sh"
+        atomic_write_text(target, script, guard)
+    except typer.Exit:
+        raise
+    except (OSError, OutputWriteError, ValueError, yaml.YAMLError) as error:
+        typer.echo(f"Could not write SLURM job template: {error}", err=True)
+        raise typer.Exit(code=1) from error
+
+    typer.echo(f"SLURM job template written: {target.resolve(strict=True)}")
 
 
 def main() -> None:

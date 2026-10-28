@@ -146,6 +146,49 @@ def test_init_supports_river_km_statistics(
 
 
 @pytest.mark.integration
+def test_slurm_write_dry_run_does_not_create_output(
+    synthetic_case: Path,
+    tmp_path: Path,
+) -> None:
+    output_root = tmp_path / "generated"
+    configuration = _write_config(
+        tmp_path,
+        synthetic_case / "simulations" / "r001",
+        ["bed_level"],
+        output_root=output_root,
+    )
+
+    result = runner.invoke(app, ["slurm", "write", str(configuration), "--dry-run"])
+
+    assert result.exit_code == 0, result.output
+    assert "#SBATCH --partition=4vcpu" in result.stdout
+    assert '--shard "$SLURM_ARRAY_TASK_ID/$SLURM_ARRAY_TASK_COUNT"' in result.stdout
+    assert not output_root.exists()
+
+
+@pytest.mark.integration
+def test_slurm_write_persists_template_inside_marked_output_root(
+    synthetic_case: Path,
+    tmp_path: Path,
+) -> None:
+    output_root = tmp_path / "generated"
+    configuration = _write_config(
+        tmp_path,
+        synthetic_case / "simulations" / "r001",
+        ["bed_level"],
+        output_root=output_root,
+    )
+
+    result = runner.invoke(app, ["slurm", "write", str(configuration)])
+
+    script_path = output_root / "reference" / "d3dplot" / "config" / "slurm_array.sh"
+    assert result.exit_code == 0, result.output
+    assert script_path.is_file()
+    assert (script_path.parent.parent / ".d3dplot-output").is_file()
+    assert "d3dplot run" in script_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.integration
 def test_validate_accepts_registered_and_present_raw_variables(
     synthetic_case: Path,
     tmp_path: Path,

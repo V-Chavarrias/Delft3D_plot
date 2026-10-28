@@ -77,6 +77,38 @@ The source `.mat` is left unchanged. Output files are never overwritten; the
 destination must be in a new or empty directory, or beneath an existing marked
 d3dplot output root. Matlab v7.3/HDF5 inputs are not supported.
 
+## Generate a SLURM array-job template
+
+```powershell
+d3dplot slurm write project.yaml --dry-run
+d3dplot slurm write project.yaml
+```
+
+By default, the generated template is written to
+`config/slurm_array.sh` beneath the reference simulation's marked output root.
+All writes use the output-store guard. `--dry-run` prints the template without
+creating the output root or any files. The command never submits a job.
+
+The template is for one node per array job. It uses
+`execution.slurm.tasks_per_node` as the CPU count for the worker pool and
+requires a cluster-visible config path in `D3DPLOT_CONFIG`. Once the planned
+`d3dplot run` command is integrated, choose the shard count when submitting
+and start array indices at zero so each task receives the correct deterministic
+shard:
+
+```bash
+sbatch --array=0-7 \
+  --export=ALL,D3DPLOT_CONFIG=/shared/project.yaml \
+  /shared/output/reference/d3dplot/config/slurm_array.sh
+```
+
+The generated script derives `--shard i/N` from
+`SLURM_ARRAY_TASK_ID/SLURM_ARRAY_TASK_COUNT`; Python's randomized `hash()` is
+not used. It anticipates `d3dplot run`, which is not yet integrated in this
+version, and exits with an explicit error until that command is available.
+Multi-node execution and automatic submission remain out of scope for the v1
+stub.
+
 ## Validate a project
 
 ```powershell

@@ -1,6 +1,6 @@
 # Delft3D_plot (Python): Architecture and Implementation Plan
 
-Status: **v6.71; WP 1.10–1.11, WP 2.1–2.3, WP 3.1–3.5, WP 4.1–4.5, and WP 5.2 are implemented and locally validated.** WP 4.5 profile measurements is committed as `73e16c5` on `feat/river-km-measurements`; WP 5.2 synthetic Matlab comparisons are implemented on `feat/matlab-comparison`. WP 2.3 and WP 3.1 were committed on `feat/execution` (`735fb38`); WP 3.2 on `feat/map2d-plotting` (`d508cf7`); WP 3.3 on `feat/map2d-overlays` (`53d1bb7`); WP 3.4 on `feat/map2d-measurements` (`6da45e8`); WP 3.5 on `feat/map2d-provenance` (`38a84a4`, `c86f3a3`); WP 4.4 on `feat/river-km-plotting` (`a52d8f6`). WP 4.2's 6,406-face/40-segment synthetic preparation took 0.388 s; WP 3.5's two-frame synthetic-cache timings were 0.910 s fresh, 0.517 s reused, and 0.757 s for single-figure replay. Both WP 5.2 local comparison tests pass for r001 and r002 in 63.27 s including fixture generation. The 284-test CI-eligible suite passes; strict mypy over 86 source files, strict MkDocs, changed-file Ruff/format, and `git diff --check` pass. The river-km implementation includes provider and region geometry, guarded caches, shared-quantity statistics processing, all five shared plot views, diagnostics, groupings, comparisons, and profile-measurement conversion, matching, and overlays. The CLI provides read-only `info`/`variables`, schema output, validation and inspection, cache-backed `plot`, provenance-backed `replot`, and `measurements convert`; complete CLI `run` integration remains. P-drive r209/Rijn acceptance is deferred per D65, and no P-drive data was accessed or written during WP 5.2. D69–D82 record the time, quantity, plotting, provider, UGRID, measurement-conversion, and Matlab-comparison decisions. See [the synthetic case generator](https://github.com/V-Chavarrias/Delft3D_plot/blob/main/tools/synthetic_smt/README.md). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
+Status: **v6.72; WP 1.10–1.11, WP 2.1–2.3, WP 3.1–3.5, WP 4.1–4.5, and WP 5.2–5.3 are implemented and locally validated.** WP 4.5 profile measurements is committed as `73e16c5` on `feat/river-km-measurements`; WP 5.2 synthetic Matlab comparisons are committed as `cd54430` on `feat/matlab-comparison`; WP 5.3's non-submitting SLURM array-template generator is implemented on `feat/slurm-stub`. WP 2.3 and WP 3.1 were committed on `feat/execution` (`735fb38`); WP 3.2 on `feat/map2d-plotting` (`d508cf7`); WP 3.3 on `feat/map2d-overlays` (`53d1bb7`); WP 3.4 on `feat/map2d-measurements` (`6da45e8`); WP 3.5 on `feat/map2d-provenance` (`38a84a4`, `c86f3a3`); WP 4.4 on `feat/river-km-plotting` (`a52d8f6`). WP 4.2's 6,406-face/40-segment synthetic preparation took 0.388 s; WP 3.5's two-frame synthetic-cache timings were 0.910 s fresh, 0.517 s reused, and 0.757 s for single-figure replay. Both WP 5.2 local comparison tests pass for r001 and r002 in 63.27 s including fixture generation. The 292-test CI-eligible suite passes; strict mypy over 87 source files, strict MkDocs, changed-file Ruff/format, and `git diff --check` pass. The river-km implementation includes provider and region geometry, guarded caches, shared-quantity statistics processing, all five shared plot views, diagnostics, groupings, comparisons, and profile-measurement conversion, matching, and overlays. The CLI provides read-only `info`/`variables`, schema output, validation and inspection, cache-backed `plot`, provenance-backed `replot`, `measurements convert`, and guarded `slurm write`; complete CLI `run` integration remains, so the generated SLURM template exits explicitly until that command is available. P-drive r209/Rijn acceptance is deferred per D65, and no P-drive data was accessed or written during WP 5.2–5.3. D69–D83 record the time, quantity, plotting, provider, UGRID, measurement-conversion, Matlab-comparison, and SLURM-template decisions. See [the synthetic case generator](https://github.com/V-Chavarrias/Delft3D_plot/blob/main/tools/synthetic_smt/README.md). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
 
 The synthetic overlay-only loop (40 frames × 1,000 measured points; median of 7 `time.perf_counter` runs) took 0.805739 s with profile overlays versus 0.000022 s without, an added 20.143 ms per frame; this excludes model plotting and figure finalisation.
 
@@ -35,8 +35,8 @@ Document map:
 
 | Item | Location | State |
 |------|----------|-------|
-| Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `feat/matlab-comparison`, local and unpushed; WP 4.5 committed as `73e16c5`; WP 5.2 locally validated; P-drive acceptance deferred per D65 |
-| Plan (this file) | `docs/architecture.md` | v6.71 |
+| Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `feat/slurm-stub`, local and unpushed; WP 5.2 committed as `cd54430`; WP 5.3 implemented and locally validated; P-drive acceptance deferred per D65 |
+| Plan (this file) | `docs/architecture.md` | v6.72 |
 | Licence | `LICENSE` | GPL-3.0 |
 | Synthetic SMT and plain FM test case generator | `tools/synthetic_smt/` | Implemented and verified locally (§13.3) |
 | Land-boundary converter (`.mat` cache → `.ldb`) | `tools/mat_to_ldb.py` | Implemented. Used to recreate the Maas land boundary (D45) |
@@ -53,9 +53,9 @@ Document map:
 | Output store | `src/d3dplot/store/` | WP 1.8 implemented locally; guarded marked roots, atomic writers, fingerprints, and input snapshots are tested |
 | Labels | `src/d3dplot/labels/` | WP 1.9 implemented locally; 141 variable aliases, 127 complete translations, and 22 unit types are packaged and tested |
 | Variables | `src/d3dplot/variables/` | WP 1.10 and WP 2.2a complete locally; 19 raw and 23 derived v1 specs, dependency resolution, per-time caching, formula callbacks, grid operators, aliases, NetCDF candidates, suggestions, and generated documentation |
-| CLI | `src/d3dplot/cli.py` | WP 1.11 and WP 2.1 implementation: console and module entry points; `info`, `variables`, `schema`, `validate`, `inspect`, and no-overwrite `init`; `validate` and `inspect` now write guarded `.dia` diagnostics and a debug `.log` |
+| CLI | `src/d3dplot/cli.py` | WP 1.11 and WP 2.1 implementation: console and module entry points; `info`, `variables`, `schema`, `validate`, `inspect`, no-overwrite `init`, and guarded non-submitting `slurm write`; `validate` and `inspect` now write guarded `.dia` diagnostics and a debug `.log`; full CLI `run` integration remains |
 | Synthetic-case pytest fixture | `tests/conftest.py` | Session-scoped fixture generates and verifies in pytest's temporary folder (WP 1.2) |
-| CI and documentation site | `.github/workflows/ci.yml`, `mkdocs.yml` | All 284 CI-eligible tests pass; both local Matlab comparison tests pass; strict MkDocs, strict mypy over all 86 source files, changed-file Ruff/format, and `git diff --check` pass; remote CI not run |
+| CI and documentation site | `.github/workflows/ci.yml`, `mkdocs.yml` | All 292 CI-eligible tests pass; both local Matlab comparison tests pass; strict MkDocs, strict mypy over all 87 source files, changed-file Ruff/format, and `git diff --check` pass; remote CI not run |
 | Matlab reference results of the synthetic case | `data_local/synthetic_smt_01/`, `data_local/synthetic_smt_02/` | Original v0.1.0 references preserved. Current v0.3.0 case has five bed-level and specific-discharge maps per simulation and 15 SMB files per simulation; numerical references are complete. Matlab's later SMB figure stage exits in `fig_1D_01` on a measurement-overlay size mismatch; numeric comparisons pass. |
 | Agent guidance for development | `AGENTS.md`, `.github/instructions/plotting.instructions.md`, `.github/skills/{add-analysis-or-option,upstream-contribution}` | Done (§13.6) |
 
@@ -264,6 +264,7 @@ Status: **A** = agreed with the user; **P** = proposed in this plan and awaiting
 | D80 | Plotters treat both the declared UGRID fill value and `-1` as face-node padding; other negative indices remain invalid | Inspection normalizes masked connectivity to `-1`, while xugrid may expose a different declared `fill_value` for the same cache | P |
 | D81 | Standalone `measurements convert` requires a fixed `--time-zone`; analysis loading uses `ProfileMeasurementsConfig.time_zone` or the inspected model offset. Conversion writes guarded, no-overwrite NetCDF files and never modifies `.mat` inputs | MATLAB datenums contain no timezone, while standalone conversion has no model time axis from which to inherit the offset (D18) | P |
 | D82 | The synthetic Matlab comparison uses `qsp` for derived-map parity. Matlab's vorticity helper currently returns 2,800 values while `grd.mat` exposes 6,406 face centres, without a corresponding subset index; defer vorticity parity until that mapping is available | Observed while generating the v1 synthetic Matlab references; do not compare a partial, unmapped field to the full Python grid | P |
+| D83 | The v1 SLURM command writes a guarded single-node array-job template without submitting it. The cluster-visible YAML path is supplied as `D3DPLOT_CONFIG`; zero-based `SLURM_ARRAY_TASK_ID` and `SLURM_ARRAY_TASK_COUNT` form `--shard i/N`. `--dry-run` prints the template without creating output | Avoid assuming that a local config path is visible on the cluster or that submission should happen automatically; multi-node execution remains deferred | P |
 
 ## 3. Review of the plan (v6)
 
@@ -1166,7 +1167,7 @@ Every task key contains the subject (and the reference label for simulation diff
 |----------|-------|
 | `serial` | Debugging, deterministic tests |
 | `processes` *(default)* | `ProcessPoolExecutor(mp_context=spawn)`. Workers = physical cores − 1, capped by available memory / estimated task memory. Tasks are handed out one at a time (dynamic balancing), largest first |
-| `slurm` *(stub in v1)* | Writes job scripts (`--dry-run`); submission later. Defaults: `nodes=1`, `tasks_per_node=4`, `partition=4vcpu`, `time_limit=12:00:00`, `job_name=<stage>` |
+| `slurm` *(stub in v1)* | Writes a guarded, single-node array-job template; submission later. `tasks_per_node` sets `--cpus-per-task`; the template uses `D3DPLOT_CONFIG` and zero-based SLURM array variables. Defaults: `nodes=1`, `tasks_per_node=4`, `partition=4vcpu`, `time_limit=12:00:00`, `job_name=<stage>` |
 
 **Worker initialisation** (`worker.py`):
 * `MPLBACKEND=Agg`;
@@ -1707,7 +1708,7 @@ if __name__ == "__main__":
 | `d3dplot status cfg.yaml` | Status table + cache/figure progress | |
 | `d3dplot clean cfg.yaml` | Remove stale or all tool output (inside marked roots) | `--stale`, `--figures`, `--cache` |
 | `d3dplot measurements convert in.mat -o out.nc --time-zone +01:00` | Permanent conversion | `--variable <name>` selects one variable; otherwise output is one canonical-variable file per variable |
-| `d3dplot slurm write cfg.yaml` | Write job scripts (stub) | |
+| `d3dplot slurm write cfg.yaml` | Write a non-submitting SLURM array-job template | `--dry-run` |
 
 `info` and `variables` use read-only discovery and inspect only the first map-file
 header per sub-run for raw variable names and CRS. `info` reports per-sub-run
@@ -1722,6 +1723,14 @@ names and raw-field availability, and discovers the configured simulations;
 when those earlier checks have no errors, it also builds or reuses the inspect
 caches. `init` writes a commented starter YAML and refuses to overwrite an
 existing target.
+
+`slurm write` writes `config/slurm_array.sh` beneath the reference simulation's
+marked output root; `--dry-run` prints it without creating files. The template
+requires a cluster-visible path in `D3DPLOT_CONFIG` and a zero-based array
+submission (`--array=0-N`); `SLURM_ARRAY_TASK_ID/SLURM_ARRAY_TASK_COUNT` map to
+the deterministic `--shard i/N`. It never submits jobs, supports one node per
+array job, and explicitly exits until the planned `d3dplot run` CLI is
+available.
 
 **Agent skills** (`skills/`, v1.0):
 * `d3dplot-create-input`, `d3dplot-replot`, `d3dplot-troubleshoot`;
@@ -2175,7 +2184,7 @@ Per D65, use generated local cases for development, automated tests, and perform
 |----|---------|
 | 5.1 | Acceptance case 1 on `r209` (§13.4) incl. coordinate-based face matching and performance targets |
 | 5.2 | Implemented and locally validated on `feat/matlab-comparison`: coordinate-matched bed-level and derived-specific-discharge maps, plus all eight SMB statistics for both simulations; generated current-version references in a new local case without replacing the original |
-| 5.3 | SLURM stub (`slurm write`), `--shard` documentation |
+| 5.3 | Implemented and locally validated on `feat/slurm-stub`: guarded, single-node SLURM array-template generation (`slurm write`), write-free `--dry-run`, zero-based stable-shard mapping and user documentation. Submission and execution remain deferred; the template checks for the not-yet-integrated `d3dplot run` command and exits explicitly until it exists |
 | 5.4 | Documentation (user guide, references, "from Matlab", gallery), agent skills |
 | 5.5 | Release v1.0 on **PyPI** as `delft3d-plot` (D44): GitHub Actions workflow on tags (`v*`) building sdist + wheel with hatchling, publishing with PyPI Trusted Publishing (no tokens); TestPyPI dry run first; GitHub release with the changelog. Requires WP 0.2 |
 
@@ -2401,6 +2410,7 @@ The complete model-quantity catalog (all v1 raw and derived registry entries, al
 
 | Version | Content |
 |---------|---------|
+| v6.72 | Implemented WP 5.3 locally on `feat/slurm-stub`: added `slurm write` with an atomic guarded output, write-free `--dry-run`, single-node resource directives, safe SLURM directive validation, and zero-based array sharding documentation. The template does not submit and exits explicitly until CLI `run` integration exists. All 292 CI-eligible tests pass; strict mypy over 87 source files, strict MkDocs, changed-file Ruff/format, and diff checks pass. D83 records the template contract |
 | v6.71 | Completed WP 5.2 locally on `feat/matlab-comparison`: added a `requireslocaldata` comparison of bed-level and specific-discharge map caches by hydrodynamic time and 1 mm coordinate matching, plus all eight SMB statistics for both simulations; generated current-version local Matlab MAT references while preserving the original v0.1.0 case. Matlab vorticity output is not coordinate-matchable to the full grid (D82). The 284-test CI-eligible suite, both local comparison tests, strict mypy over 86 files, strict MkDocs, Ruff/format, and diff checks pass. The Matlab figure stage still errors in `fig_1D_01`; numerical references are complete. |
 | v6.70 | Completed WP 4.5 locally on `feat/river-km-measurements`: guarded Matlab v5/v7 profile conversion/cache, fixed-offset timezone handling, profile/time-series/time-difference overlays, explicit region-difference measurements, and the `measurements convert` CLI. Added regression coverage for time-difference values and simulation-difference omission; the full 283-test CI-eligible suite and final focused WP 4.5 tests pass. Strict mypy over 86 source files, strict MkDocs, changed-file Ruff/format, and diff checks pass. P-drive acceptance remains deferred per D65 |
 | v6.69 | Started WP 4.5 on `feat/river-km-measurements`; specified guarded per-variable `.mat` conversion/cache, fixed-offset precedence (D81), Matlab-compatible time and km matching, difference overlays, input immutability, and the standalone no-overwrite converter. WP 4.4 remains committed as `a52d8f6` |
