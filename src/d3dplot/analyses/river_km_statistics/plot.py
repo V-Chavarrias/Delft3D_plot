@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from hashlib import blake2b
 from importlib import import_module
 from pathlib import Path
@@ -20,6 +20,15 @@ from d3dplot.analyses.river_km_statistics.config import (
     RiverKmStatisticsConfig,
     TimeAverageConfig,
 )
+from d3dplot.analyses.river_km_statistics.measurements import (
+    ProfileMeasurement,
+    ProfileMeasurementError,
+    ProfileMeasurementMatch,
+    load_profile_measurements,
+    match_profile_measurement,
+    match_time_series_measurement,
+    profile_measurement_variable,
+)
 from d3dplot.analyses.river_km_statistics.process import (
     PreparedRegionSegments,
     RiverKmStatisticsError,
@@ -33,6 +42,7 @@ from d3dplot.analyses.river_km_statistics.process import (
 )
 from d3dplot.config.analysis import Comparison
 from d3dplot.config.figure import AxisLimit, FigureConfig
+from d3dplot.config.measurements import ProfileMeasurementsConfig
 from d3dplot.config.project import ProjectConfig, SimulationConfig
 from d3dplot.config.selections import LayersSelection
 from d3dplot.execution.cache import decide_cache, read_cache_fingerprints
@@ -136,6 +146,15 @@ class _PlotSource:
     reference_frames: tuple[StatisticCacheFrame, ...] | None = None
     partner_frames: tuple[StatisticCacheFrame, ...] | None = None
     reference_partner_frames: tuple[StatisticCacheFrame, ...] | None = None
+    measurements: Mapping[str, ProfileMeasurement] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _ProfileMeasurementOverlay:
+    """One labelled measurement source for a line view."""
+
+    label: str
+    measurement: ProfileMeasurement
 
 
 DiagnosticSink = Callable[[str], None]
@@ -162,6 +181,144 @@ def _quantity_request(
             analysis.active_sediment_thickness_threshold_m
         ),
     )
+
+
+def _prepare_profile_measurement_inputs(
+    project: ProjectConfig,
+    analysis: RiverKmStatisticsConfig,
+    variables: Sequence[str],
+    layout: OutputLayout,
+    guard: OutputWriteGuard,
+    report: DiagnosticSink,
+) -> tuple[
+    dict[str, dict[str, ProfileMeasurement]],
+    dict[tuple[str, str], dict[str, ProfileMeasurement]],
+]:
+    if not variables or not {
+        "profile",
+        "profile_all_times",
+        "time_series",
+    }.intersection(analysis.views):
+        return {}, {}
+
+    measurement_variables = tuple(
+        dict.fromkeys(
+            profile_measurement_variable(variable, statistic)
+            for variable in variables
+            for statistic in analysis.statistics
+        )
+    )
+    inputs = [
+        region.measurements
+        for region in analysis.regions
+        if region.measurements is not None
+    ]
+    inputs.extend(
+        difference.measurements
+        for difference in analysis.region_differences
+        if difference.measurements is not None
+    )
+    if not inputs:
+        return {}, {}
+
+    resolved_inputs: list[tuple[Path, str | None]] = []
+    for measurement_input in inputs:
+        if isinstance(measurement_input, ProfileMeasurementsConfig):
+            raw_path = measurement_input.file
+            configured_zone = measurement_input.time_zone
+        else:
+            raw_path = measurement_input
+            configured_zone = None
+        path = project.paths.resolve_path(raw_path)
+        resolved_inputs.append(
+            (
+                path,
+                str(configured_zone) if configured_zone is not None else None,
+            )
+        )
+
+    needs_model_offset = any(
+        path.suffix.casefold() == ".mat" and configured_zone is None
+        for path, configured_zone in resolved_inputs
+    )
+    model_offset: str | None = None
+    if needs_model_offset:
+        try:
+            model_offset = TimeAxis.from_cache(
+                layout.cache / "times.nc"
+            ).source_utc_offset
+        except (OSError, ValueError) as error:
+            raise RiverKmStatisticsPlotError(
+                "V-PLOT-002",
+                f"Could not load the inspected model time offset for "
+                f"profile measurements: {error}",
+            ) from error
+
+    cache: dict[tuple[Path, str | None], dict[str, ProfileMeasurement]] = {}
+
+    def load_input(
+        measurement_input: Path | ProfileMeasurementsConfig | None,
+    ) -> dict[str, ProfileMeasurement]:
+        if measurement_input is None:
+            return {}
+        if isinstance(measurement_input, ProfileMeasurementsConfig):
+            raw_path = measurement_input.file
+            configured_zone = (
+                str(measurement_input.time_zone)
+                if measurement_input.time_zone is not None
+                else None
+            )
+        else:
+            raw_path = measurement_input
+            configured_zone = None
+        path = project.paths.resolve_path(raw_path)
+        effective_zone = (
+            configured_zone or model_offset
+            if path.suffix.casefold() == ".mat"
+            else configured_zone
+        )
+        key = (path, effective_zone)
+        if key not in cache:
+            try:
+                cache[key] = load_profile_measurements(
+                    path,
+                    measurement_variables,
+                    time_zone=effective_zone,
+                    layout=layout,
+                    guard=guard,
+                    diagnostic=report,
+                )
+            except ProfileMeasurementError as error:
+                raise RiverKmStatisticsPlotError(error.code, str(error)) from error
+            report(f"Loaded profile measurements from {path}.")
+        return cache[key]
+
+    region_measurements = {
+        region.name: load_input(region.measurements)
+        for region in analysis.regions
+        if region.measurements is not None
+    }
+    difference_measurements = {
+        difference.regions: load_input(difference.measurements)
+        for difference in analysis.region_differences
+        if difference.measurements is not None
+    }
+    return region_measurements, difference_measurements
+
+
+def _single_profile_measurement_overlay(
+    measurements: Mapping[str, ProfileMeasurement] | None,
+    variable: str,
+    statistic: str,
+    label_text: str,
+) -> tuple[_ProfileMeasurementOverlay, ...]:
+    if measurements is None:
+        return ()
+    measurement_variable = profile_measurement_variable(variable, statistic)
+    measurement = measurements.get(measurement_variable)
+    if measurement is None:
+        return ()
+    return (_ProfileMeasurementOverlay(label_text, measurement),)
 
 
 def load_statistic_cache_frames(
@@ -564,6 +721,13 @@ def plot_river_km_statistics_stage(
             str,
             dict[tuple[str, str, str], tuple[StatisticCacheFrame, ...]],
         ] = {}
+        measurement_inputs_by_sim: dict[
+            str,
+            tuple[
+                dict[str, dict[str, ProfileMeasurement]],
+                dict[tuple[str, str], dict[str, ProfileMeasurement]],
+            ],
+        ] = {}
 
         def layout_and_guard(
             simulation: SimulationConfig,
@@ -622,6 +786,20 @@ def plot_river_km_statistics_stage(
 
         for simulation in selected_simulations:
             layout, guard = layout_and_guard(simulation)
+            region_measurements, difference_measurements = (
+                _prepare_profile_measurement_inputs(
+                    project,
+                    configured,
+                    selected_variables,
+                    layout,
+                    guard,
+                    report,
+                )
+            )
+            measurement_inputs_by_sim[simulation.label] = (
+                region_measurements,
+                difference_measurements,
+            )
             for requested_variable in selected_variables:
                 for region in configured.regions:
                     for km_set_name in configured.river_km.sets:
@@ -711,6 +889,7 @@ def plot_river_km_statistics_stage(
                                 requested_variable,
                                 frames,
                                 reference_frames=reference_frames,
+                                measurements=region_measurements.get(region.name, {}),
                                 analysis_index=analysis_index,
                                 provenance_path=provenance_path,
                                 fresh_figures=fresh_figures,
@@ -778,6 +957,9 @@ def plot_river_km_statistics_stage(
                                         if has_simulation_comparison
                                         else None
                                     ),
+                                    measurements=region_measurements.get(
+                                        region_name, {}
+                                    ),
                                 )
                                 for region_name in region_names
                             )
@@ -840,6 +1022,9 @@ def plot_river_km_statistics_stage(
                                         if has_simulation_comparison
                                         else None
                                     ),
+                                    measurements=difference_measurements.get(
+                                        (left_name, right_name), {}
+                                    ),
                                 ),
                             )
                             output_paths, reused_paths = _plot_grouped_sources(
@@ -887,6 +1072,9 @@ def plot_river_km_statistics_stage(
                                     if has_simulation_comparison
                                     else None
                                 ),
+                                measurements=measurement_inputs_by_sim[
+                                    simulation.label
+                                ][0].get(region.name, {}),
                             )
                             for simulation in selected_simulations
                         )
@@ -933,6 +1121,9 @@ def plot_river_km_statistics_stage(
                                         if has_simulation_comparison
                                         else None
                                     ),
+                                    measurements=measurement_inputs_by_sim[
+                                        simulation.label
+                                    ][0].get(region_name, {}),
                                 )
                                 for simulation in selected_simulations
                                 for region_name in region_names
@@ -999,6 +1190,9 @@ def plot_river_km_statistics_stage(
                                         if has_simulation_comparison
                                         else None
                                     ),
+                                    measurements=measurement_inputs_by_sim[
+                                        simulation.label
+                                    ][1].get((left_name, right_name), {}),
                                 )
                                 for simulation in selected_simulations
                             )
@@ -1870,6 +2064,7 @@ def _plot_region_views(
     frames: tuple[StatisticCacheFrame, ...],
     *,
     reference_frames: tuple[StatisticCacheFrame, ...] | None,
+    measurements: Mapping[str, ProfileMeasurement] | None,
     analysis_index: int,
     provenance_path: Path | None,
     fresh_figures: bool,
@@ -1918,6 +2113,16 @@ def _plot_region_views(
                 provenance_path=provenance_path,
                 fresh_figures=fresh_figures,
                 report=report,
+                measurement_overlays=(
+                    ()
+                    if comparison in _DIFFERENCE_COMPARISONS
+                    else _single_profile_measurement_overlay(
+                        measurements,
+                        variable,
+                        statistic,
+                        analysis.measurements_label,
+                    )
+                ),
             )
             outputs.extend(results[0])
             reused.extend(results[1])
@@ -1944,6 +2149,7 @@ def _plot_comparison_views(
     provenance_path: Path | None,
     fresh_figures: bool,
     report: DiagnosticSink,
+    measurement_overlays: tuple[_ProfileMeasurementOverlay, ...] = (),
 ) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
     outputs: list[Path] = []
     reused: list[Path] = []
@@ -1969,6 +2175,7 @@ def _plot_comparison_views(
                 provenance_path,
                 fresh_figures,
                 report,
+                measurement_overlays=measurement_overlays,
             )
         elif view_name == "profile_all_times":
             results = _plot_profile_all_times(
@@ -1990,6 +2197,7 @@ def _plot_comparison_views(
                 provenance_path,
                 fresh_figures,
                 report,
+                measurement_overlays=measurement_overlays,
             )
         elif view_name == "space_time":
             results = _plot_space_time(
@@ -2032,6 +2240,7 @@ def _plot_comparison_views(
                 provenance_path,
                 fresh_figures,
                 report,
+                measurement_overlays=measurement_overlays,
             )
         elif view_name == "cumulative":
             results = _plot_cumulative(
@@ -2367,6 +2576,36 @@ def _plot_grouped_sources(
                 source.partner_frames is not None for source, _ in results_by_source
             ):
                 render_analysis = analysis.model_copy(update={"display": "lines"})
+            measurement_overlays: tuple[_ProfileMeasurementOverlay, ...] = ()
+            if comparison not in _DIFFERENCE_COMPARISONS:
+                measurement_variable = profile_measurement_variable(
+                    variable,
+                    statistic,
+                )
+                unique_measurements: dict[
+                    str,
+                    tuple[_PlotSource, ProfileMeasurement],
+                ] = {}
+                for source, _ in results_by_source:
+                    if source.measurements is None:
+                        continue
+                    measurement = source.measurements.get(measurement_variable)
+                    if measurement is not None:
+                        unique_measurements.setdefault(
+                            measurement.fingerprint,
+                            (source, measurement),
+                        )
+                measurement_overlays = tuple(
+                    _ProfileMeasurementOverlay(
+                        (
+                            analysis.measurements_label
+                            if len(unique_measurements) == 1
+                            else f"{source.label}: {analysis.measurements_label}"
+                        ),
+                        measurement,
+                    )
+                    for source, measurement in unique_measurements.values()
+                )
             plotted, cached = _plot_comparison_views(
                 project,
                 render_analysis,
@@ -2386,10 +2625,208 @@ def _plot_grouped_sources(
                 provenance_path=provenance_path,
                 fresh_figures=fresh_figures,
                 report=report,
+                measurement_overlays=measurement_overlays,
             )
             outputs.extend(plotted)
             reused.extend(cached)
     return tuple(outputs), tuple(reused)
+
+
+def _profile_measurement_values(
+    overlay: _ProfileMeasurementOverlay,
+    statistic: str,
+    output_time: datetime,
+    tolerance: timedelta,
+    comparison: Comparison,
+    baseline_time: datetime | None,
+    report: DiagnosticSink,
+) -> tuple[ProfileMeasurementMatch, _Array] | None:
+    try:
+        match = match_profile_measurement(
+            overlay.measurement,
+            statistic,
+            output_time,
+            tolerance,
+        )
+    except ProfileMeasurementError as error:
+        raise RiverKmStatisticsPlotError(error.code, str(error)) from error
+    if match is None:
+        nearest = min(
+            overlay.measurement.times,
+            key=lambda item: abs((item - output_time).total_seconds()),
+        )
+        report(
+            f"V-MEA-004: no profile measurement for {overlay.label!r} is within "
+            f"{tolerance} of {output_time.isoformat()}; nearest is "
+            f"{nearest.isoformat()} ({abs(nearest - output_time)} away)."
+        )
+        return None
+    values = np.asarray(match.values, dtype=np.float64)
+    if comparison == "difference_time":
+        if baseline_time is None:
+            raise RiverKmStatisticsPlotError(
+                "V-MEA-007",
+                "A difference_time measurement overlay has no baseline time.",
+            )
+        try:
+            baseline = match_profile_measurement(
+                overlay.measurement,
+                statistic,
+                baseline_time,
+                tolerance,
+            )
+        except ProfileMeasurementError as error:
+            raise RiverKmStatisticsPlotError(error.code, str(error)) from error
+        if baseline is None:
+            nearest = min(
+                overlay.measurement.times,
+                key=lambda item: abs((item - baseline_time).total_seconds()),
+            )
+            report(
+                f"V-MEA-004: no baseline profile measurement for "
+                f"{overlay.label!r} is within {tolerance} of "
+                f"{baseline_time.isoformat()}; nearest is {nearest.isoformat()}."
+            )
+            return None
+        values = values - np.asarray(baseline.values, dtype=np.float64)
+    return match, values
+
+
+def _add_profile_measurement_overlays(
+    axes: Any,
+    overlays: tuple[_ProfileMeasurementOverlay, ...],
+    analysis: RiverKmStatisticsConfig,
+    statistic: str,
+    output_time: datetime,
+    comparison: Comparison,
+    baseline_time: datetime | None,
+    scale: float,
+    view_name: str,
+    x_limit: AxisLimit | None,
+    y_limit: AxisLimit | None,
+    report: DiagnosticSink,
+    *,
+    seen: set[tuple[str, datetime]] | None = None,
+) -> tuple[Mapping[str, object], ...]:
+    if not overlays or comparison in _DIFFERENCE_COMPARISONS:
+        return ()
+    original_xlim = axes.get_xlim()
+    original_ylim = axes.get_ylim()
+    entries: list[Mapping[str, object]] = []
+    seen_measurements = set() if seen is None else seen
+    for overlay in overlays:
+        result = _profile_measurement_values(
+            overlay,
+            statistic,
+            output_time,
+            analysis.measurements_time_tolerance,
+            comparison,
+            baseline_time,
+            report,
+        )
+        if result is None:
+            continue
+        match, values = result
+        identity = (overlay.measurement.fingerprint, match.time)
+        if view_name == "profile_all_times" and identity in seen_measurements:
+            continue
+        seen_measurements.add(identity)
+        line_label = overlay.label
+        if view_name == "profile_all_times":
+            line_label = f"{line_label} {match.time:%Y-%m-%d}"
+        plotted_values = values * scale
+        axes.plot(
+            match.river_km,
+            plotted_values,
+            marker="o",
+            linestyle="none",
+            color="black",
+            markersize=4,
+            label=line_label,
+            zorder=5,
+        )
+        entries.append(
+            {
+                "label": line_label,
+                "time": match.time,
+                "river_km": match.river_km,
+                "values": values,
+            }
+        )
+    if entries:
+        axes.legend()
+    if not analysis.limits_include_measurements or x_limit is not None:
+        axes.set_xlim(original_xlim)
+    if not analysis.limits_include_measurements or y_limit is not None:
+        axes.set_ylim(original_ylim)
+    return tuple(entries)
+
+
+def _add_time_series_measurement_overlays(
+    axes: Any,
+    overlays: tuple[_ProfileMeasurementOverlay, ...],
+    analysis: RiverKmStatisticsConfig,
+    statistic: str,
+    river_km: float,
+    scale: float,
+    report: DiagnosticSink,
+) -> tuple[Mapping[str, object], ...]:
+    if not overlays:
+        return ()
+    original_xlim = axes.get_xlim()
+    original_ylim = axes.get_ylim()
+    entries: list[Mapping[str, object]] = []
+    for overlay in overlays:
+        try:
+            match = match_time_series_measurement(
+                overlay.measurement,
+                statistic,
+                river_km,
+                analysis.measurements_km_tolerance,
+            )
+        except ProfileMeasurementError as error:
+            raise RiverKmStatisticsPlotError(error.code, str(error)) from error
+        if match is None:
+            nearest = float(
+                overlay.measurement.river_km[
+                    int(np.argmin(np.abs(overlay.measurement.river_km - river_km)))
+                ]
+            )
+            report(
+                f"V-MEA-004: no time-series measurement for {overlay.label!r} is "
+                f"within {analysis.measurements_km_tolerance:g} km of "
+                f"{river_km:g} km; nearest is {nearest:g} km."
+            )
+            continue
+        times = np.asarray(
+            [mdates.date2num(time) for time in match.times],
+            dtype=np.float64,
+        )
+        plotted_values = np.asarray(match.values, dtype=np.float64) * scale
+        axes.plot(
+            times,
+            plotted_values,
+            marker="o",
+            linestyle="none",
+            color="black",
+            markersize=4,
+            label=overlay.label,
+            zorder=5,
+        )
+        entries.append(
+            {
+                "label": overlay.label,
+                "river_km": match.river_km,
+                "times": match.times,
+                "values": match.values,
+            }
+        )
+    if entries:
+        axes.legend()
+    if not analysis.limits_include_measurements:
+        axes.set_xlim(original_xlim)
+        axes.set_ylim(original_ylim)
+    return tuple(entries)
 
 
 def _plot_profiles(
@@ -2412,6 +2849,8 @@ def _plot_profiles(
     provenance_path: Path | None,
     fresh_figures: bool,
     report: DiagnosticSink,
+    *,
+    measurement_overlays: tuple[_ProfileMeasurementOverlay, ...] = (),
 ) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
     outputs: list[Path] = []
     reused: list[Path] = []
@@ -2429,6 +2868,9 @@ def _plot_profiles(
         comparison,
     )
     limit_pairs = _paired_limits(x_limits, y_limits)
+    measurement_fingerprints = tuple(
+        overlay.measurement.fingerprint for overlay in measurement_overlays
+    )
     for frame, raw_values, source_fingerprints in zip(
         times, values, fingerprints, strict=True
     ):
@@ -2495,6 +2937,7 @@ def _plot_profiles(
                     _configuration_fingerprint(project, analysis),
                     *_hook_fingerprints(project.effective_hooks(analysis)),
                     *source_fingerprints,
+                    *measurement_fingerprints,
                 ),
                 time=frame.time.isoformat(),
             )
@@ -2526,6 +2969,20 @@ def _plot_profiles(
                 x_limits=x_limit,
                 y_limits=y_limit,
             )
+            measurement_data = _add_profile_measurement_overlays(
+                view.axes,
+                measurement_overlays,
+                analysis,
+                statistic,
+                frame.time,
+                comparison,
+                frames[0].time if comparison == "difference_time" and frames else None,
+                scale,
+                view_name,
+                x_limit,
+                y_limit,
+                report,
+            )
             context = _line_context(
                 project,
                 analysis,
@@ -2541,6 +2998,7 @@ def _plot_profiles(
                 x_limit,
                 y_limit,
                 axes=view.axes,
+                extra_data={"measurements": measurement_data},
             )
             _finalize_output(
                 view.figure,
@@ -2581,12 +3039,17 @@ def _plot_profile_all_times(
     provenance_path: Path | None,
     fresh_figures: bool,
     report: DiagnosticSink,
+    *,
+    measurement_overlays: tuple[_ProfileMeasurementOverlay, ...] = (),
 ) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
     if not times:
         return (), ()
     values_by_line: list[_Array] = []
     line_labels: list[str] = []
     source_fingerprints: list[str] = []
+    measurement_fingerprints = tuple(
+        overlay.measurement.fingerprint for overlay in measurement_overlays
+    )
     for frame, data, frame_fingerprints in zip(
         times, values, fingerprints, strict=True
     ):
@@ -2642,7 +3105,7 @@ def _plot_profile_all_times(
             region_name,
             km_set_name,
             first,
-            source_fingerprints,
+            (*source_fingerprints, *measurement_fingerprints),
             x_limit,
             y_limit,
             extra={"times": [frame.time.isoformat() for frame in times]},
@@ -2680,6 +3143,28 @@ def _plot_profile_all_times(
             x_limits=x_limit,
             y_limits=y_limit,
         )
+        measurement_data: list[Mapping[str, object]] = []
+        seen_measurements: set[tuple[str, datetime]] = set()
+        for frame in times:
+            measurement_data.extend(
+                _add_profile_measurement_overlays(
+                    view.axes,
+                    measurement_overlays,
+                    analysis,
+                    statistic,
+                    frame.time,
+                    comparison,
+                    frames[0].time
+                    if comparison == "difference_time" and frames
+                    else None,
+                    figure_config.display_scale,
+                    "profile_all_times",
+                    x_limit,
+                    y_limit,
+                    report,
+                    seen=seen_measurements,
+                )
+            )
         context = _line_context(
             project,
             analysis,
@@ -2695,7 +3180,14 @@ def _plot_profile_all_times(
             x_limit,
             y_limit,
             axes=view.axes,
-            extra_data={"times": tuple(frame.time for frame in times)},
+            extra_data=(
+                {
+                    "times": tuple(frame.time for frame in times),
+                    "measurements": tuple(measurement_data),
+                }
+                if measurement_overlays
+                else {"times": tuple(frame.time for frame in times)}
+            ),
         )
         _finalize_output(
             view.figure,
@@ -2906,6 +3398,8 @@ def _plot_time_series(
     provenance_path: Path | None,
     fresh_figures: bool,
     report: DiagnosticSink,
+    *,
+    measurement_overlays: tuple[_ProfileMeasurementOverlay, ...] = (),
 ) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
     if not analysis.time_series_locations_km:
         report("No time_series_locations_km configured; time_series view skipped.")
@@ -2913,6 +3407,9 @@ def _plot_time_series(
     first = times[0]
     figure_config = project.effective_figure(analysis)
     statistic_text, unit_text = _value_label(variable, statistic, project)
+    measurement_fingerprints = tuple(
+        overlay.measurement.fingerprint for overlay in measurement_overlays
+    )
     time_values = np.asarray(
         [mdates.date2num(frame.time) for frame in times],
         dtype=np.float64,
@@ -2976,6 +3473,7 @@ def _plot_time_series(
                 "location_km": location_km,
                 "selected_km": chosen_km,
                 "times": [frame.time.isoformat() for frame in times],
+                "measurement_fingerprints": measurement_fingerprints,
             },
         )
         if _reuse_figure(
@@ -3011,6 +3509,15 @@ def _plot_time_series(
         view.axes.xaxis_date()
         view.axes.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d", tz=UTC))
         view.figure.autofmt_xdate()
+        measurement_data = _add_time_series_measurement_overlays(
+            view.axes,
+            measurement_overlays,
+            analysis,
+            statistic,
+            chosen_km,
+            figure_config.display_scale,
+            report,
+        )
         context = _line_context(
             project,
             analysis,
@@ -3030,6 +3537,7 @@ def _plot_time_series(
                 "km": chosen_km,
                 "requested_km": float(location_km),
                 "times": tuple(frame.time for frame in times),
+                "measurements": measurement_data,
             },
         )
         _finalize_output(

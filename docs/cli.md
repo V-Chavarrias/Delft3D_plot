@@ -3,7 +3,7 @@
 Install the package, then use either the `d3dplot` command or
 `python -m d3dplot`. The CLI provides read-only simulation summaries, guarded
 output inspection, configuration schema output, validation, and
-starter-configuration generation.
+starter-configuration generation, plotting, and profile-measurement conversion.
 
 ## Inspect a simulation
 
@@ -62,6 +62,21 @@ the folder names. The optional `river_km_statistics` section contains
 placeholder polygon and river-km paths; replace them before using that
 analysis. Existing files are never overwritten.
 
+## Convert river-km profile measurements
+
+```powershell
+d3dplot measurements convert measurements.mat -o converted.nc --time-zone +01:00
+d3dplot measurements convert measurements.mat -o converted.nc --time-zone +01:00 --variable bed_level
+```
+
+The command converts Matlab v5/v7 profile measurements to canonical NetCDF.
+MATLAB datenums do not contain a timezone, so `--time-zone` is required and
+must be a fixed UTC offset. Without `--variable`, one output file is written
+per variable, with the canonical variable name added to the output filename.
+The source `.mat` is left unchanged. Output files are never overwritten; the
+destination must be in a new or empty directory, or beneath an existing marked
+d3dplot output root. Matlab v7.3/HDF5 inputs are not supported.
+
 ## Validate a project
 
 ```powershell
@@ -80,9 +95,10 @@ and `discharge` produce `V-VAR-006` because line sampling is not part of v1.
 
 When these checks have no errors, `validate` also builds or reuses the same
 grid, merge-plan, and checked time-axis caches as `inspect`. Derived quantity
-dependencies, processing, and plotting remain future model-output work. Errors
-produce a non-zero exit code. Text is the default report format; JSON reports
-have the stable shape `{"valid": true, "issues": []}`.
+dependencies are validated as part of this step, but it does not process
+quantities or create figures. Errors produce a non-zero exit code. Text is the
+default report format; JSON reports have the stable shape
+`{"valid": true, "issues": []}`.
 
 ## Print the configuration schema
 

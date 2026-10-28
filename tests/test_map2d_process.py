@@ -13,6 +13,7 @@ from typing import Any
 import netCDF4
 import numpy as np
 import pytest
+import scipy.io
 from PIL import Image
 
 from d3dplot import __version__
@@ -48,6 +49,36 @@ from d3dplot.variables.registry import get_variable_spec
 def _image_pixels(path: Path) -> np.ndarray:
     with Image.open(path) as image:
         return np.asarray(image.convert("RGBA")).copy()
+
+
+def _write_region_difference_measurement(
+    synthetic_case: Path,
+    output: Path,
+) -> Path:
+    left = scipy.io.loadmat(
+        synthetic_case / "inputs" / "measurements" / "smb" / "L1R1_measured.mat",
+        simplify_cells=True,
+    )["data"]
+    right = scipy.io.loadmat(
+        synthetic_case / "inputs" / "measurements" / "smb" / "L1L3_measured.mat",
+        simplify_cells=True,
+    )["data"]
+    left_profile = left["bl"]["val_mean"]
+    right_profile = right["bl"]["val_mean"]
+    difference_profile = dict(left_profile)
+    difference_profile["val"] = left_profile["val"] - right_profile["val"]
+    scipy.io.savemat(
+        output,
+        {
+            "data": {
+                "bl": {
+                    "val_mean": difference_profile,
+                    "source": left["bl"]["source"],
+                }
+            }
+        },
+    )
+    return output
 
 
 @pytest.mark.integration
@@ -263,6 +294,13 @@ def test_combined_map2d_and_river_km_share_quantity_reads_and_match_synthetic(
                     "polygon": str(
                         synthetic_case / "inputs" / "regions" / f"{region_name}.shp"
                     ),
+                    "measurements": str(
+                        synthetic_case
+                        / "inputs"
+                        / "measurements"
+                        / "smb"
+                        / f"{region_name}_measured.mat"
+                    ),
                 }
                 for region_name in EXACT_REGIONS
             ],
@@ -450,6 +488,20 @@ def test_combined_map2d_and_river_km_share_quantity_reads_and_match_synthetic(
             ],
         }
     )
+    measurement_contexts: list[Any] = []
+    measurement_hook_module = ModuleType("synthetic_measurement_hook")
+
+    def capture_measurement_context(figure: Any, context: Any) -> None:
+        del figure
+        if context.data.get("measurements"):
+            measurement_contexts.append(context)
+
+    measurement_hook_module.capture = capture_measurement_context
+    monkeypatch.setitem(
+        sys.modules,
+        "synthetic_measurement_hook",
+        measurement_hook_module,
+    )
     plot_project = ProjectConfig(
         simulations=[
             SimulationConfig(
@@ -459,6 +511,7 @@ def test_combined_map2d_and_river_km_share_quantity_reads_and_match_synthetic(
             )
         ],
         analyses=[plot_analysis],
+        hooks=["synthetic_measurement_hook:capture"],
     )
     first_plot = plot_river_km_statistics_stage(
         plot_project,
@@ -469,6 +522,14 @@ def test_combined_map2d_and_river_km_share_quantity_reads_and_match_synthetic(
     assert any("selected 2 output(s)" in message for message in first_plot.messages)
     assert any("segment_map" in path.name for path in first_plot.output_paths)
     assert any("segment_membership" in path.name for path in first_plot.output_paths)
+    assert {"profile", "profile_all_times", "time_series"} <= {
+        context.view for context in measurement_contexts
+    }
+    assert all(
+        context.data["measurements"]
+        for context in measurement_contexts
+        if context.view in {"profile", "profile_all_times", "time_series"}
+    )
 
     first_pixels = {path: _image_pixels(path) for path in first_plot.output_paths}
     fresh_plot = plot_river_km_statistics_stage(
@@ -528,7 +589,13 @@ def test_combined_map2d_and_river_km_share_quantity_reads_and_match_synthetic(
         update={
             "regions": config.regions[:2],
             "region_differences": [
-                RegionDifferenceConfig(regions=("L1R1", "L1L3")),
+                RegionDifferenceConfig(
+                    regions=("L1R1", "L1L3"),
+                    measurements=_write_region_difference_measurement(
+                        synthetic_case,
+                        tmp_path / "L1R1_minus_L1L3_measured.mat",
+                    ),
+                ),
             ],
             "variables": ["bed_level"],
             "statistics": ["mean"],
@@ -546,7 +613,9 @@ def test_combined_map2d_and_river_km_share_quantity_reads_and_match_synthetic(
             )
         ],
         analyses=[all_simulation_analysis],
+        hooks=["synthetic_measurement_hook:capture"],
     )
+    previous_measurement_context_count = len(measurement_contexts)
     all_simulation_plot = plot_river_km_statistics_stage(
         all_simulation_project,
         simulation_label=simulation_label,
@@ -554,6 +623,11 @@ def test_combined_map2d_and_river_km_share_quantity_reads_and_match_synthetic(
     assert len(all_simulation_plot.output_paths) == 3
     assert any(
         "L1R1_minus_L1L3" in str(path) for path in all_simulation_plot.output_paths
+    )
+    difference_contexts = measurement_contexts[previous_measurement_context_count:]
+    assert any(
+        context.view == "profile_all_times" and context.data["measurements"]
+        for context in difference_contexts
     )
 
     if simulation_label == "r001":
@@ -640,6 +714,7 @@ def test_combined_map2d_and_river_km_share_quantity_reads_and_match_synthetic(
         comparison_context = hook_calls[0]
         assert comparison_context.comparison == "difference_simulation"
         assert comparison_context.simulation == "all_simulations"
+        assert comparison_context.data.get("measurements", ()) == ()
 
         reference_frames = load_statistic_cache_frames(
             layout,
@@ -683,7 +758,7 @@ def test_combined_map2d_and_river_km_share_quantity_reads_and_match_synthetic(
 
     stacked_analysis = config.model_copy(
         update={
-            "regions": config.regions[:1],
+            "regions": [config.regions[0].model_copy(update={"measurements": None})],
             "variables": ["layer_fraction"],
             "statistics": ["mean"],
             "views": ["profile"],

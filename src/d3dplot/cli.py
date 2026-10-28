@@ -22,6 +22,10 @@ from d3dplot.analyses.river_km_statistics.plot import (
     RiverKmStatisticsPlotError,
     plot_river_km_statistics_stage,
 )
+from d3dplot.analyses.river_km_statistics.measurements import (
+    ProfileMeasurementError,
+    convert_mat_profile_measurements,
+)
 from d3dplot.config.io import (
     apply_overrides,
     dump_config,
@@ -143,6 +147,11 @@ app = typer.Typer(
     help="Inspect simulations and validate d3dplot project configurations.",
     no_args_is_help=True,
 )
+measurements_app = typer.Typer(
+    help="Convert and inspect measurement inputs.",
+    no_args_is_help=True,
+)
+app.add_typer(measurements_app, name="measurements")
 
 
 @app.command()
@@ -994,6 +1003,64 @@ def init(
         typer.echo(f"Could not create starter configuration: {error}", err=True)
         raise typer.Exit(code=1) from error
     typer.echo(f"Created starter configuration: {output.expanduser().resolve()}")
+
+
+@measurements_app.command("convert")
+def measurements_convert(
+    source: Annotated[
+        Path,
+        typer.Argument(
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            help="Matlab v5/v7 profile-measurement input file.",
+        ),
+    ],
+    output: Annotated[
+        Path,
+        typer.Option(
+            "-o",
+            "--output",
+            help=(
+                "Canonical NetCDF output path beneath a new, empty, or marked "
+                "directory. Existing files are never replaced."
+            ),
+        ),
+    ],
+    time_zone: Annotated[
+        str,
+        typer.Option(
+            "--time-zone",
+            help="Fixed UTC offset for the naive Matlab datenums, e.g. +01:00.",
+        ),
+    ],
+    variable: Annotated[
+        str | None,
+        typer.Option(
+            "--variable",
+            help="Convert one variable; by default one file is written per variable.",
+        ),
+    ] = None,
+) -> None:
+    """Convert Matlab profile measurements to guarded canonical NetCDF."""
+    output_path = output.expanduser().resolve(strict=False)
+    try:
+        layout = OutputLayout(output_path.parent)
+        guard = initialize_output_root(layout, tool_version=__version__)
+        output_paths = convert_mat_profile_measurements(
+            source,
+            output_path,
+            time_zone=time_zone,
+            guard=guard,
+            variable=variable,
+        )
+    except (OSError, OutputWriteError, ProfileMeasurementError, ValueError) as error:
+        code = f"{error.code}: " if isinstance(error, ProfileMeasurementError) else ""
+        typer.echo(f"Could not convert profile measurements: {code}{error}", err=True)
+        raise typer.Exit(code=1) from error
+    for path in output_paths:
+        typer.echo(f"Converted profile measurements: {path}")
 
 
 def main() -> None:
