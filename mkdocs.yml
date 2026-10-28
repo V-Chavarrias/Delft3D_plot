@@ -14,6 +14,7 @@ nav:
   - User guide: user-guide.md
   - From Matlab: from-matlab.md
   - Gallery: gallery.md
+  - Releasing: releasing.md
   - Reference:
       - Overview: reference.md
       - Configuration: configuration.md

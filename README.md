@@ -20,6 +20,7 @@ The functional reference is the Matlab tool `D3D_plot` in [OpenEarthTools](https
 - [User guide](docs/user-guide.md)
 - [From Matlab `D3D_plot`](docs/from-matlab.md)
 - [Gallery](docs/gallery.md)
+- [Maintainer release guide](docs/releasing.md)
 - [Reference](docs/reference.md)
 - [Project documentation](docs/index.md)
 - [Architecture proposal](docs/architecture.md)
