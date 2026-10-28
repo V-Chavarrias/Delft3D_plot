@@ -176,11 +176,7 @@ def convert_mat_profile_measurements(
             f"Profile measurement output must use the .nc suffix: {output_path}.",
         )
     guard.validate_target(output_path)
-    requested = (
-        None
-        if variable is None
-        else _canonical_variables((variable,))
-    )
+    requested = None if variable is None else _canonical_variables((variable,))
     parsed = _read_mat_profiles(source_path, time_zone)
     selected = (
         parsed
@@ -202,9 +198,7 @@ def convert_mat_profile_measurements(
         name: (
             output_path
             if len(selected) == 1
-            else output_path.with_name(
-                f"{output_path.stem}_{name}{output_path.suffix}"
-            )
+            else output_path.with_name(f"{output_path.stem}_{name}{output_path.suffix}")
         )
         for name in selected
     }
@@ -220,8 +214,7 @@ def convert_mat_profile_measurements(
     except (OSError, ValueError) as error:
         raise ProfileMeasurementError(
             "V-MEA-001",
-            f"Could not fingerprint profile measurement file "
-            f"{source_path}: {error}",
+            f"Could not fingerprint profile measurement file {source_path}: {error}",
         ) from error
     outputs: list[Path] = []
     for name, profile in selected.items():
@@ -251,9 +244,7 @@ def match_profile_measurement(
     values = _measurement_statistic(measurement, statistic)
     index = min(
         range(len(measurement.times)),
-        key=lambda item: abs(
-            (measurement.times[item] - output_time).total_seconds()
-        ),
+        key=lambda item: abs((measurement.times[item] - output_time).total_seconds()),
     )
     difference = abs(measurement.times[index] - output_time)
     if difference > tolerance:
@@ -329,9 +320,7 @@ def _load_mat_measurements(
             source_time_zone=time_zone,
         )
         cache_path = (
-            layout.cache_measurements
-            / "river_km_statistics"
-            / f"{fingerprint[:24]}.nc"
+            layout.cache_measurements / "river_km_statistics" / f"{fingerprint[:24]}.nc"
         )
         cached: ProfileMeasurement | None = None
         if cache_path.is_file():
@@ -522,17 +511,15 @@ def _parse_mat_variable(
             )
         parsed_statistics[stat] = values
 
-    if (
-        reference_km is None
-        or reference_times is None
-        or reference_units is None
-    ):
+    if reference_km is None or reference_times is None or reference_units is None:
         raise ProfileMeasurementError(
             "V-MEA-007",
             f"No valid statistics found for {variable!r} in {source}.",
         )
     try:
-        times_unsorted = tuple(_matlab_datenum_to_utc(value, zone) for value in reference_times)
+        times_unsorted = tuple(
+            _matlab_datenum_to_utc(value, zone) for value in reference_times
+        )
     except (OverflowError, ValueError) as error:
         raise ProfileMeasurementError(
             "V-MEA-007",
@@ -594,8 +581,7 @@ def _reshape_measurement_values(
     if values.shape != (n_location, n_time):
         raise ProfileMeasurementError(
             "V-MEA-007",
-            f"{name}.val has shape {values.shape}; expected "
-            f"({n_location}, {n_time}).",
+            f"{name}.val has shape {values.shape}; expected ({n_location}, {n_time}).",
         )
     return values
 
@@ -648,7 +634,9 @@ def _write_profile_netcdf(
             dataset.d3dplot_cache_schema = CACHE_SCHEMA_VERSION
             dataset.source_utc_offset = source_time_zone
             dataset.source_files = json.dumps(
-                list(dict.fromkeys(source for source in profile.source_by_time if source)),
+                list(
+                    dict.fromkeys(source for source in profile.source_by_time if source)
+                ),
                 ensure_ascii=False,
             )
             dataset.history = (
@@ -713,9 +701,10 @@ def _read_profile_netcdf(
                     "V-MEA-007",
                     f"NetCDF file is not a river-km profile dataset: {path}.",
                 )
-            if require_fingerprint and _attribute_text(
-                dataset, "d3dplot_fingerprint"
-            ) != fingerprint:
+            if (
+                require_fingerprint
+                and _attribute_text(dataset, "d3dplot_fingerprint") != fingerprint
+            ):
                 raise ProfileMeasurementError(
                     "V-MEA-007",
                     f"Profile measurement cache fingerprint does not match: {path}.",
@@ -759,9 +748,7 @@ def _read_profile_netcdf(
             statistic_names = tuple(
                 _string_value(value) for value in dataset.variables["statistic"][:]
             )
-            if not statistic_names or len(set(statistic_names)) != len(
-                statistic_names
-            ):
+            if not statistic_names or len(set(statistic_names)) != len(statistic_names):
                 raise ProfileMeasurementError(
                     "V-MEA-007",
                     f"Profile measurement file {path} has invalid statistic names.",
@@ -785,8 +772,7 @@ def _read_profile_netcdf(
                     f"{array.shape}.",
                 )
             statistics = {
-                name: array[index]
-                for index, name in enumerate(statistic_names)
+                name: array[index] for index, name in enumerate(statistic_names)
             }
             distance = (
                 np.asarray(dataset.variables["s"][:], dtype=np.float64)
@@ -794,8 +780,7 @@ def _read_profile_netcdf(
                 else None
             )
             if distance is not None and (
-                distance.shape != river_km.shape
-                or not np.all(np.isfinite(distance))
+                distance.shape != river_km.shape or not np.all(np.isfinite(distance))
             ):
                 raise ProfileMeasurementError(
                     "V-MEA-007",
@@ -834,7 +819,9 @@ def _read_profile_netcdf(
         ) from error
 
 
-def _read_source_files(dataset: Any, source_by_time: tuple[str, ...]) -> tuple[str, ...]:
+def _read_source_files(
+    dataset: Any, source_by_time: tuple[str, ...]
+) -> tuple[str, ...]:
     raw = _attribute_text(dataset, "source_files")
     if raw:
         try:
@@ -934,7 +921,7 @@ def _as_mapping(value: object, context: str) -> Mapping[str, object]:
     if isinstance(value, Mapping):
         return value
     if hasattr(value, "_fieldnames"):
-        field_names = getattr(value, "_fieldnames")
+        field_names = value._fieldnames
         if isinstance(field_names, list):
             return {name: getattr(value, name) for name in field_names}
     if isinstance(value, np.ndarray) and value.size == 1:
@@ -942,7 +929,7 @@ def _as_mapping(value: object, context: str) -> Mapping[str, object]:
         if isinstance(item, Mapping):
             return item
         if hasattr(item, "_fieldnames"):
-            field_names = getattr(item, "_fieldnames")
+            field_names = item._fieldnames
             if isinstance(field_names, list):
                 return {name: getattr(item, name) for name in field_names}
     raise ProfileMeasurementError(
