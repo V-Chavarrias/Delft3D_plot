@@ -118,6 +118,7 @@ class AnalysisTimeSelection:
     quantities: tuple[QuantityRequest, ...]
     selection: TimeSelectionResult
     output_cache: tuple[OutputCacheState, ...] = ()
+    additional_selections: tuple[TimeSelectionResult, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.analysis_key or self.analysis_key != self.analysis_key.strip():
@@ -126,7 +127,7 @@ class AnalysisTimeSelection:
             raise ValueError("An analysis selection must contain a quantity request.")
         if len(set(self.quantities)) != len(self.quantities):
             raise ValueError("An analysis selection cannot repeat quantity requests.")
-        selected_indices = {entry.time_index for entry in self.selection.entries}
+        selected_indices = {entry.time_index for entry in self.selected_entries}
         cache_keys = [(state.time_index, state.request) for state in self.output_cache]
         if len(set(cache_keys)) != len(cache_keys):
             raise ValueError(
@@ -141,6 +142,20 @@ class AnalysisTimeSelection:
         ]
         if len(set(cache_paths)) != len(cache_paths):
             raise ValueError("Output paths must be unique per selected time.")
+
+    @property
+    def selected_entries(self) -> tuple[TimeEntry, ...]:
+        """Return primary and supplementary selections without duplicate outputs."""
+        entries_by_index: dict[int, TimeEntry] = {}
+        for result in (self.selection, *self.additional_selections):
+            for entry in result.entries:
+                previous = entries_by_index.get(entry.time_index)
+                if previous is not None and previous != entry:
+                    raise ValueError(
+                        "Conflicting time entries share a selected time index."
+                    )
+                entries_by_index[entry.time_index] = entry
+        return tuple(entries_by_index[index] for index in sorted(entries_by_index))
 
 
 @dataclass(frozen=True, slots=True)
@@ -216,14 +231,17 @@ def plan_process_tasks(
         tuple[TimeEntry, dict[str, tuple[QuantityRequest, ...]]],
     ] = {}
     for selection in selections:
-        if not selection.selection.is_valid:
+        if any(
+            not result.is_valid
+            for result in (selection.selection, *selection.additional_selections)
+        ):
             raise ValueError(
                 f"Cannot plan invalid time selection for {selection.analysis_key!r}."
             )
         cache_by_time_and_request = {
             (state.time_index, state.request): state for state in selection.output_cache
         }
-        for entry in selection.selection.entries:
+        for entry in selection.selected_entries:
             needed_quantities = tuple(
                 request
                 for request in selection.quantities

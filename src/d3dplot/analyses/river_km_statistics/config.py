@@ -25,6 +25,7 @@ Statistic: TypeAlias = Literal[
     "sum",
     "sum_per_length",
     "mean_area_weighted",
+    "bed_slope_streamwise",
 ]
 View: TypeAlias = Literal[
     "profile",

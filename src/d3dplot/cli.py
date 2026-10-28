@@ -18,6 +18,10 @@ import yaml
 
 from d3dplot import __version__
 from d3dplot.analyses.map2d.plot import Map2DPlotError
+from d3dplot.analyses.river_km_statistics.plot import (
+    RiverKmStatisticsPlotError,
+    plot_river_km_statistics_stage,
+)
 from d3dplot.config.io import (
     apply_overrides,
     dump_config,
@@ -29,7 +33,7 @@ from d3dplot.config.io import (
 from d3dplot.config.project import ProjectConfig, SimulationConfig
 from d3dplot.execution.diagnostics import DiagnosticLog
 from d3dplot.plotting.stage import (
-    Map2DPlotStageResult,
+    PlotStageResult,
     ReplotTarget,
     plot_map2d_stage,
     read_replot_metadata,
@@ -679,6 +683,7 @@ def plot(
         raise
     except (
         Map2DPlotError,
+        RiverKmStatisticsPlotError,
         OSError,
         OutputWriteError,
         ValueError,
@@ -803,14 +808,14 @@ def _run_plot_stage(
     fresh_figures: bool = False,
     target: ReplotTarget | None = None,
     target_path: Path | None = None,
-) -> Map2DPlotStageResult:
-    def execute(diagnostic_log: DiagnosticLog | None) -> Map2DPlotStageResult:
+) -> PlotStageResult:
+    def execute(diagnostic_log: DiagnosticLog | None) -> PlotStageResult:
         try:
             replayable_config = _canonical_resolved_config(config)
             provenance_path = _write_resolved_provenance(replayable_config)
             if diagnostic_log is not None:
                 diagnostic_log.info(f"Resolved configuration saved: {provenance_path}.")
-            result = plot_map2d_stage(
+            map_result = plot_map2d_stage(
                 replayable_config,
                 provenance_path=provenance_path,
                 analysis_name=analysis_name,
@@ -823,6 +828,37 @@ def _run_plot_stage(
                     diagnostic_log.info if diagnostic_log is not None else None
                 ),
             )
+            river_km_result = (
+                plot_river_km_statistics_stage(
+                    replayable_config,
+                    analysis_name=analysis_name,
+                    simulation_label=simulation_label,
+                    variable=variable,
+                    fresh_figures=fresh_figures,
+                    provenance_path=provenance_path,
+                    diagnostic=(
+                        diagnostic_log.info if diagnostic_log is not None else None
+                    ),
+                )
+                if target is None
+                else None
+            )
+            result = PlotStageResult(
+                output_paths=(
+                    map_result.output_paths
+                    + (() if river_km_result is None else river_km_result.output_paths)
+                ),
+                reused_paths=(
+                    map_result.reused_paths
+                    + (() if river_km_result is None else river_km_result.reused_paths)
+                ),
+                movie_paths=map_result.movie_paths,
+                reused_movie_paths=map_result.reused_movie_paths,
+                messages=(
+                    map_result.messages
+                    + (() if river_km_result is None else river_km_result.messages)
+                ),
+            )
             if diagnostic_log is not None:
                 diagnostic_log.info(
                     "Plot summary: "
@@ -832,7 +868,13 @@ def _run_plot_stage(
                     f"movies_reused={len(result.reused_movie_paths)}."
                 )
             return result
-        except (Map2DPlotError, OSError, OutputWriteError, ValueError) as error:
+        except (
+            Map2DPlotError,
+            RiverKmStatisticsPlotError,
+            OSError,
+            OutputWriteError,
+            ValueError,
+        ) as error:
             if diagnostic_log is not None:
                 diagnostic_log.error(f"Plot failed: {_format_cli_error(error)}")
             raise
@@ -858,7 +900,7 @@ def _canonical_resolved_config(config: ProjectConfig) -> ProjectConfig:
 
 
 def _format_cli_error(error: Exception) -> str:
-    if isinstance(error, Map2DPlotError):
+    if isinstance(error, (Map2DPlotError, RiverKmStatisticsPlotError)):
         return f"{error.code}: {error}"
     return str(error)
 

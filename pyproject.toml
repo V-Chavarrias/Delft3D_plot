@@ -100,7 +100,13 @@ strict = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = ["-ra", "--strict-config", "--strict-markers"]
+addopts = [
+    "-ra",
+    "--strict-config",
+    "--strict-markers",
+    "--mpl",
+    "--mpl-baseline-path=tests/baseline",
+]
 markers = [
     "unit: fast tests of isolated functions",
     "integration: tests that exercise components with generated or sample data",

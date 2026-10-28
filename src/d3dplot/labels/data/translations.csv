@@ -12,6 +12,8 @@ water_level_change,change in water level,waterstandverandering,cambio en el nive
 tide,Tide,Getij,Marea,L
 surge,Surge,Opzet,marejada ciclónica,L
 plotted_period,plotted period,weegegeven periode,período trazado,-
+segment_map,segment map,segmentkaart,mapa de segmentos,-
+segment_membership,segment membership,segmentlidmaatschap,pertenencia al segmento,-
 entire_period,entire period,gehele periode,todo el período,-
 depth,depth,diepte,profundidad,L
 depth_velocity_point,depth at velocity point,depth at velocity point,profundidad en punto de velocidad,L
@@ -98,6 +100,17 @@ fourier_coeff_abs,maximum Fourier coefficient,maximale Fouriercoëfficiënt,coef
 fourier_spectral_power,spectral power,spectraal vermogen van Fourier,potencia espectral de Fourier,L2
 amplitude_l,amplitude,amplitude,amplitud,L
 length,length,lengte,longitud,L
+mean,mean,gemiddelde,media,-
+std,standard deviation,standaardafwijking,desviación estándar,-
+max,maximum,maximaal,máximo,-
+min,minimum,minimaal,mínimo,-
+count,count,aantal,recuento,-
+sum,sum,som,suma,-
+sum_per_length,sum per length,som per lengte,suma por longitud,-
+mean_area_weighted,area-weighted mean,area-gewogen gemiddelde,media ponderada por área,-
+bed_slope_streamwise,streamwise bed slope,bodemverhang in stroomrichting,pendiente del lecho en dirección de la corriente,-
+dominant,dominant,dominant,dominante,-
+cumulative,cumulative,gecumuleerd,acumulado,-
 energy_loss,energy head loss,energie hoofd verlies,perdida de carga de energía,L
 cel_morpho,morphodynamic celerity,morfodynamische snelheid,celeridad moprhodinámica,L/T
 fr,Froude number,Froude getal,número de Froude,-

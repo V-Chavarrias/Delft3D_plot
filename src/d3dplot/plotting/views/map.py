@@ -20,7 +20,11 @@ from matplotlib.image import AxesImage
 
 from d3dplot.config.figure import Extent, FigureConfig, MapViewConfig
 from d3dplot.plotting.views.decorations import MapDecorations
-from d3dplot.plotting.views.extents import ExtentWindow, UgridGrid
+from d3dplot.plotting.views.extents import (
+    ExtentWindow,
+    UgridGrid,
+    valid_face_nodes,
+)
 
 _Array = Any
 np: Any = import_module("numpy")
@@ -307,14 +311,22 @@ def _as_face_values(values: _Array, n_faces: int) -> _Array:
 def _face_polygons(grid: UgridGrid, face_indices: _Array) -> list[_Array]:
     connectivity = np.asarray(grid.face_node_connectivity, dtype=np.int64)
     nodes = np.asarray(grid.node_coordinates, dtype=np.float64)
+    try:
+        valid_nodes = valid_face_nodes(connectivity, grid.fill_value)
+    except ValueError as error:
+        raise MapViewError(str(error)) from error
     polygons: list[_Array] = []
     for face_index in face_indices:
-        node_indices = connectivity[face_index]
-        node_indices = node_indices[node_indices != grid.fill_value]
-        if node_indices.size < 3 or np.any(node_indices < 0):
+        node_indices = connectivity[face_index][valid_nodes[face_index]]
+        if node_indices.size < 3:
             raise MapViewError(f"Grid face {face_index} has invalid node connectivity.")
         polygons.append(nodes[node_indices])
     return polygons
+
+
+def face_polygons(grid: UgridGrid, face_indices: _Array) -> list[_Array]:
+    """Return coordinates for selected grid faces for map overlays."""
+    return _face_polygons(grid, np.asarray(face_indices, dtype=np.int64))
 
 
 def _measurement_polygons(measurement: Any) -> tuple[list[_Array], _Array]:

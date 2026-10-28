@@ -145,6 +145,33 @@ def test_process_planner_merges_analyses_and_blocks_per_subrun() -> None:
 
 
 @pytest.mark.unit
+def test_process_planner_includes_additional_analysis_time_selections() -> None:
+    entries = (_entry(0), _entry(1), _entry(2))
+    selection = AnalysisTimeSelection(
+        analysis_key="river-km-0",
+        quantities=(QuantityRequest("bed_level"),),
+        selection=TimeSelectionResult((entries[0],), (), ()),
+        additional_selections=(
+            TimeSelectionResult((entries[1], entries[2]), (), ()),
+            TimeSelectionResult((entries[2],), (), ()),
+        ),
+    )
+
+    tasks = plan_process_tasks(
+        "r001",
+        (selection,),
+        workers=1,
+        max_block_times=10,
+    )
+
+    assert [time.entry.time_index for task in tasks for time in task.times] == [
+        0,
+        1,
+        2,
+    ]
+
+
+@pytest.mark.unit
 def test_process_planner_shards_deterministically_and_rejects_bad_inputs() -> None:
     selections = (
         _selection("map2d-0", tuple(_entry(index) for index in range(12)), "s1"),

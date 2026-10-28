@@ -28,7 +28,10 @@ from d3dplot.analyses.river_km_statistics.process import (
     difference_simulation_relative,
     multiply_by_width,
     prepare_region_segments,
+    select_time_average_outputs,
 )
+from d3dplot.execution.tasks import AnalysisTimeSelection, plan_process_tasks
+from d3dplot.simulation.time_axis import TimeAxis, TimeEntry, TimeSelectionResult
 from d3dplot.store import OutputLayout, initialize_output_root
 from d3dplot.variables.context import QuantityRequest
 from d3dplot.variables.geometry import GridGeometry
@@ -123,6 +126,57 @@ def test_time_average_uses_centre_to_corner_durations_and_propagates_nan() -> No
     assert np.isnan(result["mean"][1])
     assert np.isnan(result["max"][1])
     assert np.isnan(result["dominant"][1])
+
+
+@pytest.mark.unit
+def test_time_average_selections_can_be_added_to_the_processing_plan() -> None:
+    start = datetime(2024, 1, 1, tzinfo=UTC)
+    entries = tuple(
+        TimeEntry(
+            time_index=index,
+            subrun=0,
+            local_index=index,
+            time=start + timedelta(seconds=index * 10),
+            morph_time=None,
+            corrupt_partitions=(),
+        )
+        for index in range(4)
+    )
+    time_axis = TimeAxis(entries, "+00:00", morphology_available=False)
+    config = RiverKmStatisticsConfig.model_validate(
+        {
+            "variables": ["bed_level"],
+            "regions": [{"name": "region", "polygon": "region.shp"}],
+            "river_km": {"file": "river.csv", "sets": {"250m": [0.125, 0.375]}},
+            "time_averages": [
+                {
+                    "name": "middle-to-last",
+                    "times": {"at": {"indices": [2, 4]}},
+                }
+            ],
+        }
+    )
+
+    (average_selection,) = select_time_average_outputs(time_axis, config)
+    process_selection = AnalysisTimeSelection(
+        analysis_key="river-km-0",
+        quantities=(QuantityRequest("bed_level"),),
+        selection=TimeSelectionResult((entries[0],), (), ()),
+        additional_selections=(average_selection,),
+    )
+    tasks = plan_process_tasks(
+        "r001",
+        (process_selection,),
+        workers=1,
+        max_block_times=10,
+    )
+
+    assert average_selection.entries == (entries[1], entries[3])
+    assert [time.entry.time_index for task in tasks for time in task.times] == [
+        0,
+        1,
+        3,
+    ]
 
 
 @pytest.mark.unit

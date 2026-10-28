@@ -62,6 +62,17 @@ class Map2DPlotStageResult:
     messages: tuple[str, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class PlotStageResult:
+    """Combined outputs produced by the configured analysis plot stages."""
+
+    output_paths: tuple[Path, ...]
+    reused_paths: tuple[Path, ...]
+    movie_paths: tuple[Path, ...]
+    reused_movie_paths: tuple[Path, ...]
+    messages: tuple[str, ...]
+
+
 def read_replot_metadata(figure_path: str | Path) -> tuple[Path, ReplotTarget]:
     """Read and validate the guarded provenance selector embedded in a PNG."""
     try:
@@ -217,10 +228,7 @@ def plot_map2d_stage(
     for analysis_index in analysis_indices:
         configured_analysis = project.analyses[analysis_index]
         if not isinstance(configured_analysis, Map2DConfig):
-            raise ValueError(
-                f"Plotting for analysis {configured_analysis.analysis!r} is not "
-                "implemented yet."
-            )
+            continue
         analysis = configured_analysis
         if target is not None and target.variable.casefold() not in {
             name.casefold() for name in analysis.variables

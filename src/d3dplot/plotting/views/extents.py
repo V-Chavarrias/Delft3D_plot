@@ -158,6 +158,43 @@ class ExtentSet:
         return cls(windows=tuple(result))
 
 
+def create_extent_window(
+    grid: UgridGrid,
+    grid_path: Path,
+    layout: OutputLayout,
+    guard: OutputWriteGuard,
+    *,
+    index: int,
+    name: str,
+    bounds: Extent,
+) -> ExtentWindow:
+    """Create or reuse one cached face subset for caller-defined bounds."""
+    xmin, xmax, ymin, ymax = bounds
+    if xmin >= xmax or ymin >= ymax:
+        raise ExtentSetError(f"Extent {name!r} must have increasing bounds.")
+    grid_fingerprint = read_cache_fingerprints((grid_path,))[
+        grid_path.resolve(strict=False)
+    ]
+    if grid_fingerprint is None:
+        raise ExtentSetError(f"Inspected grid cache has no fingerprint: {grid_path}.")
+    fingerprint = fingerprint_artifact(
+        kind="visible_faces",
+        schema_version=CACHE_SCHEMA_VERSION,
+        tool_version=__version__,
+        algorithm_version="1",
+        parameters={
+            "bounds": list(bounds),
+            "name": name,
+            "n_faces": int(grid.n_face),
+        },
+        inputs=(grid_fingerprint,),
+    )
+    cache_path = layout.cache_geometry / f"extent_{fingerprint[:24]}.nc"
+    faces = _faces_in_bounds(_visible_faces(grid), bounds)
+    cached_faces = _load_or_write_faces(cache_path, faces, fingerprint, bounds, guard)
+    return ExtentWindow(index, name, bounds, cached_faces, fingerprint)
+
+
 def _visible_faces(
     grid: UgridGrid,
 ) -> tuple[_Array, _Array, _Array, _Array]:
@@ -165,9 +202,12 @@ def _visible_faces(
     if connectivity.ndim != 2 or connectivity.shape[0] != grid.n_face:
         raise ExtentSetError("Grid face-node connectivity has an invalid shape.")
     node_coordinates = np.asarray(grid.node_coordinates, dtype=np.float64)
-    valid_nodes = connectivity != grid.fill_value
+    try:
+        valid_nodes = valid_face_nodes(connectivity, grid.fill_value)
+    except ValueError as error:
+        raise ExtentSetError(str(error)) from error
     counts = np.count_nonzero(valid_nodes, axis=1)
-    if np.any(counts < 3) or np.any(connectivity[valid_nodes] < 0):
+    if np.any(counts < 3):
         raise ExtentSetError("Grid face-node connectivity contains invalid faces.")
     if np.any(connectivity[valid_nodes] >= node_coordinates.shape[0]):
         raise ExtentSetError("Grid face-node connectivity indexes beyond the nodes.")
@@ -178,6 +218,15 @@ def _visible_faces(
     face_min_y = np.min(np.where(valid_nodes, face_nodes[:, :, 1], np.inf), axis=1)
     face_max_y = np.max(np.where(valid_nodes, face_nodes[:, :, 1], -np.inf), axis=1)
     return face_min_x, face_max_x, face_min_y, face_max_y
+
+
+def valid_face_nodes(connectivity: _Array, fill_value: int) -> _Array:
+    """Mask both the declared fill value and inspection's normalized -1 padding."""
+    values = np.asarray(connectivity, dtype=np.int64)
+    padding = (values == fill_value) | (values == -1)
+    if np.any((values < 0) & ~padding):
+        raise ValueError("Grid face-node connectivity contains invalid node indices.")
+    return ~padding
 
 
 def _faces_in_bounds(

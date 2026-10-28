@@ -5,12 +5,15 @@ from __future__ import annotations
 
 import csv
 import json
+import sys
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 import netCDF4
 import numpy as np
 import pytest
+from PIL import Image
 
 from d3dplot import __version__
 from d3dplot.analyses.map2d.process import (
@@ -18,7 +21,19 @@ from d3dplot.analyses.map2d.process import (
     Map2DProcessResult,
     Map2DTaskProcessor,
 )
-from d3dplot.analyses.river_km_statistics.config import RiverKmStatisticsConfig
+from d3dplot.analyses.river_km_statistics.config import (
+    RegionDifferenceConfig,
+    RiverKmStatisticsConfig,
+    TimeAverageConfig,
+)
+from d3dplot.analyses.river_km_statistics.plot import (
+    load_statistic_cache_frames,
+    plot_river_km_statistics_stage,
+    statistic_values,
+)
+from d3dplot.config.figure import FigureConfig
+from d3dplot.config.project import ProjectConfig, SimulationConfig
+from d3dplot.config.selections import IndicesSelection, LayersSelection, TimesConfig
 from d3dplot.execution.diagnostics import DiagnosticLog
 from d3dplot.execution.orchestrator import run_process_stage
 from d3dplot.execution.tasks import AnalysisTimeSelection, plan_process_tasks
@@ -28,6 +43,11 @@ from d3dplot.simulation.time_axis import TimeAxis, TimeSelectionResult
 from d3dplot.store import OutputLayout, initialize_output_root
 from d3dplot.variables.context import QuantityRequest
 from d3dplot.variables.registry import get_variable_spec
+
+
+def _image_pixels(path: Path) -> np.ndarray:
+    with Image.open(path) as image:
+        return np.asarray(image.convert("RGBA")).copy()
 
 
 @pytest.mark.integration
@@ -228,6 +248,12 @@ def test_combined_map2d_and_river_km_share_quantity_reads_and_match_synthetic(
         "sum",
         "sum_per_length",
     )
+    first_sediment = next(
+        subrun.model_input.sediment
+        for subrun in simulation.subruns
+        if subrun.model_input.sediment is not None
+    )
+    fraction_indices = tuple(range(1, len(first_sediment.fractions) + 1))
     config = RiverKmStatisticsConfig.model_validate(
         {
             "variables": ["bed_level", "layer_fraction"],
@@ -258,7 +284,11 @@ def test_combined_map2d_and_river_km_share_quantity_reads_and_match_synthetic(
         analysis_key="river-km-bed-level",
         quantities=(
             QuantityRequest("bed_level"),
-            QuantityRequest("layer_fraction", fractions=(1, 2), layers=(0,)),
+            QuantityRequest(
+                "layer_fraction",
+                fractions=fraction_indices,
+                layers=(0,),
+            ),
         ),
         selection=TimeSelectionResult(entries, (), ()),
     )
@@ -353,7 +383,7 @@ def test_combined_map2d_and_river_km_share_quantity_reads_and_match_synthetic(
             region_name = str(dataset.getncattr("region"))
             if dataset.getncattr("variable") == "layer_fraction":
                 layer_fraction_paths.append(path)
-                assert dataset.variables["values"].shape[-1] == 2
+                assert dataset.variables["values"].shape[-1] == len(fraction_indices)
                 continue
             bed_level_path_count += 1
             location = (
@@ -385,17 +415,353 @@ def test_combined_map2d_and_river_km_share_quantity_reads_and_match_synthetic(
     expected_path_count = len(entries) * len(EXACT_REGIONS)
     assert bed_level_path_count == expected_path_count
     assert len(layer_fraction_paths) == expected_path_count
-    first_sediment = next(
-        subrun.model_input.sediment
-        for subrun in simulation.subruns
-        if subrun.model_input.sediment is not None
-    )
     expected_components = tuple(
         first_sediment.fractions[index - 1].name or f"fraction_{index}"
-        for index in (1, 2)
+        for index in fraction_indices
     )
     with netCDF4.Dataset(layer_fraction_paths[0], mode="r") as dataset:
         actual_components = tuple(
             str(name) for name in dataset.variables["component_name"][:]
         )
         assert actual_components == expected_components
+
+    plot_analysis = config.model_copy(
+        update={
+            "regions": config.regions[:1],
+            "variables": ["bed_level"],
+            "statistics": ["mean"],
+            "views": [
+                "profile",
+                "profile_all_times",
+                "space_time",
+                "time_series",
+                "cumulative",
+            ],
+            "time_series_locations_km": [centres[0]],
+            "figure": FigureConfig(x_limits=[(min(centres), max(centres))]),
+            "diagnostics": ["segment_map", "segment_membership"],
+            "time_averages": [
+                TimeAverageConfig(
+                    name="first-two",
+                    times=TimesConfig(
+                        at=IndicesSelection(indices=[1, 2]),
+                    ),
+                )
+            ],
+        }
+    )
+    plot_project = ProjectConfig(
+        simulations=[
+            SimulationConfig(
+                path=simulation.root,
+                label=simulation_label,
+                output_dir=layout.root.parent,
+            )
+        ],
+        analyses=[plot_analysis],
+    )
+    first_plot = plot_river_km_statistics_stage(
+        plot_project,
+        simulation_label=simulation_label,
+    )
+    assert first_plot.output_paths
+    assert not first_plot.reused_paths
+    assert any("selected 2 output(s)" in message for message in first_plot.messages)
+    assert any("segment_map" in path.name for path in first_plot.output_paths)
+    assert any("segment_membership" in path.name for path in first_plot.output_paths)
+
+    first_pixels = {path: _image_pixels(path) for path in first_plot.output_paths}
+    fresh_plot = plot_river_km_statistics_stage(
+        plot_project,
+        simulation_label=simulation_label,
+        fresh_figures=True,
+    )
+    assert fresh_plot.output_paths == first_plot.output_paths
+    for path in fresh_plot.output_paths:
+        np.testing.assert_array_equal(_image_pixels(path), first_pixels[path])
+
+    reused_plot = plot_river_km_statistics_stage(
+        plot_project,
+        simulation_label=simulation_label,
+    )
+    assert not reused_plot.output_paths
+    assert set(reused_plot.reused_paths) == set(first_plot.output_paths)
+
+    hook_calls: list[Any] = []
+    hook_module = ModuleType("synthetic_plot_hook")
+
+    def record_hook(figure: Any, context: Any) -> None:
+        del figure
+        hook_calls.append(context)
+
+    hook_module.record = record_hook
+    monkeypatch.setitem(sys.modules, "synthetic_plot_hook", hook_module)
+    grouped_analysis = config.model_copy(
+        update={
+            "regions": config.regions[:2],
+            "region_groups": [["L1R1", "L1L3"]],
+            "variables": ["bed_level"],
+            "statistics": ["mean"],
+            "views": ["profile_all_times"],
+            "time_averages": [],
+        }
+    )
+    grouped_project = ProjectConfig(
+        simulations=[
+            SimulationConfig(
+                path=simulation.root,
+                label=simulation_label,
+                output_dir=layout.root.parent,
+            )
+        ],
+        analyses=[grouped_analysis],
+        hooks=["synthetic_plot_hook:record"],
+    )
+    grouped_plot = plot_river_km_statistics_stage(
+        grouped_project,
+        simulation_label=simulation_label,
+    )
+    assert len(grouped_plot.output_paths) == 3
+    assert len(hook_calls) == 3
+
+    all_simulation_analysis = config.model_copy(
+        update={
+            "regions": config.regions[:2],
+            "region_differences": [
+                RegionDifferenceConfig(regions=("L1R1", "L1L3")),
+            ],
+            "variables": ["bed_level"],
+            "statistics": ["mean"],
+            "views": ["profile_all_times"],
+            "time_averages": [],
+            "grouping": "all_simulations",
+        }
+    )
+    all_simulation_project = ProjectConfig(
+        simulations=[
+            SimulationConfig(
+                path=simulation.root,
+                label=simulation_label,
+                output_dir=layout.root.parent,
+            )
+        ],
+        analyses=[all_simulation_analysis],
+    )
+    all_simulation_plot = plot_river_km_statistics_stage(
+        all_simulation_project,
+        simulation_label=simulation_label,
+    )
+    assert len(all_simulation_plot.output_paths) == 3
+    assert any(
+        "L1R1_minus_L1L3" in str(path) for path in all_simulation_plot.output_paths
+    )
+
+    if simulation_label == "r001":
+        other_simulation, other_report = discover_simulation(
+            synthetic_case / "simulations" / "r002"
+        )
+        assert other_simulation is not None
+        assert other_report.is_valid
+        other_layout = OutputLayout(tmp_path / "r002-output" / "d3dplot")
+        other_inspection, other_inspection_report = inspect_simulation(
+            other_simulation,
+            other_layout,
+            forbidden_roots=(),
+        )
+        assert other_inspection is not None, other_inspection_report.to_text()
+        other_guard = initialize_output_root(
+            other_layout,
+            tool_version=__version__,
+            forbidden_roots=(),
+        )
+        other_time_axis = TimeAxis.from_cache(other_inspection.times_path)
+        other_config = config.model_copy(update={"variables": ["bed_level"]})
+        other_selection = AnalysisTimeSelection(
+            analysis_key="river-km-r002",
+            quantities=(QuantityRequest("bed_level"),),
+            selection=TimeSelectionResult(other_time_axis.entries, (), ()),
+        )
+        other_tasks = plan_process_tasks(
+            "r002",
+            (other_selection,),
+            workers=1,
+            max_block_times=50,
+        )
+        other_processor = Map2DTaskProcessor(
+            other_simulation,
+            "r002",
+            other_inspection,
+            other_layout,
+            other_guard,
+            analysis_keys=(),
+            river_km_analyses={"river-km-r002": other_config},
+            model_crs="EPSG:28992",
+        )
+        for other_task in other_tasks:
+            other_processor(other_task)
+
+        multi_simulation_analysis = config.model_copy(
+            update={
+                "regions": config.regions[:1],
+                "variables": ["bed_level"],
+                "statistics": ["mean"],
+                "views": ["profile_all_times"],
+                "time_averages": [],
+                "grouping": "all_simulations",
+                "comparisons": ["difference_simulation"],
+            }
+        )
+        hook_calls.clear()
+        multi_simulation_project = ProjectConfig(
+            simulations=[
+                SimulationConfig(
+                    path=simulation.root,
+                    label="r001",
+                    output_dir=layout.root.parent,
+                ),
+                SimulationConfig(
+                    path=other_simulation.root,
+                    label="r002",
+                    output_dir=other_layout.root.parent,
+                ),
+            ],
+            analyses=[multi_simulation_analysis],
+            hooks=["synthetic_plot_hook:record"],
+        )
+        multi_simulation_plot = plot_river_km_statistics_stage(
+            multi_simulation_project,
+        )
+        assert len(multi_simulation_plot.output_paths) == 1
+        assert any(
+            "difference_simulation" in str(path)
+            for path in multi_simulation_plot.output_paths
+        )
+        assert len(hook_calls) == 1
+        comparison_context = hook_calls[0]
+        assert comparison_context.comparison == "difference_simulation"
+        assert comparison_context.simulation == "all_simulations"
+
+        reference_frames = load_statistic_cache_frames(
+            layout,
+            multi_simulation_analysis,
+            "L1R1",
+            "250m",
+            "bed_level",
+        )
+        current_frames = load_statistic_cache_frames(
+            other_layout,
+            multi_simulation_analysis,
+            "L1R1",
+            "250m",
+            "bed_level",
+        )
+        reference_by_time = {frame.time: frame for frame in reference_frames}
+        common_frames = tuple(
+            frame for frame in current_frames if frame.time in reference_by_time
+        )
+        expected_values = np.stack(
+            [
+                statistic_values(frame, "mean", multi_simulation_analysis)
+                - statistic_values(
+                    reference_by_time[frame.time],
+                    "mean",
+                    multi_simulation_analysis,
+                )
+                for frame in common_frames
+            ]
+        )
+        assert comparison_context.data["times"] == tuple(
+            frame.time for frame in common_frames
+        )
+        np.testing.assert_allclose(
+            np.asarray(comparison_context.data["values"]),
+            expected_values,
+            rtol=0.0,
+            atol=1e-12,
+            equal_nan=True,
+        )
+
+    stacked_analysis = config.model_copy(
+        update={
+            "regions": config.regions[:1],
+            "variables": ["layer_fraction"],
+            "statistics": ["mean"],
+            "views": ["profile"],
+            "time_averages": [],
+            "fractions": list(fraction_indices),
+            "vertical": LayersSelection(layers=[0]),
+            "display": "stacked_area",
+        }
+    )
+    stacked_project = ProjectConfig(
+        simulations=[
+            SimulationConfig(
+                path=simulation.root,
+                label=simulation_label,
+                output_dir=layout.root.parent,
+            )
+        ],
+        analyses=[stacked_analysis],
+    )
+    stacked_plot = plot_river_km_statistics_stage(
+        stacked_project,
+        simulation_label=simulation_label,
+    )
+    assert len(stacked_plot.output_paths) == len(entries)
+
+    slope_analysis = config.model_copy(
+        update={
+            "regions": config.regions[:1],
+            "variables": ["bed_level"],
+            "statistics": ["bed_slope_streamwise"],
+        }
+    )
+    slope_selection = AnalysisTimeSelection(
+        analysis_key="river-km-slope-only",
+        quantities=(QuantityRequest("bed_level"),),
+        selection=TimeSelectionResult((entries[0],), (), ()),
+    )
+    (slope_task,) = plan_process_tasks(
+        simulation_label,
+        (slope_selection,),
+        workers=1,
+        max_block_times=1,
+    )
+    slope_processor = Map2DTaskProcessor(
+        simulation,
+        simulation_label,
+        inspection,
+        layout,
+        guard,
+        analysis_keys=(),
+        river_km_analyses={"river-km-slope-only": slope_analysis},
+        model_crs="EPSG:28992",
+    )
+    slope_result = slope_processor(slope_task)
+    slope_cache = next(
+        path
+        for path in slope_result.output_paths
+        if path.is_relative_to(layout.cache_data / "river_km_statistics")
+    )
+    with netCDF4.Dataset(slope_cache, mode="r") as dataset:
+        assert tuple(str(item) for item in dataset.variables["statistic"][:]) == (
+            "mean",
+        )
+
+    slope_frames = load_statistic_cache_frames(
+        layout,
+        slope_analysis,
+        "L1R1",
+        "250m",
+        "bed_level",
+    )
+    first_slope_frame = next(
+        frame for frame in slope_frames if frame.time == entries[0].time
+    )
+    assert np.isnan(
+        statistic_values(
+            first_slope_frame,
+            "bed_slope_streamwise",
+            slope_analysis,
+        )[[0, -1]]
+    ).all()

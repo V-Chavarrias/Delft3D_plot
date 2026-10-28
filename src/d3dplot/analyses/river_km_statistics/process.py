@@ -41,7 +41,12 @@ from d3dplot.river_km.regions import (
     assign_faces_to_segments,
     read_region_polygon,
 )
-from d3dplot.simulation.time_axis import TimeEntry
+from d3dplot.simulation.time_axis import (
+    CorruptOutputPolicy,
+    TimeAxis,
+    TimeEntry,
+    TimeSelectionResult,
+)
 from d3dplot.store import (
     CACHE_SCHEMA_VERSION,
     OutputLayout,
@@ -327,6 +332,33 @@ def _geometry_cache_path(
         / quote(region_name, safe="-_.")
         / f"{quote(km_set_name, safe='-_.')}.nc"
     )
+
+
+def read_prepared_region_segments(
+    layout: OutputLayout,
+    guard: OutputWriteGuard,
+    region_name: str,
+    km_set_name: str,
+) -> PreparedRegionSegments:
+    """Load prepared region/segment geometry from its guarded cache."""
+    path = _geometry_cache_path(layout, region_name, km_set_name)
+    resolved = guard.validate_target(path)
+    if not resolved.is_file():
+        raise RiverKmStatisticsError(
+            f"Prepared geometry cache does not exist: {resolved}.",
+            code="V-OUT-020",
+        )
+    try:
+        with import_module("netCDF4").Dataset(resolved, mode="r") as dataset:
+            fingerprint = str(dataset.getncattr("d3dplot_fingerprint"))
+        return _read_geometry_cache(resolved, fingerprint=fingerprint)
+    except RiverKmStatisticsError:
+        raise
+    except (OSError, RuntimeError, TypeError, ValueError) as error:
+        raise RiverKmStatisticsError(
+            f"Could not read prepared geometry cache {resolved}: {error}.",
+            code="V-OUT-020",
+        ) from error
 
 
 def _region_segment_fingerprint(
@@ -893,6 +925,28 @@ def component_labels(
     return tuple(f"component_{index}" for index in range(1, component_count + 1))
 
 
+def select_time_average_outputs(
+    time_axis: TimeAxis,
+    config: RiverKmStatisticsConfig,
+    *,
+    on_corrupt_output: CorruptOutputPolicy = "mask",
+) -> tuple[TimeSelectionResult, ...]:
+    """Resolve average times through TimeAxis for plotting and process planning.
+
+    Pass these results to ``AnalysisTimeSelection.additional_selections`` so every
+    requested average output is included in the shared processing plan.
+    """
+    return tuple(
+        time_axis.select(
+            average.times,
+            naive_time_zone=time_axis.source_utc_offset,
+            duplicate_morphological_times=config.duplicate_morphological_times,
+            on_corrupt_output=on_corrupt_output,
+        )
+        for average in config.time_averages
+    )
+
+
 def _write_segment_statistics_file(
     path: Path,
     guard: OutputWriteGuard,
@@ -937,10 +991,12 @@ def _write_segment_statistics_file(
         face_area,
         lengths_m,
     )
-    statistic_values = np.stack(
-        [reduced[name] for name in config.statistics],
-        axis=1,
-    )
+    stored_statistics = [
+        name for name in config.statistics if name != "bed_slope_streamwise"
+    ]
+    if "bed_slope_streamwise" in config.statistics and "mean" not in stored_statistics:
+        stored_statistics.insert(0, "mean")
+    statistic_values = np.stack([reduced[name] for name in stored_statistics], axis=1)
     if data.ndim == 1:
         statistic_values = statistic_values[:, :, 0]
 
@@ -992,7 +1048,7 @@ def _write_segment_statistics_file(
     with atomic_path(path, guard) as temporary:
         with netcdf4.Dataset(temporary, mode="w", format="NETCDF4") as dataset:
             dataset.createDimension("segment", lengths_m.size)
-            dataset.createDimension("statistic", len(config.statistics))
+            dataset.createDimension("statistic", len(stored_statistics))
             dataset.createVariable("km_centre", "f8", ("segment",))[:] = (
                 prepared.geometry.centres_km
             )
@@ -1010,7 +1066,7 @@ def _write_segment_statistics_file(
                 str,
                 ("statistic",),
             )
-            for index, statistic_name in enumerate(config.statistics):
+            for index, statistic_name in enumerate(stored_statistics):
                 statistic_coordinate[index] = statistic_name
             dimensions: tuple[str, ...] = ("segment", "statistic")
             if component_names:
@@ -1443,4 +1499,6 @@ __all__ = [
     "difference_simulation_relative",
     "difference_regions",
     "multiply_by_width",
+    "read_prepared_region_segments",
+    "select_time_average_outputs",
 ]
