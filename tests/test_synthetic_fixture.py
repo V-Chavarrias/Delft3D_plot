@@ -20,6 +20,12 @@ def test_synthetic_case_contains_model_and_expected_results(
     assert mdu_path.is_file()
     assert expected_path.is_file()
     assert quantity_expected_path.is_file()
+    matlab_script = (synthetic_case / "scripts" / "main_plot_synthetic.m").read_text(
+        encoding="utf-8"
+    )
+    smb_script, map_script = matlab_script.split("%% M2D", maxsplit=1)
+    assert "in_plot.(tag).var={'bl'};" in smb_script
+    assert "in_plot.(tag).var={'bl','qsp'};" in map_script
 
     partitioned = synthetic_case / "simulations" / "fm_partitioned"
     partition_map = partitioned / "DFM_OUTPUT_dflowfm" / "dflowfm_0000_map.nc"

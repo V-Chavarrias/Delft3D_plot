@@ -39,7 +39,7 @@ It also checks that every map variable has all its time steps.
 | `inputs/measurements/2d/` | VRT mosaic of 2 GeoTIFF tiles; a half-pixel-shifted GeoTIFF in cm (factor 0.01); a GeoTIFF outside the time tolerance; polygon shapefiles ("vakken", fields `MEAN`, `COUNT`, `A`, `locatie`, `code_uniek`, with failing coverage/location filters and shuffled order); catalogues `catalogue_raster.csv`, `catalogue_vakken.csv` |
 | `expected/` | merged SMT time axis; cells per 250 m segment; SMB statistics per simulation and region (Matlab definitions) |
 | `expected/plain_fm/` | one-run time axis and SMB statistics used by both plain FM variants |
-| `scripts/main_plot_synthetic.m` | Matlab `D3D_plot` input. Run it once to create the Matlab reference (`mat/`, `fig/` in the simulation folders) |
+| `scripts/main_plot_synthetic.m` | Matlab `D3D_plot` input for bed level, derived specific discharge, and SMB statistics. Run it on a newly generated case to create references (`mat/`, `fig/` in the simulation folders); existing results are preserved |
 
 Features reproduced from `r209`:
 * **Partitions**:
