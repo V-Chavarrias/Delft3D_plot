@@ -35,7 +35,7 @@ Document map:
 
 | Item | Location | State |
 |------|----------|-------|
-| Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `feat/user-documentation`; WP 5.2 committed as `cd54430`; WP 5.3 and WP 5.4 implemented and locally validated; P-drive acceptance deferred per D65 |
+| Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `feat/acceptance-r209`; WP 5.2 committed as `cd54430`; WP 5.3 and WP 5.4 implemented and locally validated; WP 5.1 preflight attempted but incomplete (§13.4) |
 | Plan (this file) | `docs/architecture.md` | v6.72 |
 | Licence | `LICENSE` | GPL-3.0 |
 | Synthetic SMT and plain FM test case generator | `tools/synthetic_smt/` | Implemented and verified locally (§13.3) |
@@ -48,7 +48,7 @@ Document map:
 | Configuration design | §2 decisions D57–D59, D69–D70 | Nested `times` object, Matlab-compatible one-based time indices, configurable active-sediment threshold, and shared `map.render`; WP 1.3 complete locally; plugin config integration deferred to the analysis registry |
 | Validation framework | `src/d3dplot/validate/` | WP 1.4 complete locally: report serialization and static V-CFG-001..004 checks |
 | Model-input adapters | `src/d3dplot/model_input/` | WP 1.5 implemented locally; MDU, `.mor`, `.sed`, DIMR, V-MDU-001, and real r209 read-only validation complete |
-| Simulation discovery | `src/d3dplot/simulation/` | WP 1.6 implemented locally; synthetic FM/SMT cases pass; real r209 discovery completes read-only in 99.283 s |
+| Simulation discovery | `src/d3dplot/simulation/` | WP 1.6 implemented locally; synthetic FM/SMT cases pass; prior read-only r209 discovery took 99.283 s; current `d3dplot info` took 337.905 s for 195 sub-runs and 44 partitions |
 | Simulation status | `src/d3dplot/simulation/status.py` | WP 1.7 implemented locally; synthetic statuses pass; real r209 is finished with no validation issues; bounded status scan 27.371 s |
 | Output store | `src/d3dplot/store/` | WP 1.8 implemented locally; guarded marked roots, atomic writers, fingerprints, and input snapshots are tested |
 | Labels | `src/d3dplot/labels/` | WP 1.9 implemented locally; 141 variable aliases, 127 complete translations, and 22 unit types are packaged and tested |
@@ -1922,7 +1922,15 @@ The local-only comparison test processes the generated synthetic case into a pyt
   * SMB per segment: absolute tolerance 1e−6 m on statistics, except where face-centre conventions differ (to be investigated: §4.5).
 * Performance targets: §7.22.
 
-### 13.4a Acceptance case 2: Rijn plain FM run (`D16000`)
+  On 2026-10-28, read-only `d3dplot info` confirmed the finished SMT simulation
+  (195 sub-runs, 44 partitions) in 337.905 s. A `d3dplot validate` attempt used a
+  local `output.root` under `data_local/` and included the P-drive project in
+  `forbidden_roots`; it was stopped after 900 s without a validation summary or
+  inspection cache. The diagnostic log had reached simulation discovery. No
+  P-drive writes occurred. WP 5.1 remains incomplete; investigate the network
+  I/O time and rerun the acceptance before release.
+
+  ### 13.4a Acceptance case 2: Rijn plain FM run (`D16000`)
 
 * Input: §5.5 (read-only); `output.root` local; `forbidden_roots` contains the project folder.
 * Scope (user): **`map2d` only**; the check is that M2D figures are generated. No `river_km_statistics`, no river-km windows or labels.
@@ -2189,7 +2197,7 @@ Per D65, use generated local cases for development, automated tests, and perform
 
 | WP | Content |
 |----|---------|
-| 5.1 | Acceptance case 1 on `r209` (§13.4) incl. coordinate-based face matching and performance targets |
+| 5.1 | Incomplete: read-only `d3dplot info` took 337.905 s; a validation run with local output was stopped after 900 s before cache inspection. No P-drive writes occurred. Investigate network I/O, then complete the coordinate-matched value/visual/SMB checks and performance targets (§13.4, §7.22) |
 | 5.2 | Implemented and locally validated on `feat/matlab-comparison`: coordinate-matched bed-level and derived-specific-discharge maps, plus all eight SMB statistics for both simulations; generated current-version references in a new local case without replacing the original |
 | 5.3 | Implemented and locally validated on `feat/slurm-stub`: guarded, single-node SLURM array-template generation (`slurm write`), write-free `--dry-run`, zero-based stable-shard mapping and user documentation. Submission and execution remain deferred; the template checks for the not-yet-integrated `d3dplot run` command and exits explicitly until it exists |
 | 5.4 | Implemented and locally validated on `feat/user-documentation`: user guide, reference index, Matlab migration guide, synthetic plot gallery, and three user-facing skills packaged under `d3dplot/skills/`; workspace developer skills remain separate |
