@@ -6,16 +6,20 @@ from __future__ import annotations
 import csv
 import math
 from contextlib import redirect_stdout
+from dataclasses import replace
 from datetime import UTC, datetime
 from importlib import import_module
 from io import StringIO
 from pathlib import Path
 from shutil import copytree
+from threading import Lock, current_thread
+from time import sleep
 
 import netCDF4
 import numpy as np
 import pytest
 
+import d3dplot.simulation.inspection as inspection
 from d3dplot.simulation import (
     Simulation,
     TimeAxis,
@@ -23,6 +27,7 @@ from d3dplot.simulation import (
     inspect_simulation,
 )
 from d3dplot.store import OutputLayout
+from d3dplot.validate.report import ValidationIssue
 
 
 @pytest.mark.integration
@@ -61,6 +66,36 @@ def test_inspection_matches_dfm_tools_and_reuses_cache(
     assert reused is not None
     assert reused_report.is_valid
     assert reused.cache_reused
+
+
+@pytest.mark.integration
+def test_large_simulation_metadata_inspection_uses_bounded_threads(
+    synthetic_case: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    simulation = _discover(synthetic_case / "simulations" / "r001")
+    subruns = tuple(replace(simulation.subruns[0], index=index) for index in range(8))
+    thread_names: set[str] = set()
+    thread_lock = Lock()
+
+    def fake_inspect_subrun_metadata(
+        subrun: object,
+    ) -> tuple[None, tuple[ValidationIssue, ...]]:
+        with thread_lock:
+            thread_names.add(current_thread().name)
+        sleep(0.01)
+        return None, ()
+
+    monkeypatch.setattr(
+        inspection,
+        "_inspect_subrun_metadata",
+        fake_inspect_subrun_metadata,
+    )
+
+    results = inspection._inspect_subruns_metadata(subruns)
+
+    assert results == ((None, ()),) * 8
+    assert len(thread_names) > 1
 
 
 @pytest.mark.integration

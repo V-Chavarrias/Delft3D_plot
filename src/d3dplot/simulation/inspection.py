@@ -7,6 +7,7 @@ import os
 import re
 from collections import Counter
 from collections.abc import Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import AbstractContextManager, redirect_stdout
 from dataclasses import dataclass
 from datetime import UTC, datetime, timezone
@@ -19,7 +20,11 @@ from time import perf_counter
 from typing import Any, Literal, Protocol, TypeAlias, cast
 
 from d3dplot import __version__
-from d3dplot.simulation.discover import Simulation
+from d3dplot.simulation.discover import (
+    _MAX_DISCOVERY_WORKERS,
+    _MIN_SUBRUNS_FOR_PARALLEL,
+    Simulation,
+)
 from d3dplot.simulation.partitions import _NETCDF4_READ_LOCK
 from d3dplot.simulation.subrun import SubRun
 from d3dplot.simulation.time_utils import (
@@ -266,8 +271,7 @@ def inspect_simulation(
     issues: list[ValidationIssue] = []
     subrun_metadata: list[_SubRunInspection] = []
 
-    for subrun in simulation.subruns:
-        metadata, subrun_issues = _inspect_subrun_metadata(subrun)
+    for metadata, subrun_issues in _inspect_subruns_metadata(simulation.subruns):
         issues.extend(subrun_issues)
         if metadata is None:
             continue
@@ -619,6 +623,20 @@ def inspect_simulation(
         ),
         ValidationReport(tuple(issues)),
     )
+
+
+def _inspect_subruns_metadata(
+    subruns: Sequence[SubRun],
+) -> tuple[tuple[_SubRunInspection | None, tuple[ValidationIssue, ...]], ...]:
+    if len(subruns) < _MIN_SUBRUNS_FOR_PARALLEL:
+        return tuple(_inspect_subrun_metadata(subrun) for subrun in subruns)
+
+    worker_count = min(_MAX_DISCOVERY_WORKERS, len(subruns))
+    with ThreadPoolExecutor(
+        max_workers=worker_count,
+        thread_name_prefix="d3dplot-inspection",
+    ) as executor:
+        return tuple(executor.map(_inspect_subrun_metadata, subruns))
 
 
 def _inspect_subrun_metadata(
