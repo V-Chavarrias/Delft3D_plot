@@ -35,7 +35,7 @@ Document map:
 
 | Item | Location | State |
 |------|----------|-------|
-| Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `feat/slurm-stub`, local and unpushed; WP 5.2 committed as `cd54430`; WP 5.3 implemented and locally validated; P-drive acceptance deferred per D65 |
+| Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `feat/user-documentation`; WP 5.2 committed as `cd54430`; WP 5.3 and WP 5.4 implemented and locally validated; P-drive acceptance deferred per D65 |
 | Plan (this file) | `docs/architecture.md` | v6.72 |
 | Licence | `LICENSE` | GPL-3.0 |
 | Synthetic SMT and plain FM test case generator | `tools/synthetic_smt/` | Implemented and verified locally (§13.3) |
@@ -58,6 +58,7 @@ Document map:
 | CI and documentation site | `.github/workflows/ci.yml`, `mkdocs.yml` | All 292 CI-eligible tests pass; both local Matlab comparison tests pass; strict MkDocs, strict mypy over all 87 source files, changed-file Ruff/format, and `git diff --check` pass; remote CI not run |
 | Matlab reference results of the synthetic case | `data_local/synthetic_smt_01/`, `data_local/synthetic_smt_02/` | Original v0.1.0 references preserved. Current v0.3.0 case has five bed-level and specific-discharge maps per simulation and 15 SMB files per simulation; numerical references are complete. Matlab's later SMB figure stage exits in `fig_1D_01` on a measurement-overlay size mismatch; numeric comparisons pass. |
 | Agent guidance for development | `AGENTS.md`, `.github/instructions/plotting.instructions.md`, `.github/skills/{add-analysis-or-option,upstream-contribution}` | Done (§13.6) |
+| User-facing workflow skills | `src/d3dplot/skills/` | Three packaged resources for creating input, replaying a figure, and troubleshooting; copy a skill folder into a workspace skill directory for VS Code discovery |
 
 Workspace (`Delft3D_plot.code-workspace`) with sibling checkouts used as reference and dependencies:
 
@@ -1732,9 +1733,13 @@ the deterministic `--shard i/N`. It never submits jobs, supports one node per
 array job, and explicitly exits until the planned `d3dplot run` CLI is
 available.
 
-**Agent skills** (`skills/`, v1.0):
-* `d3dplot-create-input`, `d3dplot-replot`, `d3dplot-troubleshoot`;
-* `d3dplot-add-analysis` (developers).
+**Packaged user-facing agent skills** (`src/d3dplot/skills/`):
+* `d3dplot-create-input`, `d3dplot-replot`, `d3dplot-troubleshoot`.
+
+The user-facing skills are packaged resources. Copy a skill folder to a
+workspace skill directory such as `.github/skills/<name>/` to make it
+discoverable by VS Code; see the [user guide](./user-guide.md). Developer
+skills are maintained separately in `.github/skills/`.
 
 They instruct agents to use `info`, `variables`, `init`, `validate` and the schema rather than guess.
 
@@ -1946,7 +1951,9 @@ Future development with AI agents must follow this plan. The guidance is split b
 | `.github/skills/add-analysis-or-option/` | skill (with `references/naming-checklist.md`) | on demand / `/add-analysis-or-option` | steps to port a Matlab tag or add a view, variable or option: reference, reuse search, design in the plan, implementation, tests incl. synthetic case and Matlab comparison, benchmarks |
 | `.github/skills/upstream-contribution/` | skill | on demand | local branch workflow for HYDROLIB-core and dfm_tools (D49), conventions of each repository, verification from d3dplot, recording in §14 |
 
-These are for **developers**. The user-facing skills of §11 (`d3dplot-create-input`, …) are a separate deliverable shipped with the package (WP 5.4).
+These workspace customizations are for **developers**. User-facing skills
+(`d3dplot-create-input`, `d3dplot-replot`, and `d3dplot-troubleshoot`) are
+packaged resources documented in §11 and shipped with WP 5.4.
 
 Maintenance: when a decision in §2 changes a rule, update `AGENTS.md` or the instruction in the same commit.
 
@@ -2185,7 +2192,7 @@ Per D65, use generated local cases for development, automated tests, and perform
 | 5.1 | Acceptance case 1 on `r209` (§13.4) incl. coordinate-based face matching and performance targets |
 | 5.2 | Implemented and locally validated on `feat/matlab-comparison`: coordinate-matched bed-level and derived-specific-discharge maps, plus all eight SMB statistics for both simulations; generated current-version references in a new local case without replacing the original |
 | 5.3 | Implemented and locally validated on `feat/slurm-stub`: guarded, single-node SLURM array-template generation (`slurm write`), write-free `--dry-run`, zero-based stable-shard mapping and user documentation. Submission and execution remain deferred; the template checks for the not-yet-integrated `d3dplot run` command and exits explicitly until it exists |
-| 5.4 | Documentation (user guide, references, "from Matlab", gallery), agent skills |
+| 5.4 | Implemented and locally validated on `feat/user-documentation`: user guide, reference index, Matlab migration guide, synthetic plot gallery, and three user-facing skills packaged under `d3dplot/skills/`; workspace developer skills remain separate |
 | 5.5 | Release v1.0 on **PyPI** as `delft3d-plot` (D44): GitHub Actions workflow on tags (`v*`) building sdist + wheel with hatchling, publishing with PyPI Trusted Publishing (no tokens); TestPyPI dry run first; GitHub release with the changelog. Requires WP 0.2 |
 
 ### 15.7 Later

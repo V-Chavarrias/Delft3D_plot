@@ -17,6 +17,10 @@ The functional reference is the Matlab tool `D3D_plot` in [OpenEarthTools](https
 
 ## Documentation
 
+- [User guide](docs/user-guide.md)
+- [From Matlab `D3D_plot`](docs/from-matlab.md)
+- [Gallery](docs/gallery.md)
+- [Reference](docs/reference.md)
 - [Project documentation](docs/index.md)
 - [Architecture proposal](docs/architecture.md)
 - [Synthetic SMT test case generator](tools/synthetic_smt/README.md)

@@ -11,15 +11,21 @@ theme:
 
 nav:
   - Home: index.md
-  - Architecture: architecture.md
-  - Configuration: configuration.md
-  - Command line: cli.md
-  - Output store: output-store.md
-  - Labels: labels.md
-  - Variables: variables.md
-  - Model input: model-input.md
-  - Simulation discovery: simulation-discovery.md
-  - Upstream contributions: upstream.md
+  - User guide: user-guide.md
+  - From Matlab: from-matlab.md
+  - Gallery: gallery.md
+  - Reference:
+      - Overview: reference.md
+      - Configuration: configuration.md
+      - Command line: cli.md
+      - Output store: output-store.md
+      - Labels: labels.md
+      - Variables: variables.md
+      - Model input: model-input.md
+      - Simulation discovery: simulation-discovery.md
+  - Development:
+      - Architecture: architecture.md
+      - Upstream contributions: upstream.md
 
 plugins:
   - search
