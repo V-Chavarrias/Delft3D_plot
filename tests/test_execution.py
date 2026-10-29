@@ -518,7 +518,10 @@ def test_process_executor_matches_serial_and_continues_after_failure(
     failed = next(result for result in parallel.outcomes if not result.succeeded)
     assert "synthetic task failure" in (failed.traceback or "")
     assert os.environ["OMP_NUM_THREADS"] == "7"
-    assert "Executing process|" in diagnostics.debug_path.read_text(encoding="utf-8")
+    debug_text = diagnostics.debug_path.read_text(encoding="utf-8")
+    assert "Executing process|" in debug_text
+    assert "Starting process task:" in debug_text
+    assert "Finished process task:" in debug_text
 
 
 @pytest.mark.unit
@@ -551,9 +554,13 @@ def test_process_stage_persists_diagnostics_and_run_summary(
 
     assert summary.exit_code == 0
     diagnostic_text = diagnostics.paths[0].read_text(encoding="utf-8")
+    assert "Starting process stage:" in diagnostic_text
     assert "Task succeeded:" in diagnostic_text
     assert "Run summary: tasks=1; succeeded=1; failed=0;" in diagnostic_text
     assert "Run summary CSV:" in diagnostic_text
+    assert "Starting process task:" in diagnostics.debug_path.read_text(
+        encoding="utf-8"
+    )
     with (layout.tables / "run.csv").open(
         encoding="utf-8",
         newline="",

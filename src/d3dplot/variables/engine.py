@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable, Sequence
 from importlib import import_module
 from importlib.metadata import entry_points
@@ -30,6 +31,7 @@ from d3dplot.variables.registry import (
 
 _Array = Any
 np: Any = import_module("numpy")
+_logger = logging.getLogger(__name__)
 
 
 class QuantityEngineError(RuntimeError):
@@ -96,12 +98,20 @@ class QuantityTimeSession:
 
     def get(self, request: str | QuantityRequest) -> _Array:
         """Return one quantity, preserving any alias-specific parameters."""
-        spec = self.resolve_spec(request)
         normalized_request = (
             QuantityRequest(requested_name=request)
             if isinstance(request, str)
             else request
         )
+        _logger.info(
+            "Starting quantity evaluation: requested=%s; subrun=%d; time_index=%d; "
+            "local_index=%d",
+            normalized_request.requested_name,
+            self._entry.subrun,
+            self._entry.time_index,
+            self._entry.local_index,
+        )
+        spec = self.resolve_spec(normalized_request)
         values = self._compute(
             spec,
             normalized_request,
@@ -110,7 +120,17 @@ class QuantityTimeSession:
         )
         if normalized_request.sum_fractions:
             values = _sum_fractions(values, spec)
-        return np.asarray(values, dtype=np.float64)
+        result = np.asarray(values, dtype=np.float64)
+        _logger.info(
+            "Finished quantity evaluation: requested=%s; resolved=%s; "
+            "subrun=%d; time_index=%d; shape=%s",
+            normalized_request.requested_name,
+            spec.name,
+            self._entry.subrun,
+            self._entry.time_index,
+            result.shape,
+        )
+        return result
 
     def resolve_spec(self, request: str | QuantityRequest) -> VariableSpec:
         """Resolve request metadata, including plug-in and present raw quantities."""
@@ -156,6 +176,12 @@ class QuantityTimeSession:
         cache_key = (spec.name, request.cache_key, apply_selection)
         cached = self._quantity_cache.get(cache_key)
         if cached is not None:
+            _logger.info(
+                "Reusing quantity cache: quantity=%s; subrun=%d; time_index=%d",
+                spec.name,
+                self._entry.subrun,
+                self._entry.time_index,
+            )
             return cached
 
         if spec.kind is VariableKind.RAW:
@@ -183,6 +209,13 @@ class QuantityTimeSession:
                 if apply_selection and spec.selection is SelectionTarget.INPUTS:
                     value = _select_values(value, dependency, request, self)
                 inputs[name] = value
+            _logger.info(
+                "Starting derived quantity computation: quantity=%s; subrun=%d; "
+                "time_index=%d",
+                spec.name,
+                self._entry.subrun,
+                self._entry.time_index,
+            )
             try:
                 values = np.asarray(
                     spec.compute(inputs, self._context, request),
@@ -217,6 +250,14 @@ class QuantityTimeSession:
                         hint="Correct the quantity callback or its VariableSpec.",
                     )
                 )
+            _logger.info(
+                "Finished derived quantity computation: quantity=%s; subrun=%d; "
+                "time_index=%d; shape=%s",
+                spec.name,
+                self._entry.subrun,
+                self._entry.time_index,
+                values.shape,
+            )
             if apply_selection and spec.selection is SelectionTarget.OUTPUT:
                 values = _select_values(values, spec, request, self)
 
@@ -243,7 +284,21 @@ class QuantityTimeSession:
     def _read_raw(self, spec: VariableSpec, chain: tuple[str, ...]) -> _Array:
         cached = self._raw_cache.get(spec.name)
         if cached is not None:
+            _logger.info(
+                "Reusing raw variable cache: variable=%s; subrun=%d; time_index=%d",
+                spec.name,
+                self._entry.subrun,
+                self._entry.time_index,
+            )
             return cached
+        _logger.info(
+            "Starting raw variable read: variable=%s; subrun=%d; time_index=%d; "
+            "local_index=%d",
+            spec.name,
+            self._entry.subrun,
+            self._entry.time_index,
+            self._entry.local_index,
+        )
         try:
             result = self._map_session.read(
                 spec,
@@ -275,6 +330,14 @@ class QuantityTimeSession:
             )
         self.issues.extend(result.issues)
         self._raw_cache[spec.name] = values
+        _logger.info(
+            "Finished raw variable read: variable=%s; subrun=%d; time_index=%d; "
+            "shape=%s",
+            spec.name,
+            self._entry.subrun,
+            self._entry.time_index,
+            values.shape,
+        )
         return values
 
     def _resolve_input_names(

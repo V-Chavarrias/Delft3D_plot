@@ -149,7 +149,12 @@ regardless of the configured reprocess policy. It opens guarded `.dia` and
 debug `.log` files before simulation discovery and inspection, so preflight
 failures are recorded under `output.root/<label>/d3dplot/logs`. Add `--serial`
 to run sequentially for debugging. It does not modify model or measurement
-inputs.
+inputs. The `.dia` records user-facing phase starts and choices; the `.log`
+records task and per-analysis progress: map2d and river-km starts/completions,
+time steps, quantity evaluation and raw reads, and map/statistics cache writes.
+It also records river-km, polygon, and profile-measurement reads. Both files are
+flushed as messages arrive, so the `.log` can be used to see which long-running
+operation is currently active.
 
 For the Maas local configuration, the repository-root
 `run_maas_sk_processing.bat` launches this helper on Windows. Pass `--serial`

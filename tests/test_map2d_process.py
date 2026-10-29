@@ -333,6 +333,21 @@ def test_smb_fraction_grouping_follows_per_fraction_statistics(
             guard=guard,
         )
 
+    process_log = diagnostics.debug_path.read_text(encoding="utf-8")
+    for progress_event in (
+        "Starting map2d analysis processing",
+        "Starting river-km analysis processing",
+        "Starting quantity evaluation",
+        "Starting raw variable read",
+        "Starting map2d cache write",
+        "Starting river-km statistics processing",
+        "Starting river-km statistics cache write",
+        "Finished map2d analysis processing",
+        "Finished river-km statistics processing",
+        "Finished river-km analysis processing",
+    ):
+        assert progress_event in process_log
+
     assert summary.exit_code == 0
     result = summary.outcomes[0].value
     assert isinstance(result, Map2DProcessResult)

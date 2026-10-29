@@ -831,6 +831,7 @@ def _run_plot_stage(
             provenance_path = _write_resolved_provenance(replayable_config)
             if diagnostic_log is not None:
                 diagnostic_log.info(f"Resolved configuration saved: {provenance_path}.")
+                diagnostic_log.info("Starting map2d plotting stage.")
             map_result = plot_map2d_stage(
                 replayable_config,
                 provenance_path=provenance_path,
@@ -844,8 +845,16 @@ def _run_plot_stage(
                     diagnostic_log.info if diagnostic_log is not None else None
                 ),
             )
-            river_km_result = (
-                plot_river_km_statistics_stage(
+            if diagnostic_log is not None:
+                diagnostic_log.info(
+                    "Finished map2d plotting stage: "
+                    f"written={len(map_result.output_paths)}; "
+                    f"reused={len(map_result.reused_paths)}."
+                )
+            if target is None:
+                if diagnostic_log is not None:
+                    diagnostic_log.info("Starting river-km statistics plotting stage.")
+                river_km_result = plot_river_km_statistics_stage(
                     replayable_config,
                     analysis_name=analysis_name,
                     simulation_label=simulation_label,
@@ -856,9 +865,14 @@ def _run_plot_stage(
                         diagnostic_log.info if diagnostic_log is not None else None
                     ),
                 )
-                if target is None
-                else None
-            )
+                if diagnostic_log is not None:
+                    diagnostic_log.info(
+                        "Finished river-km statistics plotting stage: "
+                        f"written={len(river_km_result.output_paths)}; "
+                        f"reused={len(river_km_result.reused_paths)}."
+                    )
+            else:
+                river_km_result = None
             result = PlotStageResult(
                 output_paths=(
                     map_result.output_paths

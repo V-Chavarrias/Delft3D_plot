@@ -28,6 +28,7 @@ ExecutorName = Literal["serial", "processes"]
 TaskStatus = Literal["succeeded", "failed"]
 TaskDiagnosticLevel = Literal["info", "warning", "error"]
 _PROCESS_WORKER: TaskFunction | None = None
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -276,20 +277,40 @@ def _execute_initialized_task(task: ProcessTask) -> TaskResult:
 def _execute_task(worker: TaskFunction, task: ProcessTask) -> TaskResult:
     import time
 
+    _LOGGER.info(
+        "Starting process task: key=%s; simulation=%s; subrun=%s; times=%s.",
+        task.key,
+        task.simulation_label,
+        task.subrun_index,
+        len(task.times),
+    )
     started = time.perf_counter()
     try:
         value = worker(task)
     except Exception as error:
+        duration = time.perf_counter() - started
+        _LOGGER.error(
+            "Process task failed: key=%s; duration=%.3fs; error=%s.",
+            task.key,
+            duration,
+            error,
+        )
         return TaskResult(
             task_key=task.key,
             status="failed",
-            duration_seconds=time.perf_counter() - started,
+            duration_seconds=duration,
             error=f"{type(error).__name__}: {error}",
             traceback=traceback.format_exc(),
         )
+    duration = time.perf_counter() - started
+    _LOGGER.info(
+        "Finished process task: key=%s; duration=%.3fs.",
+        task.key,
+        duration,
+    )
     return TaskResult(
         task_key=task.key,
         status="succeeded",
-        duration_seconds=time.perf_counter() - started,
+        duration_seconds=duration,
         value=value,
     )

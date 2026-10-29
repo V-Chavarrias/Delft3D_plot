@@ -280,6 +280,7 @@ def _prepare_profile_measurement_inputs(
         )
         key = (path, effective_zone)
         if key not in cache:
+            report(f"Starting profile measurement read: {path}.")
             try:
                 cache[key] = load_profile_measurements(
                     path,

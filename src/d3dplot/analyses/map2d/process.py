@@ -169,7 +169,58 @@ class Map2DTaskProcessor:
                 issues=(),
             )
 
+        map2d_analysis_keys = tuple(
+            sorted(
+                {
+                    work.analysis_key
+                    for _, works in selected_times
+                    for work in works
+                    if work.analysis_key in self._map2d_analysis_keys
+                }
+            )
+        )
+        river_km_analysis_keys = tuple(
+            sorted(
+                {
+                    work.analysis_key
+                    for _, works in selected_times
+                    for work in works
+                    if work.analysis_key in self._river_km_analyses
+                }
+            )
+        )
+        for analysis_key in map2d_analysis_keys:
+            _logger.info(
+                "Starting map2d analysis processing: analysis=%s; simulation=%s; "
+                "task=%s; subrun=%d; selected_times=%d",
+                analysis_key,
+                task.simulation_label,
+                task.key,
+                task.subrun_index,
+                len(selected_times),
+            )
+        for analysis_key in river_km_analysis_keys:
+            _logger.info(
+                "Starting river-km analysis processing: analysis=%s; simulation=%s; "
+                "task=%s; subrun=%d; selected_times=%d",
+                analysis_key,
+                task.simulation_label,
+                task.key,
+                task.subrun_index,
+                len(selected_times),
+            )
+
+        _logger.info(
+            "Starting shared map processor initialization: simulation=%s; task=%s",
+            task.simulation_label,
+            task.key,
+        )
         self._ensure_initialized()
+        _logger.info(
+            "Finished shared map processor initialization: simulation=%s; task=%s",
+            task.simulation_label,
+            task.key,
+        )
         reader = self._reader
         engine = self._engine
         time_axis = self._time_axis
@@ -189,8 +240,34 @@ class Map2DTaskProcessor:
                 )
             )
         grid_path = self._inspection.grid_paths[plan_index]
+        _logger.info(
+            "Starting grid geometry lookup: simulation=%s; task=%s; plan_index=%d; "
+            "path=%s",
+            task.simulation_label,
+            task.key,
+            plan_index,
+            grid_path,
+        )
         grid_geometry = self._grid_geometry(plan_index, grid_path)
+        _logger.info(
+            "Finished grid geometry lookup: simulation=%s; task=%s; plan_index=%d",
+            task.simulation_label,
+            task.key,
+            plan_index,
+        )
+        _logger.info(
+            "Starting input fingerprint lookup: simulation=%s; task=%s; subrun=%d",
+            task.simulation_label,
+            task.key,
+            task.subrun_index,
+        )
         input_fingerprints = self._fingerprints(subrun, grid_path)
+        _logger.info(
+            "Finished input fingerprint lookup: simulation=%s; task=%s; subrun=%d",
+            task.simulation_label,
+            task.key,
+            task.subrun_index,
+        )
 
         output_paths: list[Path] = []
         choices: list[str] = []
@@ -234,9 +311,34 @@ class Map2DTaskProcessor:
                 choices.extend(item.choices)
                 issues.extend(item.issues)
 
+        _logger.info(
+            "Starting map output session: simulation=%s; task=%s; subrun=%d",
+            task.simulation_label,
+            task.key,
+            task.subrun_index,
+        )
         with reader.session(task.subrun_index) as map_session:
+            _logger.info(
+                "Opened map output session: simulation=%s; task=%s; subrun=%d",
+                task.simulation_label,
+                task.key,
+                task.subrun_index,
+            )
             for time_work, analysis_work in selected_times:
                 entry = time_work.entry
+                time_analysis_keys = tuple(
+                    dict.fromkeys(work.analysis_key for work in analysis_work)
+                )
+                _logger.info(
+                    "Starting map output time step: simulation=%s; task=%s; "
+                    "subrun=%d; time_index=%d; time=%s; analyses=%s",
+                    task.simulation_label,
+                    task.key,
+                    entry.subrun,
+                    entry.time_index,
+                    entry.time.isoformat(),
+                    time_analysis_keys,
+                )
                 requests = tuple(
                     dict.fromkeys(
                         request for work in analysis_work for request in work.quantities
@@ -337,6 +439,23 @@ class Map2DTaskProcessor:
                         inputs=input_fingerprints,
                         time=entry.time.astimezone(UTC).isoformat(),
                     )
+                    map_analysis_names = tuple(
+                        dict.fromkeys(
+                            work.analysis_key
+                            for work in analysis_work
+                            if work.analysis_key in self._map2d_analysis_keys
+                            and request in work.quantities
+                        )
+                    )
+                    _logger.info(
+                        "Starting map2d cache write: analyses=%s; quantity=%s; "
+                        "subrun=%d; time_index=%d; output=%s",
+                        map_analysis_names,
+                        spec.name,
+                        entry.subrun,
+                        entry.time_index,
+                        output_path,
+                    )
                     _write_data_file(
                         output_path,
                         self._guard,
@@ -352,6 +471,15 @@ class Map2DTaskProcessor:
                         variable=spec.name,
                         selection=selection,
                     )
+                    _logger.info(
+                        "Finished map2d cache write: analyses=%s; quantity=%s; "
+                        "subrun=%d; time_index=%d; output=%s",
+                        map_analysis_names,
+                        spec.name,
+                        entry.subrun,
+                        entry.time_index,
+                        output_path,
+                    )
                     output_paths.append(output_path)
 
                 for work in analysis_work:
@@ -361,6 +489,15 @@ class Map2DTaskProcessor:
                     prepared_regions = self._smb_geometry[
                         (work.analysis_key, plan_index)
                     ]
+                    _logger.info(
+                        "Starting river-km statistics processing: analysis=%s; "
+                        "subrun=%d; time_index=%d; regions=%d; quantities=%d",
+                        work.analysis_key,
+                        entry.subrun,
+                        entry.time_index,
+                        len(prepared_regions),
+                        len(work.quantities),
+                    )
                     width_area: _Array | None = None
                     if config.multiply_by_width == "flow":
                         width_area = grid_geometry.face_area
@@ -424,6 +561,17 @@ class Map2DTaskProcessor:
                         )
                         for prepared_region in prepared_regions:
                             try:
+                                _logger.info(
+                                    "Starting river-km statistics cache write: "
+                                    "analysis=%s; region=%s; km_set=%s; quantity=%s; "
+                                    "subrun=%d; time_index=%d",
+                                    work.analysis_key,
+                                    prepared_region.region_name,
+                                    prepared_region.km_set_name,
+                                    request.requested_name,
+                                    entry.subrun,
+                                    entry.time_index,
+                                )
                                 output_path = write_segment_statistics_cache(
                                     self._layout,
                                     self._guard,
@@ -458,10 +606,60 @@ class Map2DTaskProcessor:
                                         ),
                                     )
                                 ) from error
+                            _logger.info(
+                                "Finished river-km statistics cache write: "
+                                "analysis=%s; region=%s; km_set=%s; quantity=%s; "
+                                "subrun=%d; time_index=%d; output=%s",
+                                work.analysis_key,
+                                prepared_region.region_name,
+                                prepared_region.km_set_name,
+                                request.requested_name,
+                                entry.subrun,
+                                entry.time_index,
+                                output_path,
+                            )
                             output_paths.append(output_path)
+                    _logger.info(
+                        "Finished river-km statistics processing: analysis=%s; "
+                        "subrun=%d; time_index=%d",
+                        work.analysis_key,
+                        entry.subrun,
+                        entry.time_index,
+                    )
 
                 choices.extend(quantity_session.choices)
                 issues.extend(quantity_session.issues)
+                _logger.info(
+                    "Finished map output time step: simulation=%s; task=%s; "
+                    "subrun=%d; time_index=%d; analyses=%s",
+                    task.simulation_label,
+                    task.key,
+                    entry.subrun,
+                    entry.time_index,
+                    time_analysis_keys,
+                )
+        _logger.info(
+            "Finished map output session: simulation=%s; task=%s; subrun=%d",
+            task.simulation_label,
+            task.key,
+            task.subrun_index,
+        )
+        for analysis_key in map2d_analysis_keys:
+            _logger.info(
+                "Finished map2d analysis processing: analysis=%s; simulation=%s; "
+                "task=%s",
+                analysis_key,
+                task.simulation_label,
+                task.key,
+            )
+        for analysis_key in river_km_analysis_keys:
+            _logger.info(
+                "Finished river-km analysis processing: analysis=%s; simulation=%s; "
+                "task=%s",
+                analysis_key,
+                task.simulation_label,
+                task.key,
+            )
 
         for choice in choices:
             _logger.info(

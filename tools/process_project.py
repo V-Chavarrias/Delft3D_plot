@@ -76,11 +76,20 @@ def _process_project(configuration_path: Path, *, serial: bool) -> int:
         forbidden_roots=project.output.forbidden_roots,
         configuration_path=configuration_path,
     ) as diagnostics:
+        diagnostics.info(f"Starting simulation discovery: {simulation_config.path}.")
         simulation, discovery_report = discover_simulation(simulation_config.path)
+        diagnostics.info(
+            "Simulation discovery finished: "
+            f"found={simulation is not None}; "
+            f"issues={len(discovery_report.issues)}."
+        )
         diagnostics.record_validation_issues(discovery_report.issues)
         if simulation is None:
             raise ValueError(discovery_report.to_text())
 
+        diagnostics.info(
+            f"Starting output inspection: simulation={simulation_config.label}."
+        )
         inspection, inspection_report = inspect_simulation(
             simulation,
             layout,
@@ -91,11 +100,18 @@ def _process_project(configuration_path: Path, *, serial: bool) -> int:
             check_boundary_duplicates=project.check_boundary_duplicates,
             forbidden_roots=project.output.forbidden_roots,
         )
+        diagnostics.info(
+            "Output inspection finished: "
+            f"valid={inspection_report.is_valid}; "
+            f"issues={len(inspection_report.issues)}."
+        )
         diagnostics.record_validation_issues(inspection_report.issues)
         if inspection is None or not inspection_report.is_valid:
             raise ValueError(inspection_report.to_text())
 
+        diagnostics.info("Starting cached time-axis read.")
         time_axis = TimeAxis.from_cache(inspection.times_path)
+        diagnostics.info(f"Cached time axis loaded: entries={len(time_axis.entries)}.")
         time_zone = str(project.time_zone) if project.time_zone is not None else None
         selections: list[AnalysisTimeSelection] = []
         selection_records: list[
@@ -106,11 +122,17 @@ def _process_project(configuration_path: Path, *, serial: bool) -> int:
 
         for index, analysis in enumerate(project.analyses):
             analysis_key = f"analysis-{index}-{analysis.analysis}"
+            diagnostics.info(f"Starting time selection: analysis={analysis_key}.")
             selection = time_axis.select(
                 analysis.times,
                 naive_time_zone=time_zone,
                 duplicate_morphological_times=(analysis.duplicate_morphological_times),
                 on_corrupt_output=project.on_corrupt_output,
+            )
+            diagnostics.info(
+                f"Time selection finished: analysis={analysis_key}; "
+                f"selected={len(selection.entries)}; "
+                f"issues={len(selection.issues)}."
             )
             selections.append(
                 AnalysisTimeSelection(
@@ -171,6 +193,9 @@ def _process_project(configuration_path: Path, *, serial: bool) -> int:
                     f"Invalid time selection for {analysis_key}: "
                     + "; ".join(issue.message for issue in selection.issues)
                 )
+        diagnostics.info(
+            f"Planning process tasks: executor={executor}; workers={workers}."
+        )
         tasks = plan_process_tasks(
             simulation_config.label,
             selections,
@@ -180,6 +205,7 @@ def _process_project(configuration_path: Path, *, serial: bool) -> int:
         )
         if not tasks:
             raise ValueError("The configured selections produced no process tasks.")
+        diagnostics.info(f"Process task plan ready: tasks={len(tasks)}.")
         diagnostics.warning(
             "This test helper rebuilds all selected quantity caches; it does not "
             "apply the project's reprocess cache policy."
@@ -192,6 +218,11 @@ def _process_project(configuration_path: Path, *, serial: bool) -> int:
             diagnostics=diagnostics,
             summary_path=layout.tables / "run-summary.csv",
             guard=guard,
+        )
+        diagnostics.info(
+            "Quantity-cache processing finished: "
+            f"succeeded={summary.succeeded_count}; "
+            f"failed={summary.failed_count}."
         )
 
     output_count = sum(

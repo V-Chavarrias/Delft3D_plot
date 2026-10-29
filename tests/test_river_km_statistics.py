@@ -354,7 +354,12 @@ def test_component_labels_follow_retained_quantity_dimensions() -> None:
 def test_geometry_cache_reuses_assignment_and_matches_synthetic_segments(
     synthetic_case: Any,
     tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    caplog.set_level(
+        "INFO",
+        logger="d3dplot.analyses.river_km_statistics.process",
+    )
     from expected import EXACT_REGIONS, SEGMENT_LENGTH
     from mesh import make_centreline, make_mesh
     from params import Params
@@ -414,6 +419,8 @@ def test_geometry_cache_reuses_assignment_and_matches_synthetic_segments(
     )
     first = prepare_region_segments(*arguments, model_crs="EPSG:28992")
     second = prepare_region_segments(*arguments, model_crs="EPSG:28992")
+    assert "Starting river-km point read:" in caplog.text
+    assert "Starting region polygon read:" in caplog.text
     assert len(tuple(layout.cache_inputs.glob("river_km_*.nc"))) == 1
     assert any(
         "input cache created" in choice.casefold()

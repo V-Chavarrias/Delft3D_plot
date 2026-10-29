@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
@@ -73,6 +74,7 @@ from d3dplot.variables.selection import quantity_selection_label
 
 FloatArray: TypeAlias = NDArray[np.float64]
 _shapely = import_module("shapely")
+_LOGGER = logging.getLogger(__name__)
 
 SPATIAL_STATISTICS = (
     "mean",
@@ -243,6 +245,7 @@ def _load_river_km_points(
     layout: OutputLayout,
     guard: OutputWriteGuard,
 ) -> tuple[tuple[RiverKmPoint, ...], str, str, ValidationIssue | None]:
+    _LOGGER.info("Starting river-km input fingerprint: %s.", path)
     try:
         source_fingerprint = fingerprint_small_input(path)
     except OSError as error:
@@ -262,6 +265,7 @@ def _load_river_km_points(
     stale_message: str | None = None
     if cache_path.is_file():
         try:
+            _LOGGER.info("Starting river-km point cache read: %s.", cache_path)
             points = _read_river_km_input_cache(
                 cache_path,
                 fingerprint=cache_fingerprint,
@@ -279,9 +283,15 @@ def _load_river_km_points(
         else:
             return points, source_fingerprint, "reused", None
     try:
+        _LOGGER.info("Starting river-km point read: %s.", path)
         points = read_river_km_points(path)
     except RiverKmFileError as error:
         raise RiverKmStatisticsError(str(error), code="V-RKM-001") from error
+    _LOGGER.info(
+        "Finished river-km point read: path=%s; points=%s.",
+        path,
+        len(points),
+    )
     _write_river_km_input_cache(
         cache_path,
         guard,
@@ -672,6 +682,11 @@ def prepare_region_segments(
             "At least one named river-km set is required.",
             code="V-CFG-001",
         )
+    _LOGGER.info(
+        "Starting river-km geometry preparation: regions=%s; km_sets=%s.",
+        len(config.regions),
+        len(config.river_km.sets),
+    )
     points, river_fingerprint, input_cache_action, input_cache_issue = (
         _load_river_km_points(config.river_km.file, layout, guard)
     )
@@ -682,9 +697,16 @@ def prepare_region_segments(
         )
     except RiverKmStatisticsError:
         raise
-    region_fingerprints = {
-        region.name: _source_fingerprints(region.polygon) for region in config.regions
-    }
+    region_fingerprints: dict[str, tuple[str, ...]] = {}
+    for region_config in config.regions:
+        _LOGGER.info(
+            "Starting region polygon fingerprint: region=%s; path=%s.",
+            region_config.name,
+            region_config.polygon,
+        )
+        region_fingerprints[region_config.name] = _source_fingerprints(
+            region_config.polygon
+        )
     prepared_items: list[PreparedRegionSegments] = []
     for region_config in config.regions:
         for km_set_name, raw_centres in config.river_km.sets.items():
@@ -707,10 +729,22 @@ def prepare_region_segments(
             )
             cached, stale_message = _cached_geometry(cache_path, fingerprint)
             if cached is not None:
+                _LOGGER.info(
+                    "Reusing region/segment geometry cache: region=%s; "
+                    "km_set=%s; path=%s.",
+                    region_config.name,
+                    km_set_name,
+                    cache_path,
+                )
                 prepared_items.append(cached)
                 continue
 
             try:
+                _LOGGER.info(
+                    "Starting region polygon read: region=%s; path=%s.",
+                    region_config.name,
+                    region_config.polygon,
+                )
                 region = read_region_polygon(
                     region_config.polygon,
                     target_crs=model_crs,
@@ -720,6 +754,15 @@ def prepare_region_segments(
                         else None
                     ),
                 )
+                _LOGGER.info(
+                    "Finished region polygon read: region=%s.",
+                    region_config.name,
+                )
+                _LOGGER.info(
+                    "Starting river-km segment geometry: region=%s; km_set=%s.",
+                    region_config.name,
+                    km_set_name,
+                )
                 segment_geometry = build_segment_geometry(
                     points,
                     centres.tolist(),
@@ -728,12 +771,27 @@ def prepare_region_segments(
                     half_width_m=config.river_km.half_width_m,
                     allow_invalid_segments=config.river_km.allow_invalid_segments,
                 )
+                _LOGGER.info(
+                    "Finished river-km segment geometry: region=%s; km_set=%s.",
+                    region_config.name,
+                    km_set_name,
+                )
+                _LOGGER.info(
+                    "Starting face-to-segment assignment: region=%s; km_set=%s.",
+                    region_config.name,
+                    km_set_name,
+                )
                 assignment = assign_faces_to_segments(
                     grid_geometry.face_x,
                     grid_geometry.face_y,
                     region,
                     segment_geometry,
                     allow_invalid_segments=config.river_km.allow_invalid_segments,
+                )
+                _LOGGER.info(
+                    "Finished face-to-segment assignment: region=%s; km_set=%s.",
+                    region_config.name,
+                    km_set_name,
                 )
             except RegionPolygonError as error:
                 raise RiverKmStatisticsError(str(error), code=error.code) from error
@@ -834,7 +892,19 @@ def prepare_region_segments(
                 choices=tuple(choices),
                 issues=tuple(issues),
             )
+            _LOGGER.info(
+                "Starting region/segment geometry cache write: region=%s; "
+                "km_set=%s; path=%s.",
+                region_config.name,
+                km_set_name,
+                cache_path,
+            )
             _write_geometry_cache(prepared, guard=guard, parameters=parameters)
+            _LOGGER.info(
+                "Finished region/segment geometry cache write: region=%s; km_set=%s.",
+                region_config.name,
+                km_set_name,
+            )
             prepared_items.append(prepared)
     if prepared_items:
         first = prepared_items[0]
@@ -850,6 +920,10 @@ def prepare_region_segments(
                 else first.issues
             ),
         )
+    _LOGGER.info(
+        "Finished river-km geometry preparation: geometry_sets=%s.",
+        len(prepared_items),
+    )
     return tuple(prepared_items)
 
 

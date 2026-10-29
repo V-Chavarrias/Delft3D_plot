@@ -63,6 +63,10 @@ def test_inspection_failure_writes_diagnostic_and_debug_logs(
     diagnostic_paths = tuple(layout.logs.glob("*.dia"))
     assert len(diagnostic_paths) == 1
     diagnostic_text = diagnostic_paths[0].read_text(encoding="utf-8")
+    assert "Starting simulation discovery:" in diagnostic_text
+    assert "Starting output inspection:" in diagnostic_text
     assert "V-OUT-002" in diagnostic_text
     assert "d3dplot stopped" in diagnostic_text
-    assert diagnostic_paths[0].with_suffix(".log").is_file()
+    debug_path = diagnostic_paths[0].with_suffix(".log")
+    assert debug_path.is_file()
+    assert "Starting output inspection:" in debug_path.read_text(encoding="utf-8")

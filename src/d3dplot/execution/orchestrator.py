@@ -34,17 +34,45 @@ def run_process_stage(
     log_handlers: tuple[logging.Handler, ...] | None = None,
 ) -> RunSummary:
     """Run planned work and persist its outcomes to the run's logs and tables."""
+    diagnostics.info(
+        f"Starting process stage: executor={executor}; "
+        f"tasks={len(tasks)}; "
+        f"workers={workers if workers is not None else 'automatic'}."
+    )
     if log_handlers is None and executor == "processes":
         log_handlers = diagnostics.queue_handlers
-    summary = run_tasks(
-        tasks,
-        worker,
-        executor=executor,
-        workers=workers,
-        estimated_task_memory_bytes=estimated_task_memory_bytes,
-        resources=resources,
-        log_handlers=log_handlers,
-    )
+    if executor == "serial":
+        progress_logger = logging.getLogger("d3dplot")
+        debug_handler = diagnostics.queue_handlers[1]
+        previous_level = progress_logger.level
+        already_attached = debug_handler in progress_logger.handlers
+        if not already_attached:
+            progress_logger.addHandler(debug_handler)
+        progress_logger.setLevel(logging.DEBUG)
+        try:
+            summary = run_tasks(
+                tasks,
+                worker,
+                executor=executor,
+                workers=workers,
+                estimated_task_memory_bytes=estimated_task_memory_bytes,
+                resources=resources,
+                log_handlers=log_handlers,
+            )
+        finally:
+            if not already_attached:
+                progress_logger.removeHandler(debug_handler)
+            progress_logger.setLevel(previous_level)
+    else:
+        summary = run_tasks(
+            tasks,
+            worker,
+            executor=executor,
+            workers=workers,
+            estimated_task_memory_bytes=estimated_task_memory_bytes,
+            resources=resources,
+            log_handlers=log_handlers,
+        )
     for result in summary.outcomes:
         diagnostics.record_task_result(result)
         if isinstance(result.value, TaskOutputReport):
