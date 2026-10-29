@@ -43,6 +43,7 @@ from d3dplot.simulation.map_reader import MapReader, MapReaderSession
 from d3dplot.simulation.time_axis import TimeAxis, TimeSelectionResult
 from d3dplot.store import OutputLayout, initialize_output_root
 from d3dplot.variables.context import QuantityRequest
+from d3dplot.variables.grouping import group_sediment_fraction_components
 from d3dplot.variables.registry import get_variable_spec
 
 
@@ -116,7 +117,7 @@ def test_map2d_processor_writes_analytic_and_selected_quantities(
             QuantityRequest("water_depth"),
             QuantityRequest("Fr"),
             QuantityRequest("vorticity"),
-            QuantityRequest("d50", fractions=(1,), layers=(0,)),
+            QuantityRequest("d50", fractions=(1,), layers=(1,)),
             QuantityRequest("dzetadt"),
         ),
         selection=TimeSelectionResult((entry,), (), ()),
@@ -203,7 +204,7 @@ def test_map2d_processor_writes_analytic_and_selected_quantities(
             expected["d50"],
             rtol=1e-6,
         )
-        assert dataset.getncattr("selection") == "fraction-1-layer-0"
+        assert dataset.getncattr("selection") == "fraction-1-layer-1"
     with netCDF4.Dataset(paths_by_variable["dzetadt"], mode="r") as dataset:
         np.testing.assert_allclose(
             dataset.variables["values"][face],
@@ -225,6 +226,156 @@ def test_map2d_processor_writes_analytic_and_selected_quantities(
     with pytest.raises(Map2DProcessError) as error:
         processor(component_task)
     assert error.value.issue.code == "V-VAR-005"
+
+
+@pytest.mark.integration
+def test_smb_fraction_grouping_follows_per_fraction_statistics(
+    synthetic_case: Any,
+    tmp_path: Path,
+) -> None:
+    from expected import EXACT_REGIONS
+
+    simulation, report = discover_simulation(synthetic_case / "simulations" / "r001")
+    assert simulation is not None
+    assert report.is_valid
+
+    layout = OutputLayout(tmp_path / "d3dplot")
+    inspection, inspection_report = inspect_simulation(
+        simulation,
+        layout,
+        forbidden_roots=(),
+    )
+    assert inspection is not None, inspection_report.to_text()
+    guard = initialize_output_root(
+        layout,
+        tool_version=__version__,
+        forbidden_roots=(),
+    )
+    time_axis = TimeAxis.from_cache(inspection.times_path)
+    entry = time_axis.entries[0]
+    region_name = EXACT_REGIONS[0]
+    expected_path = (
+        synthetic_case
+        / "expected"
+        / f"smb_r001_{region_name}_250m.csv"
+    )
+    with expected_path.open(newline="", encoding="utf-8") as file:
+        rows = list(csv.DictReader(file))
+    centres = list(dict.fromkeys(float(row["km"]) for row in rows))
+    region_path = (
+        synthetic_case / "inputs" / "regions" / f"{region_name}.shp"
+    )
+    common_config: dict[str, Any] = {
+        "variables": ["Fak"],
+        "vertical": {"layers": [1]},
+        "regions": [{"name": region_name, "polygon": str(region_path)}],
+        "river_km": {
+            "file": str(synthetic_case / "inputs" / "rkm" / "rkm.csv"),
+            "sets": {"250m": centres},
+            "half_width_m": 750.0,
+        },
+        "statistics": ["mean", "std", "max", "min", "count", "sum"],
+    }
+    raw_config = RiverKmStatisticsConfig.model_validate(common_config)
+    grouped_config = RiverKmStatisticsConfig.model_validate(
+        {
+            **common_config,
+            "fraction_grouping": {
+                "variables": ["Fak"],
+                "limits_m": [0.002, 0.016],
+                "labels": ["sand", "fine gravel", "coarse gravel"],
+            },
+        }
+    )
+    request = QuantityRequest("Fak", layers=(1,))
+    selection = TimeSelectionResult((entry,), (), ())
+    raw_work = AnalysisTimeSelection(
+        analysis_key="river-km-raw",
+        quantities=(request,),
+        selection=selection,
+    )
+    grouped_work = AnalysisTimeSelection(
+        analysis_key="river-km-grouped",
+        quantities=(request,),
+        selection=selection,
+    )
+    (task,) = plan_process_tasks(
+        "r001",
+        (raw_work, grouped_work),
+        workers=1,
+        max_block_times=50,
+    )
+    processor = Map2DTaskProcessor(
+        simulation,
+        "r001",
+        inspection,
+        layout,
+        guard,
+        analysis_keys=(),
+        river_km_analyses={
+            "river-km-raw": raw_config,
+            "river-km-grouped": grouped_config,
+        },
+        model_crs="EPSG:28992",
+    )
+    with DiagnosticLog.for_project(
+        (layout,),
+        tool_version=__version__,
+        command_line=("pytest",),
+        forbidden_roots=(),
+    ) as diagnostics:
+        summary = run_process_stage(
+            (task,),
+            processor,
+            executor="serial",
+            diagnostics=diagnostics,
+            summary_path=layout.tables / "run-summary.csv",
+            guard=guard,
+        )
+
+    assert summary.exit_code == 0
+    result = summary.outcomes[0].value
+    assert isinstance(result, Map2DProcessResult)
+    assert len(result.output_paths) == 2
+    assert any(
+        "grouped sediment fractions into classes" in choice
+        for choice in result.choices
+    )
+    assert "grouped sediment fractions into classes" in diagnostics.paths[0].read_text(
+        encoding="utf-8"
+    )
+
+    (raw_frame,) = load_statistic_cache_frames(
+        layout,
+        raw_config,
+        region_name,
+        "250m",
+        "Fak",
+    )
+    (grouped_frame,) = load_statistic_cache_frames(
+        layout,
+        grouped_config,
+        region_name,
+        "250m",
+        "Fak",
+    )
+    assert raw_frame.path.parent != grouped_frame.path.parent
+    sediment = simulation.subruns[entry.subrun].model_input.sediment
+    assert sediment is not None
+    grouped_values, grouped_names = group_sediment_fraction_components(
+        raw_frame.values,
+        tuple(fraction.diameter_m for fraction in sediment.fractions),
+        [0.002, 0.016],
+        ["sand", "fine gravel", "coarse gravel"],
+    )
+    assert grouped_frame.component_names == grouped_names
+    np.testing.assert_allclose(
+        grouped_frame.values,
+        grouped_values,
+        rtol=1e-6,
+        atol=1e-7,
+        equal_nan=True,
+    )
 
 
 @pytest.mark.integration
@@ -325,7 +476,7 @@ def test_combined_map2d_and_river_km_share_quantity_reads_and_match_synthetic(
             QuantityRequest(
                 "layer_fraction",
                 fractions=fraction_indices,
-                layers=(0,),
+                layers=(1,),
             ),
         ),
         selection=TimeSelectionResult(entries, (), ()),
@@ -764,7 +915,7 @@ def test_combined_map2d_and_river_km_share_quantity_reads_and_match_synthetic(
             "views": ["profile"],
             "time_averages": [],
             "fractions": list(fraction_indices),
-            "vertical": LayersSelection(layers=[0]),
+            "vertical": LayersSelection(layers=[1]),
             "display": "stacked_area",
         }
     )

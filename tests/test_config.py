@@ -29,7 +29,12 @@ from d3dplot.config import (
 )
 from d3dplot.config.measurements import MapMeasurementsConfig
 from d3dplot.config.project import PathsConfig
-from d3dplot.config.selections import IndicesSelection, TimeRange, TimesConfig
+from d3dplot.config.selections import (
+    IndicesSelection,
+    LayersSelection,
+    TimeRange,
+    TimesConfig,
+)
 
 
 def _minimal_data() -> dict[str, Any]:
@@ -410,6 +415,15 @@ def test_time_index_selection_rejects_zero() -> None:
         TimesConfig(at={"indices": [0]})
     with pytest.raises(ValidationError):
         TimesConfig(at=[1, float("-inf")])
+
+
+@pytest.mark.unit
+def test_vertical_layer_selection_uses_one_based_matlab_numbers() -> None:
+    selection = LayersSelection(layers=[1, 3])
+
+    assert selection.layers == [1, 3]
+    with pytest.raises(ValidationError):
+        LayersSelection(layers=[0])
 
 
 @pytest.mark.unit

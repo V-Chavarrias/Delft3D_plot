@@ -19,6 +19,7 @@ from numpy.typing import ArrayLike, NDArray
 
 from d3dplot import __version__
 from d3dplot.analyses.river_km_statistics.config import (
+    FractionGroupingConfig,
     KmRangeConfig,
     RiverKmStatisticsConfig,
 )
@@ -59,6 +60,13 @@ from d3dplot.store import (
 from d3dplot.validate.report import ValidationIssue
 from d3dplot.variables.context import QuantityRequest
 from d3dplot.variables.geometry import GridGeometry
+from d3dplot.variables.grouping import (
+    ClassMembership,
+    SedimentGroupingError,
+    group_sediment_fraction_components,
+    sediment_class_grouping_key,
+    sediment_class_membership,
+)
 from d3dplot.variables.registry import VariableSpec
 from d3dplot.variables.selection import quantity_selection_label
 
@@ -851,12 +859,18 @@ def river_km_statistics_output_path(
     variable_name: str,
     request: QuantityRequest,
     entry: TimeEntry,
+    *,
+    component_grouping: str | None = None,
 ) -> Path:
     """Return the stable cache path for one region, set, quantity, and time."""
     variable = quote(variable_name.casefold(), safe="-_.")
     region = quote(region_name, safe="-_.")
     km_set = quote(km_set_name, safe="-_.")
-    selection = quantity_selection_label(request, variable_name=variable_name)
+    selection = quantity_selection_label(
+        request,
+        variable_name=variable_name,
+        component_grouping=component_grouping,
+    )
     timestamp = entry.time.astimezone(UTC)
     filename = timestamp.strftime("%Y%m%dT%H%M%S")
     if timestamp.microsecond:
@@ -964,6 +978,9 @@ def _write_segment_statistics_file(
     input_fingerprints: Sequence[str],
     dtype: Literal["float32", "float64"],
     segment_width_m: ArrayLike | None,
+    fraction_grouping: FractionGroupingConfig | None,
+    fraction_diameters_m: Sequence[float | None],
+    component_grouping: str | None,
 ) -> Path:
     netcdf4 = import_module("netCDF4")
     data = np.asarray(values, dtype=np.float64)
@@ -997,7 +1014,22 @@ def _write_segment_statistics_file(
     if "bed_slope_streamwise" in config.statistics and "mean" not in stored_statistics:
         stored_statistics.insert(0, "mean")
     statistic_values = np.stack([reduced[name] for name in stored_statistics], axis=1)
-    if data.ndim == 1:
+    if fraction_grouping is not None:
+        try:
+            statistic_values, grouped_names = group_sediment_fraction_components(
+                statistic_values,
+                fraction_diameters_m,
+                fraction_grouping.limits_m,
+                fraction_grouping.labels,
+            )
+        except SedimentGroupingError as error:
+            raise RiverKmStatisticsError(
+                f"Could not group {request.requested_name!r} into sediment classes: "
+                f"{error}",
+                code="V-SMB-015",
+            ) from error
+        component_names = grouped_names
+    elif data.ndim == 1:
         statistic_values = statistic_values[:, :, 0]
 
     parameters: dict[str, object] = {
@@ -1018,6 +1050,16 @@ def _write_segment_statistics_file(
         ),
         "statistics": list(config.statistics),
         "multiply_by_width": config.multiply_by_width,
+        "fraction_grouping": (
+            {
+                "variables": list(fraction_grouping.variables),
+                "limits_m": list(fraction_grouping.limits_m),
+                "labels": list(fraction_grouping.labels),
+                "component_diameters_m": list(fraction_diameters_m),
+            }
+            if fraction_grouping is not None
+            else None
+        ),
         "dtype": dtype,
         "plan": plan_index,
         "subrun": entry.subrun,
@@ -1120,6 +1162,7 @@ def _write_segment_statistics_file(
                 "selection": quantity_selection_label(
                     request,
                     variable_name=spec.name,
+                    component_grouping=component_grouping,
                 ),
                 "region": prepared.region_name,
                 "km_set": prepared.km_set_name,
@@ -1148,6 +1191,7 @@ def write_segment_statistics_cache(
     *,
     dtype: Literal["float32", "float64"],
     width_area: ArrayLike | None = None,
+    fraction_diameters_m: Sequence[float | None] = (),
 ) -> Path:
     """Reduce and persist one quantity through the guarded data-cache writer."""
     data = np.asarray(values, dtype=np.float64)
@@ -1168,6 +1212,26 @@ def write_segment_statistics_cache(
         data.shape[1] if data.ndim == 2 else 0,
         fraction_names=fraction_names,
     )
+    (
+        fraction_grouping,
+        selected_diameters_m,
+        _,
+        component_grouping,
+    ) = _fraction_grouping_details(
+        config,
+        request,
+        spec,
+        fraction_diameters_m,
+    )
+    if fraction_grouping is not None:
+        component_count = data.shape[1] if data.ndim == 2 else 1
+        if len(selected_diameters_m) != component_count:
+            raise RiverKmStatisticsError(
+                f"Quantity {request.requested_name!r} has {component_count} "
+                "components, but the selected .sed fractions provide "
+                f"{len(selected_diameters_m)} diameters.",
+                code="V-SMB-015",
+            )
     segment_width_m: FloatArray | None = None
     if config.multiply_by_width == "flow":
         segment_width_m = compute_segment_width(
@@ -1193,6 +1257,7 @@ def write_segment_statistics_cache(
         spec.name,
         request,
         entry,
+        component_grouping=component_grouping,
     )
     return _write_segment_statistics_file(
         path,
@@ -1210,6 +1275,88 @@ def write_segment_statistics_cache(
         input_fingerprints=input_fingerprints,
         dtype=dtype,
         segment_width_m=segment_width_m,
+        fraction_grouping=fraction_grouping,
+        fraction_diameters_m=selected_diameters_m,
+        component_grouping=component_grouping,
+    )
+
+
+def _fraction_grouping_details(
+    config: RiverKmStatisticsConfig,
+    request: QuantityRequest,
+    spec: VariableSpec,
+    fraction_diameters_m: Sequence[float | None],
+) -> tuple[
+    FractionGroupingConfig | None,
+    tuple[float | None, ...],
+    tuple[ClassMembership, ...],
+    str | None,
+]:
+    grouping = config.fraction_grouping
+    if grouping is None or not grouping.applies_to(request.requested_name, spec.name):
+        return None, (), (), None
+    if request.sum_fractions:
+        raise RiverKmStatisticsError(
+            "Sediment-class grouping requires retained fraction components.",
+            code="V-SMB-015",
+        )
+
+    all_diameters = tuple(fraction_diameters_m)
+    if request.fractions is None:
+        selected_diameters = all_diameters
+    else:
+        if any(index > len(all_diameters) for index in request.fractions):
+            raise RiverKmStatisticsError(
+                f"Fraction selection for {request.requested_name!r} has no matching "
+                ".sed grain diameter.",
+                code="V-SMB-015",
+            )
+        selected_diameters = tuple(
+            all_diameters[index - 1] for index in request.fractions
+        )
+
+    try:
+        memberships = sediment_class_membership(
+            selected_diameters,
+            grouping.limits_m,
+            grouping.labels,
+        )
+    except SedimentGroupingError as error:
+        raise RiverKmStatisticsError(
+            f"Could not group {request.requested_name!r} into sediment classes: "
+            f"{error}",
+            code="V-SMB-015",
+        ) from error
+    return (
+        grouping,
+        selected_diameters,
+        memberships,
+        sediment_class_grouping_key(grouping.limits_m, grouping.labels),
+    )
+
+
+def fraction_grouping_choice(
+    config: RiverKmStatisticsConfig,
+    request: QuantityRequest,
+    spec: VariableSpec,
+    fraction_diameters_m: Sequence[float | None],
+) -> str | None:
+    """Describe the configured sediment classes for the run diagnostics."""
+    grouping, _, memberships, _ = _fraction_grouping_details(
+        config,
+        request,
+        spec,
+        fraction_diameters_m,
+    )
+    if grouping is None:
+        return None
+    classes = "; ".join(
+        f"{label} (fractions {', '.join(str(index + 1) for index in indices)})"
+        for label, indices in memberships
+    )
+    return (
+        f"SMB {request.requested_name}: grouped sediment fractions into classes "
+        f"using limits {list(grouping.limits_m)} m: {classes}."
     )
 
 
@@ -1498,6 +1645,7 @@ __all__ = [
     "compute_time_average",
     "difference_simulation_relative",
     "difference_regions",
+    "fraction_grouping_choice",
     "multiply_by_width",
     "read_prepared_region_segments",
     "select_time_average_outputs",

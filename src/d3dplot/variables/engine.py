@@ -464,7 +464,7 @@ def _select_values(
     result = np.asarray(values, dtype=np.float64)
     for dimension, indices, one_based in (
         ("nSedTot", request.fractions, True),
-        ("nBedLayers", request.layers, False),
+        ("nBedLayers", request.layers, True),
     ):
         if indices is None or dimension not in spec.extra_dims:
             continue

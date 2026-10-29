@@ -4,16 +4,18 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from math import isfinite
 from pathlib import Path
-from typing import Literal, TypeAlias
+from typing import Literal, Self, TypeAlias
 
-from pydantic import Field, PositiveFloat, field_validator
+from pydantic import Field, PositiveFloat, field_validator, model_validator
 
 from d3dplot.config.analysis import AnalysisConfigBase
 from d3dplot.config.base import ConfigModel, Duration
 from d3dplot.config.figure import MapViewConfig
 from d3dplot.config.measurements import ProfileMeasurementsConfig
 from d3dplot.config.selections import TimesConfig
+from d3dplot.variables.registry import UnknownVariableError, get_variable_spec
 
 DisplayMode: TypeAlias = Literal["auto", "lines", "stacked_area"]
 Statistic: TypeAlias = Literal[
@@ -34,6 +36,13 @@ View: TypeAlias = Literal[
     "time_series",
     "cumulative",
 ]
+
+
+def _canonical_quantity_name(name: str) -> str:
+    try:
+        return get_variable_spec(name).name.casefold()
+    except UnknownVariableError:
+        return name.casefold()
 
 
 class ConcaveHullConfig(ConfigModel):
@@ -123,6 +132,70 @@ class TimeAverageConfig(ConfigModel):
     )
 
 
+class FractionGroupingConfig(ConfigModel):
+    """Grain-size classes to sum for selected fraction-valued variables."""
+
+    variables: list[str] = Field(
+        min_length=1,
+        description="Quantity names whose retained fractions are grouped.",
+    )
+    limits_m: list[PositiveFloat] = Field(
+        min_length=1,
+        description="Strictly increasing grain-size class boundaries in metres.",
+    )
+    labels: list[str] = Field(
+        min_length=2,
+        description="One label for each interval defined by limits_m.",
+    )
+
+    @field_validator("variables")
+    @classmethod
+    def validate_variables(cls, values: list[str]) -> list[str]:
+        if any(not value or value != value.strip() for value in values):
+            raise ValueError("fraction-grouping variable names must be trimmed.")
+        canonical_values = {_canonical_quantity_name(value) for value in values}
+        if len(canonical_values) != len(values):
+            raise ValueError("fraction-grouping variable names must be unique.")
+        return values
+
+    @field_validator("limits_m")
+    @classmethod
+    def validate_limits(cls, values: list[float]) -> list[float]:
+        if not all(isfinite(value) for value in values):
+            raise ValueError("fraction-grouping limits must be finite.")
+        if any(
+            following <= previous
+            for previous, following in zip(values, values[1:], strict=False)
+        ):
+            raise ValueError("fraction-grouping limits must be strictly increasing.")
+        return values
+
+    @field_validator("labels")
+    @classmethod
+    def validate_labels(cls, values: list[str]) -> list[str]:
+        if any(not value or value != value.strip() for value in values):
+            raise ValueError("fraction-grouping labels must be non-empty and trimmed.")
+        if len({value.casefold() for value in values}) != len(values):
+            raise ValueError("fraction-grouping labels must be unique.")
+        return values
+
+    @model_validator(mode="after")
+    def validate_class_count(self) -> Self:
+        if len(self.labels) != len(self.limits_m) + 1:
+            raise ValueError(
+                "fraction-grouping labels must contain len(limits_m) + 1 entries."
+            )
+        return self
+
+    def applies_to(self, *variable_names: str) -> bool:
+        """Return whether any requested or canonical name is grouped."""
+        configured = {_canonical_quantity_name(name) for name in self.variables}
+        return any(
+            _canonical_quantity_name(name) in configured
+            for name in variable_names
+        )
+
+
 def _default_statistics() -> list[Statistic]:
     return ["mean_area_weighted"]
 
@@ -173,6 +246,13 @@ class RiverKmStatisticsConfig(AnalysisConfigBase):
         default_factory=list,
         description="Named time ranges to average.",
     )
+    fraction_grouping: FractionGroupingConfig | None = Field(
+        default=None,
+        description=(
+            "Optional post-statistic grouping of selected variables by sediment "
+            "grain-size class."
+        ),
+    )
     diagnostics: list[Literal["segment_map", "segment_membership"]] = Field(
         default_factory=list,
         description="Diagnostic segment maps to generate.",
@@ -205,6 +285,31 @@ class RiverKmStatisticsConfig(AnalysisConfigBase):
         default="per_simulation",
         description="How simulations are grouped in figures.",
     )
+
+    @model_validator(mode="after")
+    def validate_fraction_grouping(self) -> Self:
+        if self.fraction_grouping is None:
+            return self
+
+        configured_variables = {
+            _canonical_quantity_name(name) for name in self.variables
+        }
+        missing = [
+            name
+            for name in self.fraction_grouping.variables
+            if _canonical_quantity_name(name) not in configured_variables
+        ]
+        if missing:
+            raise ValueError(
+                "fraction_grouping.variables must also appear in variables: "
+                + ", ".join(missing)
+            )
+        if self.sum_fractions:
+            raise ValueError(
+                "fraction_grouping cannot be used with sum_fractions; "
+                "grouping requires retained components."
+            )
+        return self
 
     @field_validator("measurements_time_tolerance")
     @classmethod

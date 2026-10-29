@@ -1,6 +1,6 @@
 # Delft3D_plot (Python): Architecture and Implementation Plan
 
-Status: **v6.76; WP 1.10–1.11, WP 2.1–2.3, WP 3.1–3.5, WP 4.1–4.5, and WP 5.2–5.5 are implemented locally.** The `feat/acceptance-r209` branch was merged into and pushed to `main` at `4b88447`; WP 5.1 r209 acceptance remains incomplete. WP 5.5 release automation is committed on `feat/pypi-release` (`7775b0b`, `2647a03`) with publication gated until WP 0.2 is released. WP 4.5 profile measurements is committed as `73e16c5` on `feat/river-km-measurements`; WP 5.2 synthetic Matlab comparisons are committed as `cd54430` on `feat/matlab-comparison`; WP 5.3's non-submitting SLURM array-template generator is committed as `6b028ad` on `feat/slurm-stub`. WP 2.3 and WP 3.1 were committed on `feat/execution` (`735fb38`); WP 3.2 on `feat/map2d-plotting` (`d508cf7`); WP 3.3 on `feat/map2d-overlays` (`53d1bb7`); WP 3.4 on `feat/map2d-measurements` (`6da45e8`); WP 3.5 on `feat/map2d-provenance` (`38a84a4`, `c86f3a3`); WP 4.4 on `feat/river-km-plotting` (`a52d8f6`). WP 4.2's 6,406-face/40-segment synthetic preparation took 0.388 s; WP 3.5's two-frame synthetic-cache timings were 0.910 s fresh, 0.517 s reused, and 0.757 s for single-figure replay. Both WP 5.2 local comparison tests pass for r001 and r002 in 63.27 s including fixture generation. All 294 CI-eligible tests passed; after a Ruff-only formatting/lint fix, the focused profile-measurement tests, full Ruff/format checks, strict mypy, and strict MkDocs also pass. The river-km implementation includes provider and region geometry, guarded caches, shared-quantity statistics processing, all five shared plot views, diagnostics, groupings, comparisons, and profile-measurement conversion, matching, and overlays. The CLI provides read-only `info`/`variables`, schema output, validation and inspection, cache-backed `plot`, provenance-backed `replot`, `measurements convert`, and guarded `slurm write`; complete CLI `run` integration remains, so the generated SLURM template exits explicitly until that command is available. P-drive r209/Rijn acceptance is deferred per D65; this WP 5.1 work only read model files and wrote no data to P-drive. D69–D85 record the time, quantity, plotting, provider, UGRID, measurement-conversion, Matlab-comparison, SLURM-template, release-workflow, and bounded-inspection decisions. See [the synthetic case generator](https://github.com/V-Chavarrias/Delft3D_plot/blob/main/tools/synthetic_smt/README.md). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
+Status: **v6.78; WP 1.10–1.11, WP 2.1–2.3, WP 3.1–3.5, WP 4.1–4.5, and WP 5.2–5.5 are implemented locally.** Public vertical-layer selections now use Matlab's one-based convention (D86). Shared sediment-class grouping for SMB is implemented locally as WP 4.6 (D87); runtime test execution remains pending because VS Code test discovery returned no matching items. The helper is analysis-independent for reuse by a future HIS analysis. The `feat/acceptance-r209` branch was merged into and pushed to `main` at `4b88447`; WP 5.1 r209 acceptance remains incomplete. WP 5.5 release automation is committed on `feat/pypi-release` (`7775b0b`, `2647a03`) with publication gated until WP 0.2 is released. WP 4.5 profile measurements is committed as `73e16c5` on `feat/river-km-measurements`; WP 5.2 synthetic Matlab comparisons are committed as `cd54430` on `feat/matlab-comparison`; WP 5.3's non-submitting SLURM array-template generator is committed as `6b028ad` on `feat/slurm-stub`. WP 2.3 and WP 3.1 were committed on `feat/execution` (`735fb38`); WP 3.2 on `feat/map2d-plotting` (`d508cf7`); WP 3.3 on `feat/map2d-overlays` (`53d1bb7`); WP 3.4 on `feat/map2d-measurements` (`6da45e8`); WP 3.5 on `feat/map2d-provenance` (`38a84a4`, `c86f3a3`); WP 4.4 on `feat/river-km-plotting` (`a52d8f6`). WP 4.2's 6,406-face/40-segment synthetic preparation took 0.388 s; WP 3.5's two-frame synthetic-cache timings were 0.910 s fresh, 0.517 s reused, and 0.757 s for single-figure replay. Both WP 5.2 local comparison tests pass for r001 and r002 in 63.27 s including fixture generation. All 294 CI-eligible tests passed; after a Ruff-only formatting/lint fix, the focused profile-measurement tests, full Ruff/format checks, strict mypy, and strict MkDocs also pass. The river-km implementation includes provider and region geometry, guarded caches, shared-quantity statistics processing, all five shared plot views, diagnostics, groupings, comparisons, and profile-measurement conversion, matching, and overlays. The CLI provides read-only `info`/`variables`, schema output, validation and inspection, cache-backed `plot`, provenance-backed `replot`, `measurements convert`, and guarded `slurm write`; complete CLI `run` integration remains, so the generated SLURM template exits explicitly until that command is available. P-drive r209/Rijn acceptance is deferred per D65; this WP 5.1 work only read model files and wrote no data to P-drive. D69–D87 record the time, quantity, plotting, provider, UGRID, measurement-conversion, Matlab-comparison, SLURM-template, release-workflow, bounded-inspection, layer-indexing, and sediment-grouping decisions. See [the synthetic case generator](https://github.com/V-Chavarrias/Delft3D_plot/blob/main/tools/synthetic_smt/README.md). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
 
 The synthetic overlay-only loop (40 frames × 1,000 measured points; median of 7 `time.perf_counter` runs) took 0.805739 s with profile overlays versus 0.000022 s without, an added 20.143 ms per frame; this excludes model plotting and figure finalisation.
 
@@ -36,7 +36,7 @@ Document map:
 | Item | Location | State |
 |------|----------|-------|
 | Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `main` includes the pushed `feat/acceptance-r209` merge (`4b88447`); WP 5.1 acceptance remains incomplete (§13.4); the local topic branch remains; WP 5.5 release automation is on `feat/pypi-release` |
-| Plan (this file) | `docs/architecture.md` | v6.76 |
+| Plan (this file) | `docs/architecture.md` | v6.78 |
 | Licence | `LICENSE` | GPL-3.0 |
 | Synthetic SMT and plain FM test case generator | `tools/synthetic_smt/` | Implemented and verified locally (§13.3) |
 | Land-boundary converter (`.mat` cache → `.ldb`) | `tools/mat_to_ldb.py` | Implemented. Used to recreate the Maas land boundary (D45) |
@@ -44,8 +44,8 @@ Document map:
 | Recreated Maas land boundary | `data_local/maas/j21_ldb.ldb` (55.7 MB) | Git-ignored. 174 220 polylines, 2 343 057 points; read by HYDROLIB-core in 22 s, identical to the `.mat` |
 | HYDROLIB-core modifications | §14.1–§14.3 | WP 0.1 and both DIMR fixes are included in open PR [Deltares/HYDROLIB-core#1278](https://github.com/Deltares/HYDROLIB-core/pull/1278); local SonarCloud follow-up `69096c17` is not pushed |
 | Python environment | `.venv/` (uv, Python 3.12) | Git-ignored. dfm_tools and HYDROLIB-core are installed editable from the local checkouts; HYDROLIB-core is currently on `feat/mdu_morphology_keywords` with WP 0.1 and the DIMR fix |
-| Package `d3dplot` | `pyproject.toml`, `src/d3dplot/` | WP 1.1–1.11 foundations, WP 2.1–2.3 execution, WP 3.1–3.5 map2d, and WP 4.1–4.5 river-km geometry, processing, plotting, and profile measurements implemented and locally validated |
-| Configuration design | §2 decisions D57–D59, D69–D70 | Nested `times` object, Matlab-compatible one-based time indices, configurable active-sediment threshold, and shared `map.render`; WP 1.3 complete locally; plugin config integration deferred to the analysis registry |
+| Package `d3dplot` | `pyproject.toml`, `src/d3dplot/` | WP 1.1–1.11 foundations, WP 2.1–2.3 execution, WP 3.1–3.5 map2d, and WP 4.1–4.5 river-km geometry, processing, plotting, and profile measurements implemented and locally validated; WP 4.6 sediment grouping implemented locally, runtime tests pending |
+| Configuration design | §2 decisions D57–D59, D69–D70, D86–D87 | Nested `times` object, Matlab-compatible one-based time and bed-layer indices, configurable active-sediment threshold, shared `map.render`, and SMB sediment-class grouping; WP 1.3 complete locally; plugin config integration deferred to the analysis registry |
 | Validation framework | `src/d3dplot/validate/` | WP 1.4 complete locally: report serialization and static V-CFG-001..004 checks |
 | Model-input adapters | `src/d3dplot/model_input/` | WP 1.5 implemented locally; MDU, `.mor`, `.sed`, DIMR, V-MDU-001, and real r209 read-only validation complete |
 | Simulation discovery | `src/d3dplot/simulation/` | WP 1.6 implemented locally; synthetic FM/SMT cases pass; prior read-only r209 discovery took 99.283 s; current `d3dplot info` took 337.905 s for 195 sub-runs and 44 partitions |
@@ -55,7 +55,7 @@ Document map:
 | Variables | `src/d3dplot/variables/` | WP 1.10 and WP 2.2a complete locally; 19 raw and 23 derived v1 specs, dependency resolution, per-time caching, formula callbacks, grid operators, aliases, NetCDF candidates, suggestions, and generated documentation |
 | CLI | `src/d3dplot/cli.py` | WP 1.11 and WP 2.1 implementation: console and module entry points; `info`, `variables`, `schema`, `validate`, `inspect`, no-overwrite `init`, and guarded non-submitting `slurm write`; `validate` and `inspect` now write guarded `.dia` diagnostics and a debug `.log`; full CLI `run` integration remains |
 | Synthetic-case pytest fixture | `tests/conftest.py` | Session-scoped fixture generates and verifies in pytest's temporary folder (WP 1.2) |
-| CI and documentation site | `.github/workflows/ci.yml`, `mkdocs.yml` | All 292 CI-eligible tests passed before the latest WP 5.1 change; 9 focused inspection tests pass; strict mypy on the changed module, changed-file Ruff/format, strict MkDocs, release-workflow YAML parsing, distribution build, and diff checks pass; remote CI not run |
+| CI and documentation site | `.github/workflows/ci.yml`, `mkdocs.yml` | All 292 CI-eligible tests passed before the latest WP 5.1 change; 9 focused inspection tests pass; strict mypy on the changed module, changed-file Ruff/format, strict MkDocs, release-workflow YAML parsing, distribution build, and diff checks pass; remote CI not run. WP 4.6 source diagnostics are clean, but focused tests could not run because VS Code discovery returned no items |
 | Matlab reference results of the synthetic case | `data_local/synthetic_smt_01/`, `data_local/synthetic_smt_02/` | Original v0.1.0 references preserved. Current v0.3.0 case has five bed-level and specific-discharge maps per simulation and 15 SMB files per simulation; numerical references are complete. Matlab's later SMB figure stage exits in `fig_1D_01` on a measurement-overlay size mismatch; numeric comparisons pass. |
 | Agent guidance for development | `AGENTS.md`, `.github/instructions/plotting.instructions.md`, `.github/skills/{add-analysis-or-option,upstream-contribution}` | Done (§13.6) |
 | User-facing workflow skills | `src/d3dplot/skills/` | Three packaged resources for creating input, replaying a figure, and troubleshooting; copy a skill folder into a workspace skill directory for VS Code discovery |
@@ -268,6 +268,8 @@ Status: **A** = agreed with the user; **P** = proposed in this plan and awaiting
 | D83 | The v1 SLURM command writes a guarded single-node array-job template without submitting it. The cluster-visible YAML path is supplied as `D3DPLOT_CONFIG`; zero-based `SLURM_ARRAY_TASK_ID` and `SLURM_ARRAY_TASK_COUNT` form `--shard i/N`. `--dry-run` prints the template without creating output | Avoid assuming that a local config path is visible on the cluster or that submission should happen automatically; multi-node execution remains deferred | P |
 | D84 | Release tags build distributions, but publishing and GitHub-release jobs require repository variable `D3DPLOT_RELEASES_ENABLED=true`; prereleases publish only to TestPyPI, while final tags publish to TestPyPI before PyPI and create the GitHub release after PyPI | Keep tag-triggered builds testable without accidental publication; WP 0.2 is not released yet | P |
 | D85 | Inspect partition metadata across independent sub-runs using a bounded thread pool from D61, preserving result order and the NetCDF4 read lock | Eight r209 sub-runs took 59.704 s serially and 42.830 s with the bounded pool; all metadata and warning results matched | P |
+| D86 | Explicit vertical layer selections use Matlab's one-based indexing; layer 1 is the top bed layer. Convert to zero-based NetCDF array indices only inside the quantity engine | Matches Matlab `layer` selectors and avoids exposing Python array offsets in project YAML | A |
+| D87 | Sediment-class grouping is a shared quantity-component utility. SMB computes segment statistics per fraction first, then sums those statistics into configured grain-size classes before caching; custom limits follow Matlab's boundary rules and empty classes are omitted. `fraction_grouping` names the affected variables, limits in metres, and class labels. Include grouping settings in cache selection identity. | Ports the shared Matlab `gdm_group_idx` behavior without duplicating it in each analysis; future HIS can call the same utility | A |
 
 ## 3. Review of the plan (v6)
 
@@ -924,6 +926,11 @@ The registry resolves canonical names, Matlab aliases, and registered NetCDF can
 
 **Selection order** for a variable: fraction(s) → bed layer / vertical selection → reduction (sum of fractions, depth average). This yields one value per face per time.
 
+Explicit `vertical.layers` values are positive, one-based layer numbers, matching
+Matlab: layer 1 selects the top bed layer. The quantity engine converts these to
+zero-based NetCDF array indices when slicing `nBedLayers`; internal array offsets
+are not exposed in project configuration (D86).
+
 ### 7.9a Quantity engine: central reading and derived quantities (D50)
 
 Several plotted quantities are not stored in the map file but computed from one or more stored variables, e.g. the Froude number, the vorticity, the specific discharge or the mean grain size. Matlab does this in one central function, `gdm_read_data_map_simdef.m` (a `switch` over `Fr`, `vorticity`, `qsp`, `dm`, `Ltot`, `stot`, …), used by all tags. The Python tool keeps that idea, as **one engine used by every analysis**:
@@ -954,7 +961,7 @@ Several plotted quantities are not stored in the map file but computed from one 
 | `velocity_magnitude_layered` | `umag_layer` | `mesh2d_ucmag` per `nLayers` (3D; WP 2.2b) |
 | `water_level` | `wl` | `mesh2d_s1` |
 | `bed_level` | `bl`, `DPS`, `etab` | `mesh2d_mor_bl` (morphological runs), otherwise `mesh2d_flowelem_bl` |
-| `layer_thickness` | `thlyr`, `La` (layer 0 = active layer) | `mesh2d_thlyr` |
+| `layer_thickness` | `thlyr`, `La` (NetCDF layer index 0 = active layer; YAML layer 1) | `mesh2d_thlyr` |
 | `layer_fraction` | `Fak`, `lyrfrac`, `Fs` | `mesh2d_lyrfrac` (selection `fractions`, `layer`, `sum_fractions`) |
 | `chezy` | `czs` | `mesh2d_czs` |
 | `bed_shear_stress` | `taub` | `mesh2d_taus` |
@@ -1433,6 +1440,7 @@ Images = times × extents × colour-limit sets. Differences between simulations 
 * `region_groups`, `region_differences`;
 * `river_km`: `file`, `sets` (`name → [km]`), `track`, `branches`, `half_width_m`; `allow_invalid_segments` defaults to `false` and controls the V-SMB-010/V-SMB-013 override;
 * `statistics`, `views`, `comparisons`, `time_series_locations_km`;
+* optional `fraction_grouping: {variables, limits_m, labels}` to sum per-fraction statistics into sediment classes;
 * `multiply_by_width`, `time_averages`, `diagnostics: [segment_map, segment_membership]`, `display: auto | lines | stacked_area` (per variable);
 * `map`: the shared map-view settings for the diagnostic maps (§7.14b), including `extents_along_river_km` and `river_km_labels`;
 * `figure` (`x_limits`, `y_limits`, fonts), measurement tolerances, `hooks`.
@@ -1450,6 +1458,8 @@ Images = times × extents × colour-limit sets. Differences between simulations 
 **Process** (inside the shared `ProcessTask` per simulation × sub-run, §7.13): for each time, variable, region and km set, the quantity engine (§7.9a) returns the global face values (raw or derived, e.g. `froude_number`); SMB keeps the faces with a segment index ≥ 0 and finite values. Compute **all** statistics per segment, vectorised with `numpy` `bincount`-style reductions on the segment index. Write `cache/data/river_km_statistics/<region>/<set>/<variable>/<selection>/<time>.nc`, holding `values(segment, statistic[, component])` with coordinates `km_centre`, `km_edge_start/end`, `segment_length_m`, and (when requested) `segment_width_m`.
 
 **Multi-dimensional variables** (Matlab `var_idx` with several indices, e.g. `Fak` or `stot` per sediment fraction): when the selection keeps one extra dimension (`fractions: [1, 2, …]` or `"all"`, without `sum_fractions`), the statistics are computed **per component**, and the data file has the extra dimension `component` (with the fraction names from the `.sed` file as labels). At most one extra dimension is kept; more is a validation error (V-VAR-005). The NaN/Inf exclusion is applied per component. This intentionally follows the v1 contract rather than Matlab's shared vector mask, which excludes a face when any component is invalid; scalar outputs remain directly comparable with the Matlab reference.
+
+**Sediment classes** (`fraction_grouping`, shared with future component-grouping analyses): for each configured variable, first compute every segment statistic independently per selected fraction, then sum those statistic values into classes. This matches Matlab SMB's post-statistic `gdm_group_idx` behavior. `limits_m` are strictly increasing positive grain diameters; with custom limits, the first class is `< limit[0]`, interior classes are lower-inclusive and upper-exclusive except the final interior class (upper-inclusive), and the last class is `> limits[-1]` (one limit produces `< limit` and `>= limit`). Classes containing no selected fractions are omitted, as in Matlab. Group labels replace fraction names in the cache and plot legend; grouping settings form part of the cache selection identity. Missing or invalid fraction diameters fail with V-SMB-015.
 
 **Post-process** (plot stage, from the cache). WP 4.3 implements and tests the numerical kernels; WP 4.4 wires them into plot views. The cache keeps raw spatial statistics and optional width; matching Matlab post-processing applies width to `mean` and `mean_area_weighted`, not to counts or every statistic. Definitions follow Matlab: `gdm_create_mat_SMB_postprocess.m`, `pp_sb_tim_ave_01.m`, `gdm_compute_cumulative.m`.
 
@@ -1573,6 +1583,7 @@ attributes: d3dplot_fingerprint, d3dplot_parameters (JSON), d3dplot_version, d3d
 ```
 
 For SMB: `values(segment, statistic)`, plus `km_centre(segment)`, `km_start(segment)`, `km_end(segment)`, `segment_length_m(segment)`, `count(segment)`.
+When `fraction_grouping` is enabled for a variable, `values` retains a class component axis and `component_name(component)` stores the configured labels for non-empty classes. The grouping key is part of `selection`; grouped data are stored only after per-fraction statistics have been reduced.
 
 ### 9.6 Geometry files (cache)
 
@@ -1630,6 +1641,7 @@ MapViewConfig (shared by map2d and the SMB diagnostic maps, §7.14b)
 
 * All models use `extra="forbid"`.
 * Defaults live in the models; global options are inherited by analyses unless overridden.
+* `RiverKmStatisticsConfig.fraction_grouping` is optional and contains `variables`, strictly increasing positive `limits_m`, and one non-empty `labels` entry per interval (`len(limits_m) + 1`). It groups requested per-fraction segment statistics after reduction.
 * When both effective `figure.x_limits` and `figure.y_limits` are lists, their row counts must match (D60).
 * `d3dplot schema > d3dplot.schema.json` exports a JSON schema for editor autocompletion.
 * WP 1.3 currently accepts the two built-in analysis discriminators only. Third-party plugin models will be discovered, validated, and included in the schema when the `d3dplot.analyses` registry is implemented (D59).
@@ -1806,6 +1818,7 @@ Codes are stable, documented, and tested one by one. **E** = error, **W** = warn
 | V-SMB-012 | E | Region group mixes km sets |
 | V-SMB-013 | E | A face is assigned to two segments (override: `allow_invalid_segments`) |
 | V-SMB-014 | E | Time average has fewer than two distinct ordered outputs |
+| V-SMB-015 | E | Sediment-class grouping requires a component quantity and finite positive grain diameters from the model's `.sed` input |
 | V-MEA-001 | E | Measurement file or catalogue missing or unreadable |
 | V-MEA-002 | E | Catalogue columns wrong; mixed file types for one time |
 | V-MEA-003 | E | Measurement or model CRS is missing, invalid, or incompatible |
@@ -2204,6 +2217,7 @@ Per D65, use generated local cases for development, automated tests, and perform
 | 4.3 | Implemented locally on `feat/river-km-statistics`: guarded `.rkm` input and region/segment geometry caches; shared-`ProcessTask` quantity-engine processing (including derived quantities); float64 segment statistics stored as float32; tested post-processing kernels (slope, × width, region differences, relative simulation differences, cumulative values and time averages) | Every row in both synthetic simulations' `smb_*.csv` files across all exact regions matches at float32 precision, including NaN/Inf masking; the joint M2D+SMB test reads `mesh2d_mor_bl` once per selected time; component labels come from `.sed`; flow width is stored and verified |
 | 4.4 | Plots on the shared views: profile/space-time/time-series views, groupings, region groups, `x_limits`, **lines vs stacked areas** for multi-component variables (`display`), **diagnostic maps** `segment_map` (full model + windows along km) and `segment_membership` on `MapView`; hooks through the finalisation | Pytest-mpl baselines for stacked-area and date-formatted space-time figures; synthetic acceptance covers all five views, x-limits, time averages, hooks, fresh-render pixel identity, numeric simulation differences, and diagnostic maps with D78 membership bounds |
 | 4.5 | Profile measurements: guarded per-variable `.mat` v5/v7 → NetCDF conversion and cache, fixed-offset time interpretation, Matlab-compatible nearest-time/profile and nearest-km/time-series matching, explicit region-difference measurements, and plotting hooks/fingerprints | Implemented and locally validated on `feat/river-km-measurements`; synthetic conversion, matching, time-difference overlays, simulation-difference omission, region-difference overlays, hook context, input immutability, and guarded no-overwrite CLI conversion pass focused tests; the 283-test CI-eligible suite passed before the final test-only regression additions |
+| 4.6 | Shared sediment-class component aggregation; `fraction_grouping` config for affected variables, grain-size limits and labels; post-statistic SMB grouping, stable cache selection identity, `.dia` choice reporting, configuration docs and synthetic tests | Hand-computed boundary/empty-class tests pass; synthetic SMB cache contains post-statistic class sums and configured labels; cache reuse and plot loading resolve the grouping key; quality checks pass |
 
 ### 15.6 Phase 5: hardening and v1.0
 
@@ -2343,7 +2357,7 @@ Principles:
 | `function_handles` (all plots), `p_single_function_handles` (one view) | `hooks` at project, analysis or view level (§7.21) |
 | `var` | `variables` |
 | `var_idx` / `sum_var_idx` | `fractions` / `sum_fractions` |
-| `layer`, `depth_average`, `depth_average_limits`, `elevation` | `vertical` |
+| `layer`, `depth_average`, `depth_average_limits`, `elevation` | `vertical`; explicit `vertical.layers` are one-based, with layer 1 at the top of the bed (D86) |
 | `tim` | `times` |
 | `tim_type` | `times.axis: hydrodynamic \| morphological` |
 | Matlab `tim = NaN` / `Inf` / integer | `times.at: all` / `last` / one-based integer index; vectors may combine indices with positive `Inf` (`{indices: [...], include_last: true}`), while any `NaN` selects all |
@@ -2406,6 +2420,7 @@ Principles:
 | `do_tv*`, `rkm_plot_tv` | `views: [time_series]`, `time_series_locations_km` |
 | `do_cum` | `views: [cumulative]` |
 | `do_area` | `display: auto \| lines \| stacked_area` (per variable; auto = stacked area for multi-component variables) |
+| `group_idx`, `group_idx_var`, `group_idx_limits`, `group_idx_classes` | `fraction_grouping: {variables, limits_m, labels}`; custom grain-size boundaries and labels, applied after SMB statistics and shared as a component-grouping helper |
 | `do_val_B`, `do_val_B_mor` | `multiply_by_width: none \| flow \| morphological` |
 | `detab_ds` | variable `bed_slope_streamwise` |
 | `tim_ave`, `tim_ave_type` | `time_averages: [{name, times: {at, axis, tolerance}}]` |
@@ -2437,6 +2452,8 @@ The complete model-quantity catalog (all v1 raw and derived registry entries, al
 
 | Version | Content |
 |---------|---------|
+| v6.78 | Implemented WP 4.6 locally: shared sediment-class aggregation, post-statistic SMB grouping, Matlab-compatible custom boundaries/empty-class handling, cache identity, `.dia` reporting, configuration docs, and V-SMB-015. Focused VS Code test discovery returned no items; workspace source diagnostics are clean |
+| v6.77 | Adopted Matlab-compatible one-based vertical layer selectors (D86): public layer 1 selects the top bed layer, with conversion to zero-based NetCDF indices in the quantity engine |
 | v6.76 | Recorded the merge of `feat/acceptance-r209` into pushed `main` at `4b88447`. The 294-test CI-eligible suite passed; after the Ruff-only style fix, focused profile-measurement tests, full Ruff/format, strict mypy, and strict MkDocs passed. WP 5.1 acceptance remains incomplete |
 | v6.75 | Updated the HYDROLIB-core contribution status to open PR #1278 and recorded local SonarCloud follow-up `69096c17`; the follow-up full suite passes (3,350 passed, 10 skipped, 2 xfailed). The commit is not pushed |
 | v6.74 | Investigated WP 5.1 r209 network I/O on `feat/acceptance-r209`; a bounded thread pool for independent sub-run metadata scans reduced the eight-sub-run sample from 59.704 s to 42.830 s with matching results. Added focused concurrency coverage; all 9 inspection tests, changed-module mypy, Ruff/format, strict MkDocs, and diff checks pass. Full r209 validation and Matlab comparisons remain incomplete; no P-drive writes occurred |

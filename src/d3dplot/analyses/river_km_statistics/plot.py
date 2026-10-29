@@ -83,6 +83,7 @@ from d3dplot.store import (
 )
 from d3dplot.store.layout import is_path_within
 from d3dplot.variables.context import QuantityRequest
+from d3dplot.variables.grouping import sediment_class_grouping_key
 from d3dplot.variables.registry import get_variable_spec
 from d3dplot.variables.selection import quantity_selection_label
 
@@ -331,7 +332,17 @@ def load_statistic_cache_frames(
     """Load validated per-time caches for one configured region and quantity."""
     spec = get_variable_spec(variable)
     request = _quantity_request(analysis, variable)
-    selection = quantity_selection_label(request, variable_name=spec.name)
+    grouping = analysis.fraction_grouping
+    component_grouping = (
+        sediment_class_grouping_key(grouping.limits_m, grouping.labels)
+        if grouping is not None and grouping.applies_to(variable, spec.name)
+        else None
+    )
+    selection = quantity_selection_label(
+        request,
+        variable_name=spec.name,
+        component_grouping=component_grouping,
+    )
     cache_directory = (
         layout.cache_data
         / "river_km_statistics"

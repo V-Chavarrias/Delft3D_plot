@@ -59,6 +59,10 @@ their own.
 an incomplete run is reported as stopped; it defaults to one hour and accepts
 durations such as `30 minutes`.
 
+Explicit vertical layers use Matlab-style one-based numbers. Set `layers: [1]`
+under `vertical` to select the top bed layer. Layer numbers are converted to
+zero-based NetCDF array indices internally.
+
 `time_zone` accepts a fixed UTC offset such as `+01:00`; it is used only when
 the map time units have no offset and the MDU does not explicitly set `Tzone`.
 Map time units take precedence over explicit MDU `Tzone`, which takes
@@ -180,6 +184,31 @@ default. Set `river_km.allow_invalid_segments: true` only when intentionally
 accepting invalid segment geometry or overlapping segments; overlapping faces
 are still assigned deterministically to the lower segment index and remain
 available to diagnostics.
+
+Use `fraction_grouping` to sum per-fraction SMB statistics into grain-size
+classes. It applies only to the named variables, and those names must also
+appear in the analysis's `variables` list. Statistics are calculated per
+fraction first, then summed into each class; this matches Matlab's SMB
+post-statistic grouping.
+
+```yaml
+analyses:
+  - analysis: river_km_statistics
+    variables: [Fak]
+    vertical:
+      layers: [1]
+    fraction_grouping:
+      variables: [Fak]
+      limits_m: [0.002, 0.016]
+      labels: [sand, fine gravel, coarse gravel]
+```
+
+`limits_m` must be positive and strictly increasing. With the example above,
+diameters below 2 mm are `sand`, diameters from 2 mm through 16 mm are `fine
+gravel`, and diameters above 16 mm are `coarse gravel`. Classes with no
+selected fractions are omitted. Grouping requires finite positive grain
+diameters in the model's `.sed` input and cannot be combined with
+`sum_fractions`.
 
 The current schema recognizes the built-in `map2d` and `river_km_statistics`
 analyses. Plugin configuration models will be discovered and included in

@@ -102,8 +102,8 @@ class QuantityRequest:
             raise ValueError("A quantity request needs a non-empty trimmed name.")
         if self.fractions is not None and any(index < 1 for index in self.fractions):
             raise ValueError("Fraction indices must be one-based positive integers.")
-        if self.layers is not None and any(index < 0 for index in self.layers):
-            raise ValueError("Layer indices must be zero-based non-negative integers.")
+        if self.layers is not None and any(index < 1 for index in self.layers):
+            raise ValueError("Layer indices must be one-based positive integers.")
         threshold = self.active_sediment_thickness_threshold_m
         if not isfinite(threshold) or threshold < 0:
             raise ValueError(

@@ -263,6 +263,31 @@ def test_active_area_threshold_equality_and_fraction_selection() -> None:
     assert error.value.issue.code == "V-VAR-003"
 
 
+@pytest.mark.unit
+def test_geometric_grain_size_uses_matlab_one_based_bed_layer_selection() -> None:
+    session = _MemoryMapSession(
+        {
+            "mesh2d_lyrfrac": np.array(
+                [[[0.25, 0.75], [0.75, 0.25]]],
+            )
+        }
+    )
+    quantities = QuantityEngine().at_time(
+        session,
+        _entry(),
+        QuantityContext(sediment_diameters_m=(0.001, 0.01)),
+    )
+
+    selected = quantities.get(QuantityRequest("dg", layers=(1, 2)))
+
+    np.testing.assert_allclose(
+        selected,
+        [[0.001 * 10**0.75, 0.001 * 10**0.25]],
+    )
+    with pytest.raises(ValueError, match="one-based positive"):
+        QuantityRequest("dg", layers=(0,))
+
+
 def _two_face_geometry() -> GridGeometry:
     return GridGeometry(
         face_edges=np.array([[0, 1], [0, 2]]),

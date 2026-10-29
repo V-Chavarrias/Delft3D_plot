@@ -11,6 +11,7 @@ def quantity_selection_label(
     request: QuantityRequest,
     *,
     variable_name: str | None = None,
+    component_grouping: str | None = None,
 ) -> str:
     """Build the canonical selection label shared by analysis data caches."""
     if variable_name is None:
@@ -26,6 +27,10 @@ def quantity_selection_label(
         parts.append("layer-" + "-".join(str(index) for index in request.layers))
     if request.sum_fractions:
         parts.append("sum-fractions")
+    if component_grouping is not None:
+        if not component_grouping or component_grouping != component_grouping.strip():
+            raise ValueError("component_grouping must be non-empty and trimmed.")
+        parts.append(component_grouping)
     if variable_name == "morphological_active_area":
         threshold = format(request.active_sediment_thickness_threshold_m, ".8g")
         parts.append(f"active-thickness-{threshold.replace('.', 'p')}m")

@@ -8,7 +8,7 @@ from datetime import date, datetime, time, timedelta
 from numbers import Real
 from typing import Literal, TypeAlias
 
-from pydantic import Field, NonNegativeInt, PositiveInt, field_validator
+from pydantic import Field, PositiveInt, field_validator
 
 from d3dplot.config.base import ConfigModel, Duration
 
@@ -182,11 +182,11 @@ class TimesConfig(ConfigModel):
 
 
 class LayersSelection(ConfigModel):
-    """Select explicit zero-based vertical layer indices."""
+    """Select explicit one-based vertical layer numbers, matching Matlab."""
 
-    layers: list[NonNegativeInt] = Field(
+    layers: list[PositiveInt] = Field(
         min_length=1,
-        description="Zero-based vertical layer indices.",
+        description="One-based vertical layer numbers; 1 is the top bed layer.",
     )
 
 

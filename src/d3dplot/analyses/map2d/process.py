@@ -18,6 +18,7 @@ from d3dplot.analyses.river_km_statistics.config import RiverKmStatisticsConfig
 from d3dplot.analyses.river_km_statistics.process import (
     PreparedRegionSegments,
     RiverKmStatisticsError,
+    fraction_grouping_choice,
     prepare_region_segments,
     write_segment_statistics_cache,
 )
@@ -380,8 +381,41 @@ class Map2DTaskProcessor:
                         if model_sediment is not None
                         else ()
                     )
+                    fraction_diameters_m = (
+                        tuple(item.diameter_m for item in model_sediment.fractions)
+                        if model_sediment is not None
+                        else ()
+                    )
                     for request in dict.fromkeys(work.quantities):
                         spec, raw_values = quantity_values[request]
+                        try:
+                            grouping_choice = fraction_grouping_choice(
+                                config,
+                                request,
+                                spec,
+                                fraction_diameters_m,
+                            )
+                        except RiverKmStatisticsError as error:
+                            raise Map2DProcessError(
+                                ValidationIssue(
+                                    code=error.code,
+                                    level="error",
+                                    location=(
+                                        f"{work.analysis_key}/"
+                                        f"{request.requested_name}"
+                                    ),
+                                    message=str(error),
+                                    hint=(
+                                        "Check fraction_grouping and the model "
+                                        ".sed grain diameters."
+                                    ),
+                                )
+                            ) from error
+                        if (
+                            grouping_choice is not None
+                            and grouping_choice not in choices
+                        ):
+                            choices.append(grouping_choice)
                         values = _smb_face_values(
                             raw_values,
                             grid_geometry.n_faces,
@@ -405,6 +439,7 @@ class Map2DTaskProcessor:
                                     input_fingerprints,
                                     dtype=self._dtype,
                                     width_area=width_area,
+                                    fraction_diameters_m=fraction_diameters_m,
                                 )
                             except RiverKmStatisticsError as error:
                                 raise Map2DProcessError(

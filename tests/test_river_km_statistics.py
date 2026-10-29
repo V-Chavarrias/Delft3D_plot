@@ -35,6 +35,10 @@ from d3dplot.simulation.time_axis import TimeAxis, TimeEntry, TimeSelectionResul
 from d3dplot.store import OutputLayout, initialize_output_root
 from d3dplot.variables.context import QuantityRequest
 from d3dplot.variables.geometry import GridGeometry
+from d3dplot.variables.grouping import (
+    SedimentGroupingError,
+    group_sediment_fraction_components,
+)
 from d3dplot.variables.registry import get_variable_spec
 
 
@@ -244,18 +248,101 @@ def test_dominant_is_a_time_average_result_not_a_spatial_statistic() -> None:
 
 
 @pytest.mark.unit
+def test_sediment_grouping_uses_matlab_custom_boundaries_and_sums_components() -> None:
+    grouped, names = group_sediment_fraction_components(
+        [[1.0, 2.0, 3.0, 4.0, 5.0], [10.0, 20.0, 30.0, 40.0, 50.0]],
+        [0.001, 0.002, 0.010, 0.016, 0.020],
+        [0.002, 0.016],
+        ["sand", "fine gravel", "coarse gravel"],
+    )
+
+    assert names == ("sand", "fine gravel", "coarse gravel")
+    np.testing.assert_array_equal(grouped, [[1.0, 9.0, 5.0], [10.0, 90.0, 50.0]])
+
+
+@pytest.mark.unit
+def test_sediment_grouping_omits_empty_classes_and_preserves_leading_axes() -> None:
+    values = np.arange(12.0).reshape(2, 3, 2)
+
+    grouped, names = group_sediment_fraction_components(
+        values,
+        [0.001, 0.020],
+        [0.002, 0.016],
+        ["sand", "fine gravel", "coarse gravel"],
+    )
+
+    assert names == ("sand", "coarse gravel")
+    assert grouped.shape == (2, 3, 2)
+    np.testing.assert_array_equal(grouped[..., 0], values[..., 0])
+    np.testing.assert_array_equal(grouped[..., 1], values[..., 1])
+
+
+@pytest.mark.unit
+def test_sediment_grouping_rejects_missing_diameters() -> None:
+    with pytest.raises(SedimentGroupingError, match="grain diameter"):
+        group_sediment_fraction_components(
+            [[1.0, 2.0]],
+            [0.001, None],
+            [0.002],
+            ["sand", "gravel"],
+        )
+
+
+@pytest.mark.unit
+def test_fraction_grouping_config_validates_limits_labels_and_variable_scope() -> None:
+    config_data: dict[str, Any] = {
+        "variables": ["layer_fraction"],
+        "regions": [{"name": "region", "polygon": "region.shp"}],
+        "river_km": {
+            "file": "river.csv",
+            "sets": {"250m": [0.125, 0.375]},
+        },
+        "fraction_grouping": {
+            "variables": ["Fak"],
+            "limits_m": [0.002, 0.016],
+            "labels": ["sand", "fine gravel", "coarse gravel"],
+        },
+    }
+
+    config = RiverKmStatisticsConfig.model_validate(config_data)
+    assert config.fraction_grouping is not None
+    assert config.fraction_grouping.applies_to("Fak", "layer_fraction")
+
+    invalid_overrides = (
+        {
+            "fraction_grouping": {
+                **config_data["fraction_grouping"],
+                "limits_m": [0.016, 0.002],
+            }
+        },
+        {
+            "fraction_grouping": {
+                **config_data["fraction_grouping"],
+                "labels": ["sand"],
+            }
+        },
+        {"variables": ["bed_level"]},
+        {"sum_fractions": True},
+    )
+    for override in invalid_overrides:
+        invalid_config = {**config_data, **override}
+        with pytest.raises(ValidationError):
+            RiverKmStatisticsConfig.model_validate(invalid_config)
+
+
+@pytest.mark.unit
 def test_component_labels_follow_retained_quantity_dimensions() -> None:
     spec = get_variable_spec("layer_fraction")
     assert component_labels(
         spec,
-        QuantityRequest("layer_fraction", fractions=(1, 2), layers=(0,)),
+        QuantityRequest("layer_fraction", fractions=(1, 2), layers=(1,)),
         2,
         fraction_names=("fine", "coarse"),
     ) == ("fine", "coarse")
     assert (
         component_labels(
             spec,
-            QuantityRequest("layer_fraction", fractions=(1,), layers=(0,)),
+            QuantityRequest("layer_fraction", fractions=(1,), layers=(1,)),
             0,
             fraction_names=("fine", "coarse"),
         )
