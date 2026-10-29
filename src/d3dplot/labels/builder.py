@@ -14,6 +14,8 @@ from importlib.resources import files
 from pathlib import Path
 from typing import IO, Literal, cast
 
+from d3dplot.paths import resolve_path_preserving_drive
+
 Language = Literal["en", "nl", "es"]
 
 
@@ -195,7 +197,7 @@ def _extra_dictionary_signature(
 ) -> tuple[tuple[str, int, int], ...]:
     signatures: list[tuple[str, int, int]] = []
     for path_value in paths:
-        path = Path(path_value).expanduser().resolve(strict=True)
+        path = resolve_path_preserving_drive(path_value, strict=True)
         stat = path.stat()
         signatures.append((str(path), stat.st_size, stat.st_mtime_ns))
     return tuple(signatures)

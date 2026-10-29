@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from d3dplot import __version__
+from d3dplot.paths import resolve_path_preserving_drive
 from d3dplot.simulation.partitions import _NETCDF4_READ_LOCK
 from d3dplot.simulation.time_utils import timezone_from_offset
 from d3dplot.store import (
@@ -107,7 +108,7 @@ def load_profile_measurements(
     diagnostic: DiagnosticSink | None = None,
 ) -> dict[str, ProfileMeasurement]:
     """Load canonical NetCDF or cache requested variables from a Matlab file."""
-    path = Path(source).expanduser().resolve(strict=False)
+    path = resolve_path_preserving_drive(source)
     if not path.is_file():
         raise ProfileMeasurementError(
             "V-MEA-001",
@@ -166,7 +167,7 @@ def convert_mat_profile_measurements(
     variable: str | None = None,
 ) -> tuple[Path, ...]:
     """Write canonical per-variable NetCDF copies without replacing files."""
-    source_path = Path(source).expanduser().resolve(strict=True)
+    source_path = resolve_path_preserving_drive(source, strict=True)
     output_path = Path(output).expanduser().resolve(strict=False)
     if source_path == output_path:
         raise OutputWriteError("The measurement input cannot also be its output.")

@@ -102,6 +102,28 @@ def test_path_status_reports_not_started_when_map_output_is_absent(
 
 
 @pytest.mark.unit
+@pytest.mark.skipif(os.name != "nt", reason="Windows mapped-drive path behavior")
+def test_missing_mapped_drive_status_keeps_drive_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = Path(r"P:\missing-simulation")
+    unc_path = Path(r"\\directory.intra\PROJECT\missing-simulation")
+    path_type = type(path)
+    monkeypatch.setattr(
+        path_type,
+        "resolve",
+        lambda self, strict=False: unc_path,
+    )
+    monkeypatch.setattr(path_type, "is_dir", lambda self: False)
+
+    status, report = inspect_simulation_status(path)
+
+    assert status is None
+    assert [issue.code for issue in report.errors] == ["V-SIM-001"]
+    assert report.errors[0].location == str(path)
+
+
+@pytest.mark.unit
 def test_all_partition_dia_files_must_report_finished(tmp_path: Path) -> None:
     map_files = (
         _write_map(tmp_path / "run_0000_map.nc", time_value=3600),

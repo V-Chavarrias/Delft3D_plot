@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import netCDF4
@@ -90,6 +91,28 @@ def test_missing_simulation_reports_v_sim_001(tmp_path: Path) -> None:
 
     assert simulation is None
     assert [issue.code for issue in report.errors] == ["V-SIM-001"]
+
+
+@pytest.mark.unit
+@pytest.mark.skipif(os.name != "nt", reason="Windows mapped-drive path behavior")
+def test_missing_mapped_drive_simulation_keeps_drive_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = Path(r"P:\missing-simulation")
+    unc_path = Path(r"\\directory.intra\PROJECT\missing-simulation")
+    path_type = type(path)
+    monkeypatch.setattr(
+        path_type,
+        "resolve",
+        lambda self, strict=False: unc_path,
+    )
+    monkeypatch.setattr(path_type, "is_dir", lambda self: False)
+
+    simulation, report = discover_simulation(path)
+
+    assert simulation is None
+    assert [issue.code for issue in report.errors] == ["V-SIM-001"]
+    assert report.errors[0].location == str(path)
 
 
 def test_multiple_candidate_mdu_files_ignore_partition_mdu(

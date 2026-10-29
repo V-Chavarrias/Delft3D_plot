@@ -292,7 +292,9 @@ def test_map_measurement_time_zone_and_path_resolution(tmp_path: Path) -> None:
 
     if os.name == "nt":
         mapped = paths.resolve_path("/p/measurements/file.tif")
-        assert mapped == Path(r"P:\measurements\file.tif").resolve(strict=False)
+        assert mapped == Path(r"P:\measurements\file.tif").absolute()
+        native = paths.resolve_path(r"P:\measurements\file.tif")
+        assert native == Path(r"P:\measurements\file.tif").absolute()
     else:
         mapped = paths.resolve_path(r"P:\measurements\file.tif")
         assert mapped == Path("/p/measurements/file.tif")

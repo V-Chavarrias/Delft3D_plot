@@ -16,6 +16,7 @@ from d3dplot.config.analysis import AnalysisConfigBase, ProcessingPolicy
 from d3dplot.config.base import ConfigModel, FixedUTCOffset
 from d3dplot.config.figure import FigureConfig
 from d3dplot.config.status import StatusConfig
+from d3dplot.paths import resolve_path_preserving_drive
 
 AnalysisConfig: TypeAlias = Annotated[
     Map2DConfig | RiverKmStatisticsConfig,
@@ -100,14 +101,16 @@ class PathsConfig(ConfigModel):
             suffix = normalized_path[len(normalized_source) :]
             target_path = Path(target).expanduser()
             suffix_parts = tuple(part for part in suffix.split("/") if part)
-            return target_path.joinpath(*suffix_parts).resolve(strict=False)
+            return resolve_path_preserving_drive(
+                target_path.joinpath(*suffix_parts),
+            )
 
         if windows_drive and os.name != "nt":
             raise ValueError(f"Windows path {raw_path!r} has no matching path mapping")
         path = Path(raw_path).expanduser()
         if not path.is_absolute():
             path = Path(base_dir).expanduser() / path if base_dir is not None else path
-        return path.resolve(strict=False)
+        return resolve_path_preserving_drive(path)
 
 
 class SlurmConfig(ConfigModel):

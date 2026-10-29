@@ -7,6 +7,8 @@ from pathlib import Path
 
 from hydrolib.core.dimr.models import DIMR  # type: ignore[import-untyped]
 
+from d3dplot.paths import resolve_path_preserving_drive
+
 
 class DimrResolutionError(ValueError):
     """A DIMR configuration does not identify one usable FM input."""
@@ -22,7 +24,7 @@ class MultipleDflowFMComponentsError(DimrResolutionError):
 
 def resolve_dimr_mdu(path: Path) -> Path:
     """Return the unique ``dflowfm`` component MDU path from a DIMR file."""
-    dimr_path = path.resolve(strict=False)
+    dimr_path = resolve_path_preserving_drive(path)
     model = DIMR(dimr_path, recurse=False)
     fm_components = [
         component for component in model.component if component.library == "dflowfm"
@@ -46,4 +48,4 @@ def resolve_dimr_mdu(path: Path) -> Path:
     mdu_path = Path(input_file)
     if not mdu_path.is_absolute():
         mdu_path = dimr_path.parent / mdu_path
-    return mdu_path.resolve(strict=False)
+    return resolve_path_preserving_drive(mdu_path)

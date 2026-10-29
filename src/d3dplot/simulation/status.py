@@ -22,6 +22,7 @@ from typing import Literal, Protocol, TypeAlias, cast
 
 from d3dplot.config.status import DEFAULT_STATUS_STALE_AFTER
 from d3dplot.model_input.mdu import MduInfo
+from d3dplot.paths import resolve_path_preserving_drive
 from d3dplot.simulation.discover import (
     _MAX_DISCOVERY_WORKERS,
     _MIN_SUBRUNS_FOR_PARALLEL,
@@ -307,7 +308,7 @@ def inspect_simulation_status(
     stale_after: timedelta = DEFAULT_STATUS_STALE_AFTER,
 ) -> tuple[SimulationStatus | None, ValidationReport]:
     """Discover a simulation and report status, including absent map output."""
-    root = Path(path).expanduser().resolve(strict=False)
+    root = resolve_path_preserving_drive(path)
     simulation, report = discover_simulation(root)
     if simulation is not None:
         return (

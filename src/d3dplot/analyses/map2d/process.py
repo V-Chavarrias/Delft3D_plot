@@ -25,6 +25,7 @@ from d3dplot.analyses.river_km_statistics.process import (
 from d3dplot.execution.cache import CacheFingerprintReadError, read_cache_fingerprints
 from d3dplot.execution.runner import TaskDiagnostic, TaskOutputReport
 from d3dplot.execution.tasks import ProcessTask
+from d3dplot.paths import resolve_path_preserving_drive
 from d3dplot.simulation.discover import Simulation
 from d3dplot.simulation.inspection import InspectionResult
 from d3dplot.simulation.map_reader import MapReader
@@ -562,7 +563,7 @@ class Map2DTaskProcessor:
             grid_path,
             self._inspection.times_path,
         ):
-            value = cache_fingerprints[path.resolve(strict=False)]
+            value = cache_fingerprints[resolve_path_preserving_drive(path)]
             if value is None:
                 raise Map2DProcessError(
                     ValidationIssue(

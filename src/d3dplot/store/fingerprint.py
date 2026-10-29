@@ -9,6 +9,8 @@ from collections.abc import Mapping, Sequence
 from hashlib import blake2b
 from pathlib import Path
 
+from d3dplot.paths import resolve_path_preserving_drive
+
 _HASH_BLOCK_SIZE = 1024 * 1024
 _DIGEST_SIZE = 32
 CACHE_SCHEMA_VERSION = 2
@@ -51,7 +53,7 @@ def fingerprint_artifact(
 
 def fingerprint_small_input(path: str | Path) -> str:
     """Return the BLAKE2b content hash of a small input file."""
-    file_path = Path(path).expanduser().resolve(strict=True)
+    file_path = resolve_path_preserving_drive(path, strict=True)
     if not file_path.is_file():
         raise ValueError(f"Input fingerprint target is not a file: {file_path}")
     digest = blake2b(digest_size=_DIGEST_SIZE)
@@ -67,7 +69,7 @@ def fingerprint_model_output(
     hash_content: bool = False,
 ) -> str:
     """Fingerprint a large model output by stat, optionally hashing its edges."""
-    file_path = Path(path).expanduser().resolve(strict=True)
+    file_path = resolve_path_preserving_drive(path, strict=True)
     if not file_path.is_file():
         raise ValueError(f"Model-output fingerprint target is not a file: {file_path}")
     stat = file_path.stat()

@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
+from d3dplot.paths import resolve_path_preserving_drive
 from d3dplot.simulation.subrun import SubRun, discover_subrun
 from d3dplot.validate.report import ValidationIssue, ValidationReport
 
@@ -37,7 +38,7 @@ def discover_simulation(
     path: Path,
 ) -> tuple[Simulation | None, ValidationReport]:
     """Discover one plain-FM or SMT simulation without modifying its inputs."""
-    root = path.expanduser().resolve(strict=False)
+    root = resolve_path_preserving_drive(path)
     if not root.is_dir():
         return None, ValidationReport(
             (

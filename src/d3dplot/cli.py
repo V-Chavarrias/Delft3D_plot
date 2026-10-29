@@ -37,6 +37,7 @@ from d3dplot.config.io import (
 from d3dplot.config.project import ProjectConfig, SimulationConfig
 from d3dplot.execution.diagnostics import DiagnosticLog
 from d3dplot.execution.slurm import render_slurm_script
+from d3dplot.paths import resolve_path_preserving_drive
 from d3dplot.plotting.stage import (
     PlotStageResult,
     ReplotTarget,
@@ -175,7 +176,7 @@ def info(
     ] = False,
 ) -> None:
     """Show simulation status, output metadata, variables, and CRS."""
-    root = simulation_path.expanduser().resolve(strict=False)
+    root = resolve_path_preserving_drive(simulation_path)
     try:
         simulation, report = discover_simulation(root)
         if simulation is None:
@@ -215,7 +216,7 @@ def variables(
     ],
 ) -> None:
     """List raw NetCDF fields and registered quantities available to analyses."""
-    root = simulation_path.expanduser().resolve(strict=False)
+    root = resolve_path_preserving_drive(simulation_path)
     simulation, report = discover_simulation(root)
     if simulation is None:
         _emit_report(report)
@@ -1585,7 +1586,7 @@ def _starter_config(
 ) -> ProjectConfig:
     simulations = [
         {
-            "path": str(path.expanduser().resolve(strict=False)),
+            "path": str(resolve_path_preserving_drive(path)),
             "label": label,
         }
         for path, label in zip(

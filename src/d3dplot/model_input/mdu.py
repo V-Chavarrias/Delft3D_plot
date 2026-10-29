@@ -14,6 +14,7 @@ from hydrolib.core.dflowfm.research.models import (  # type: ignore[import-untyp
 from pydantic import ValidationError
 
 from d3dplot.model_input.errors import ModelInputError
+from d3dplot.paths import resolve_path_preserving_drive
 
 _MDU_HINT = (
     "Check the MDU syntax; if its keywords are valid for a newer kernel, update "
@@ -43,7 +44,7 @@ class MduInfo:
     @classmethod
     def from_path(cls, path: Path) -> MduInfo:
         """Load an MDU without recursively reading any referenced model files."""
-        mdu_path = path.resolve(strict=False)
+        mdu_path = resolve_path_preserving_drive(path)
         try:
             model = ResearchFMModel(mdu_path, recurse=False)
         except ValidationError as error:
@@ -99,7 +100,7 @@ def _resolve_input_file(
     path = Path(file_path)
     if not path.is_absolute():
         path = base_dir / path
-    return path.resolve(strict=False)
+    return resolve_path_preserving_drive(path)
 
 
 def _resolve_output_dir(
@@ -114,7 +115,7 @@ def _resolve_output_dir(
         path = Path(value)
     if not path.is_absolute():
         path = base_dir / path
-    return path.resolve(strict=False)
+    return resolve_path_preserving_drive(path)
 
 
 def _output_file_path(file_model: FileModel | None, *, default_name: str) -> Path:

@@ -24,6 +24,7 @@ from d3dplot.analyses.river_km_statistics.config import (
     RiverKmStatisticsConfig,
 )
 from d3dplot.execution.cache import CacheFingerprintReadError, read_cache_fingerprints
+from d3dplot.paths import resolve_path_preserving_drive
 from d3dplot.river_km.file import (
     RiverKmFileError,
     RiverKmPoint,
@@ -318,7 +319,7 @@ def _inspected_cache_fingerprints(
             code="V-OUT-020",
         ) from error
     values = tuple(
-        fingerprints[path.resolve(strict=False)]
+        fingerprints[resolve_path_preserving_drive(path)]
         for path in (grid_path, merge_plan_path)
     )
     if any(value is None for value in values):
@@ -634,7 +635,7 @@ def _cached_geometry(
         return None, None
     try:
         fingerprints = read_cache_fingerprints((path,))
-        existing = fingerprints[path.resolve(strict=False)]
+        existing = fingerprints[resolve_path_preserving_drive(path)]
         if existing != fingerprint:
             return None, "Geometry cache is stale and will be rebuilt."
         prepared = _read_geometry_cache(path, fingerprint=fingerprint)

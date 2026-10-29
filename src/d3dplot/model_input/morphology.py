@@ -8,6 +8,7 @@ from pathlib import Path
 
 from d3dplot.model_input.errors import ModelInputError
 from d3dplot.model_input.ini import optional_float, parse_ini_file, section_mappings
+from d3dplot.paths import resolve_path_preserving_drive
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,7 +21,7 @@ class MorphologyInfo:
 
 def read_morphology(path: Path) -> MorphologyInfo:
     """Read ``MorFac`` and ``MorStt`` with HYDROLIB-core's INI parser."""
-    mor_path = path.resolve(strict=False)
+    mor_path = resolve_path_preserving_drive(path)
     document = parse_ini_file(mor_path)
     sections = section_mappings(
         document.get("morphology"),

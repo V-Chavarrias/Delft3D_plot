@@ -13,6 +13,7 @@ from d3dplot.model_input.ini import (
     parse_ini_file,
     section_mappings,
 )
+from d3dplot.paths import resolve_path_preserving_drive
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,7 +37,7 @@ class SedimentInfo:
 
 def read_sediment(path: Path) -> SedimentInfo:
     """Read each repeated ``[Sediment]`` section with HYDROLIB-core."""
-    sed_path = path.resolve(strict=False)
+    sed_path = resolve_path_preserving_drive(path)
     document = parse_ini_file(sed_path)
     sections = section_mappings(
         document.get("sediment"),

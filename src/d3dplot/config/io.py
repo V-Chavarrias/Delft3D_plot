@@ -13,6 +13,7 @@ from typing import Any, TypeAlias
 import yaml
 
 from d3dplot.config.project import ProjectConfig
+from d3dplot.paths import resolve_path_preserving_drive
 
 TextWriter: TypeAlias = Callable[[Path, str], None]
 
@@ -153,7 +154,7 @@ def _resolve_serialized_paths(
         path = Path(path_text)
         if not path.is_absolute():
             path = base_dir.expanduser() / path
-        return str(path.resolve(strict=False))
+        return str(resolve_path_preserving_drive(path))
 
     if isinstance(python_value, datetime):
         return python_value.isoformat()
