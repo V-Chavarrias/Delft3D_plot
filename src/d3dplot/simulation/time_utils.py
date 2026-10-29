@@ -71,6 +71,27 @@ def decode_cf_time(
     return decoded.astimezone(UTC)
 
 
+def cf_time_units_with_origin(
+    units: str | None,
+    reference_units: str | None,
+) -> str | None:
+    """Attach a reference CF origin to a supported standalone time unit."""
+    if units is None:
+        return None
+    normalized_units = units.strip()
+    if _CF_TIME_UNITS.fullmatch(normalized_units) is not None:
+        return normalized_units
+    if normalized_units.casefold() not in _TIME_UNIT_SECONDS:
+        return None
+    if reference_units is None:
+        return None
+    reference_match = _CF_TIME_UNITS.fullmatch(reference_units)
+    if reference_match is None:
+        return None
+    origin = reference_match.group("origin").strip()
+    return f"{normalized_units} since {origin}"
+
+
 def time_unit_seconds(units: str | None) -> float | None:
     """Return the seconds per CF time unit or standalone time-unit token."""
     if units is None:

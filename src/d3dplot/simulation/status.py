@@ -33,6 +33,7 @@ from d3dplot.simulation.discover import (
 from d3dplot.simulation.partitions import _NETCDF4_READ_LOCK
 from d3dplot.simulation.subrun import SubRun
 from d3dplot.simulation.time_utils import (
+    cf_time_units_with_origin,
     decode_cf_time,
     time_unit_seconds,
     timezone_from_hours,
@@ -555,7 +556,8 @@ def _read_morph_time(
     units = _as_text(getattr(variable, "units", None)) or fallback_units
     if units is None:
         return value
-    decoded = _decode_cf_time(value, units, calendar, tzone)
+    decode_units = cf_time_units_with_origin(units, fallback_units) or units
+    decoded = _decode_cf_time(value, decode_units, calendar, tzone)
     return _utc_isoformat(decoded) if decoded is not None else value
 
 

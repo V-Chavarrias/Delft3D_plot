@@ -28,6 +28,7 @@ from d3dplot.simulation.discover import (
 from d3dplot.simulation.partitions import _NETCDF4_READ_LOCK
 from d3dplot.simulation.subrun import SubRun
 from d3dplot.simulation.time_utils import (
+    cf_time_units_with_origin,
     decode_cf_time,
     offset_text,
     timezone_from_cf_units,
@@ -1283,10 +1284,17 @@ def _prepare_time_axis(
             )
 
         morph_series = metadata.morph_time_series
-        morph_units = (
+        raw_morph_units = (
             morph_series.units
             if morph_series is not None and morph_series.units
             else time_series.units
+        )
+        morph_units = (
+            cf_time_units_with_origin(
+                raw_morph_units,
+                time_series.units,
+            )
+            or raw_morph_units
         )
         morph_calendar = (
             morph_series.calendar

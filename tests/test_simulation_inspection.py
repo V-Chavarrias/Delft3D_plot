@@ -69,6 +69,32 @@ def test_inspection_matches_dfm_tools_and_reuses_cache(
 
 
 @pytest.mark.integration
+def test_elapsed_morphological_seconds_use_map_time_origin(
+    synthetic_case: Path,
+    tmp_path: Path,
+) -> None:
+    simulation_path = tmp_path / "elapsed_morphological_time"
+    copytree(synthetic_case / "simulations" / "r001", simulation_path)
+    simulation = _discover(simulation_path)
+
+    for subrun in simulation.subruns:
+        for map_file in subrun.map_files:
+            with netCDF4.Dataset(map_file, mode="r+") as dataset:
+                dataset.variables["morft"].units = "s"
+
+    result, report = inspect_simulation(
+        _discover(simulation_path),
+        OutputLayout(tmp_path / "elapsed_morphological_time_output"),
+        crs=None,
+        forbidden_roots=(),
+    )
+
+    assert result is not None, report.to_text()
+    assert report.is_valid
+    _assert_time_axis_matches_expected(synthetic_case, result.times_path)
+
+
+@pytest.mark.integration
 def test_large_simulation_metadata_inspection_uses_bounded_threads(
     synthetic_case: Path,
     monkeypatch: pytest.MonkeyPatch,

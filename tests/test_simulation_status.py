@@ -203,6 +203,26 @@ def test_elapsed_map_time_is_compared_in_seconds(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_elapsed_morph_time_uses_map_time_origin(tmp_path: Path) -> None:
+    map_file = _write_map(
+        tmp_path / "run_map.nc",
+        time_value=7200,
+    )
+    with netCDF4.Dataset(map_file, mode="r+") as dataset:
+        morph_time = dataset.variables["morft"]
+        morph_time.units = "s"
+        morph_time[:] = [3600]
+
+    status = detect_subrun_status(
+        0,
+        _mdu(tmp_path, tstop=7200),
+        (map_file,),
+    )
+
+    assert status.last_morph_time == "2021-01-01T01:00:00+00:00"
+
+
+@pytest.mark.unit
 def test_numeric_stop_uses_elapsed_time_when_cf_origin_differs(
     tmp_path: Path,
 ) -> None:
