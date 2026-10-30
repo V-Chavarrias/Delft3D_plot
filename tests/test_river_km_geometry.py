@@ -76,8 +76,8 @@ def test_reader_rejects_header_without_four_columns(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("km", "expected"),
     [
-        (960.16, "NI"),
-        (960.15, "BO"),
+        (960.16, "WA"),
+        (960.15, "WA"),
         (952.85, "WA"),
         (867.00, "BR"),
         (852.90, "Rhein"),
@@ -90,10 +90,17 @@ def test_wa_track_uses_available_rijntakken_branches(km: float, expected: str) -
     assert provider.branch_for_km(km, track="wa") == expected
 
 
-def test_wa_track_skips_optional_branches_missing_from_file() -> None:
+def test_wa_track_uses_matlab_default_waal_branch() -> None:
     provider = RiverKmProvider.from_points(_points("WA"))
 
     assert provider.branch_for_km(960.2, track="WA") == "WA"
+
+
+def test_rijntakken_track_selects_provider_before_file_tags() -> None:
+    provider = RiverKmProvider.from_points(_points("OTHER"), track="WA")
+
+    assert provider.name == "rijntakken"
+    assert provider.branch_for_km(900.0, track="WA") == "WA"
 
 
 @pytest.mark.parametrize(
@@ -129,14 +136,17 @@ def test_rijntakken_requires_a_track_and_checks_pk_range() -> None:
     assert outside_range.value.code == "V-RKM-004"
 
 
-def test_maas_branch_switch_depends_on_bm_presence() -> None:
+def test_maas_branch_switch_uses_configured_track() -> None:
     with_bm = RiverKmProvider.from_points(_points("ma", "bm"))
     without_bm = RiverKmProvider.from_points(_points("MA"))
+    forced = RiverKmProvider.from_points(_points("OTHER"), track="MA")
 
     assert with_bm.name == "maas"
-    assert with_bm.branch_for_km(230.499) == "MA"
-    assert with_bm.branch_for_km(230.5) == "BM"
-    assert without_bm.branch_for_km(230.5) == "MA"
+    assert with_bm.branch_for_km(230.0) == "MA"
+    assert with_bm.branch_for_km(230.25) == "BM"
+    assert without_bm.branch_for_km(230.25) == "BM"
+    assert forced.name == "maas"
+    assert forced.branch_for_km(230.25) == "BM"
 
 
 def test_mixed_recognized_river_tags_are_rejected() -> None:

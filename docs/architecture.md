@@ -6,6 +6,9 @@ Current local processing: After the first run failed because the configured end 
 
 Inspection now builds the combined grid and merge plan from sub-run 0 only, reads `time`/`morft` metadata from every sub-run, and reuses the three caches before rescanning model metadata when their fingerprints match (D92).
 
+The Maas provider follows the configured `track: MA` convention: `MA` through
+km 230.0 and `BM` above km 230.0 (D96).
+
 The synthetic overlay-only loop (40 frames × 1,000 measured points; median of 7 `time.perf_counter` runs) took 0.805739 s with profile overlays versus 0.000022 s without, an added 20.143 ms per frame; this excludes model plotting and figure finalisation.
 
 Document map:
@@ -40,7 +43,7 @@ Document map:
 | Item | Location | State |
 |------|----------|-------|
 | Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `main` includes the pushed `feat/acceptance-r209` merge (`4b88447`); WP 5.1 acceptance remains incomplete (§13.4); the local topic branch remains; WP 5.5 release automation is on `feat/pypi-release` |
-| Plan (this file) | `docs/architecture.md` | v6.86 |
+| Plan (this file) | `docs/architecture.md` | v6.88 |
 | Licence | `LICENSE` | GPL-3.0 |
 | Synthetic SMT and plain FM test case generator | `tools/synthetic_smt/` | Implemented and verified locally (§13.3) |
 | Land-boundary converter (`.mat` cache → `.ldb`) | `tools/mat_to_ldb.py` | Implemented. Used to recreate the Maas land boundary (D45) |
@@ -282,6 +285,8 @@ Status: **A** = agreed with the user; **P** = proposed in this plan and awaiting
 | D93 | Persist every valid-configuration validation or inspection report as a timestamped, guarded file under the reference output root's `tables/`; use the requested text/JSON format for validation and text for inspection | Reports must remain available after the command exits without shell redirection; model inputs stay read-only and output writes remain guarded | A |
 | D94 | `merge_plan.nc` contains one simulation-wide mapping with no `plan_of_subrun` or plan dimension; all SMT sub-runs and the single plain-FM sub-run use it | Different simulations can have different grids, but an SMT simulation does not change grid between sub-runs | A |
 | D95 | SMT discovery reads/parses the MDU, `.mor`, and `.sed` metadata only from sub-run 0 and rebases that template for later sub-runs; opening every map file briefly for NetCDF-header validation is optional and disabled by default via `check_map_headers` | SMT sub-runs share model-input settings; thousands of network-file opens are unnecessary for normal discovery | A |
+| D96 | When `track: MA` selects the Maas provider, use tag `MA` for km ≤ 230.0 and `BM` for km > 230.0, even when the input file does not contain `BM` (coordinate lookup then reports missing branch data) | The user confirmed the Maas input convention; explicit track selection takes precedence over file tags | A |
+| D97 | Rijntakken track selection follows Matlab `branch_rijntakken.m` defaults: Waal-family tracks (`WA`, `WL`, `BO`, `NI`) use `WA` above km 867 and do not switch to `BO`/`NI` unless a future explicit option enables Matlab's `NI_BO` argument | Preserve the default Matlab call used by `gdm_load_rkm_polygons.m`; do not infer optional branches from file tags | A |
 
 ## 3. Review of the plan (v6)
 
@@ -402,18 +407,18 @@ Tags: `GRD`, `M2D`, `M1D`, `PRF`, `SMB`, `HIS`, `HFM`, `CRS`, `STO`, plus legacy
 | Tags in the file | River | Branch of a km |
 |------------------|-------|----------------|
 | any of `RH`/`Rhein`, `BR`, `PK`, `WA`/`WL`, `BO`, `NI`, `NR`, `LE`, `IJ` | Rijntakken | From the user's **track** and the km (table below); the track is required |
-| `MA`, `BM` | Maas | `MA` if km < 230.5, else `BM` (if `BM` is present) |
+| `MA`, `BM` | Maas | `MA` if km ≤ 230.0, else `BM` |
 | other / none | Generic | The single tag. If there are several tags, the user gives the branch |
 
 | Rijntakken track | Branch by km |
 |------------------|-------------|
-| `WA` (`WL`, `BO`, `NI`) | > 867.00 `WA` (optionally `BO` > 952.85, `NI` > 960.15) · > 852.90 `BR` · else `Rhein` |
+| `WA` (`WL`, `BO`, `NI`) | > 867.00 `WA` · > 852.90 `BR` · else `Rhein` |
 | `IJ` | > 878.05 `IJ` · > 867.05 `PK` · > 852.90 `BR` · else `Rhein` |
 | `NR`, `LE` | > 929.35 `LE` · > 878.08 `NR` · > 867.05 `PK` · > 852.90 `BR` · else `Rhein` |
 | `PK` | `PK` (error outside 867.05–878.05) |
 | `BR`, `RH` | as given |
 
-**Provider implementation and Matlab flags.** Provider tags, track thresholds, cutoffs, and `ds_pol_km` are stored in package data, not embedded in geometry code. Provider matching is case-insensitive. The Maas switch is `MA` below 230.5 km and `BM` at or above 230.5 km only when `BM` occurs in the file; files without `BM` use `MA`. On a Waal track, the `BO` and `NI` transitions are used only when those branches occur in the file; otherwise the points remain on `WA`. A single explicit branch is broadcast, or `branches` may supply one value per requested centre. A Rijntakken `track` takes precedence over explicit branches, matching `gdm_load_rkm_polygons.m`.
+**Provider implementation and Matlab flags.** Provider tags, track thresholds, cutoffs, and `ds_pol_km` are stored in package data, not embedded in geometry code. Provider matching is case-insensitive. An explicit `track: MA` selects the Maas provider and uses `MA` through km 230.0, then `BM` above 230.0; if the selected tag is absent from the file, coordinate lookup reports the missing branch. Waal-family Rijntakken tracks use the default Matlab `waal_name = 'WA'`; the optional `NI_BO` argument is not exposed, so `BO` and `NI` are not selected by default. A single explicit branch is broadcast, or `branches` may supply one value per requested centre. A Rijntakken `track` takes precedence over file-based provider detection and explicit generic branches, matching `gdm_load_rkm_polygons.m`.
 
 The Matlab checker maps legacy tag `fig_map_summerbed_01` to `SMB` and reads no geometry flags. `gdm_create_mat_SMB.m` and `gdm_plot_SMB.m` call `gdm_parse_summerbed.m`: `sb_pol` and `fpath_rkm` are required; `rkm_name` and `rkm` are required; `rkm_br` and `rkm_track` default empty, and one must supply a branch or track. `gdm_load_rkm_polygons.m` defaults its optional `parallel_distance` to 1000 m and `ds_pol` to 0.1 km. `do_plot_inpoly` defaults false for the per-segment diagnostic. The remaining `do_*`, `tim_tol`, and plotting-limit defaults in `gdm_parse_summerbed.m` apply to processing/plotting work packages, not provider geometry.
 
@@ -2472,6 +2477,8 @@ The complete model-quantity catalog (all v1 raw and derived registry entries, al
 
 | Version | Content |
 |---------|---------|
+| v6.88 | Match Matlab's default Rijntakken track switch rules and default Waal branch behavior (D97) |
+| v6.87 | Use explicit Maas track selection and switch from `MA` to `BM` above km 230.0, recording the branch rule in the processing log (D96) |
 | v6.86 | Reuse first-sub-run MDU/morphology/sediment metadata during SMT discovery and make all-map NetCDF header opens opt-in (`check_map_headers`, D95) |
 | v6.85 | Simplify `merge_plan.nc` to one simulation-wide mapping with no plan dimension or per-sub-run assignment (D94); rebuilds old caches through the schema bump |
 | v6.84 | Persist timestamped validation and inspection reports under the guarded `tables/` output folder by default (D93) |

@@ -101,7 +101,13 @@ class RiverKmConfig(ConfigModel):
         default_factory=dict,
         description="Named km sets, each a list or a start/end/step range.",
     )
-    track: str | None = Field(default=None, description="Optional river track name.")
+    track: str | None = Field(
+        default=None,
+        description=(
+            "Optional river track name; `MA` selects the Maas branch convention "
+            "(MA through km 230.0, BM above)."
+        ),
+    )
     branches: list[str] = Field(
         default_factory=list,
         description=(

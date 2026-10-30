@@ -76,7 +76,12 @@ class RiverKmProvider:
     branch_tags: frozenset[str]
 
     @classmethod
-    def from_points(cls, points: Sequence[RiverKmPoint]) -> RiverKmProvider:
+    def from_points(
+        cls,
+        points: Sequence[RiverKmPoint],
+        *,
+        track: str | None = None,
+    ) -> RiverKmProvider:
         """Detect provider data and index points by canonical branch."""
         if not points:
             raise RiverKmProviderError(
@@ -84,17 +89,25 @@ class RiverKmProvider:
             )
 
         tags = frozenset(point.branch.strip().casefold() for point in points)
-        matches = [
-            definition
-            for name in ("rijntakken", "maas")
-            if (definition := _load_definition(name)).tags
-            and tags.intersection(tag.casefold() for tag in definition.tags)
-        ]
-        if len(matches) > 1:
-            raise RiverKmProviderError(
-                "River-km file contains tags for both Rijntakken and Maas."
-            )
-        definition = matches[0] if matches else _load_definition("generic")
+        requested_track = track.strip().casefold() if track is not None else ""
+        if requested_track in {"ma", "maas"}:
+            definition = _load_definition("maas")
+        elif requested_track in {
+            candidate.casefold() for candidate in _load_definition("rijntakken").tracks
+        }:
+            definition = _load_definition("rijntakken")
+        else:
+            matches = [
+                definition
+                for name in ("rijntakken", "maas")
+                if (definition := _load_definition(name)).tags
+                and tags.intersection(tag.casefold() for tag in definition.tags)
+            ]
+            if len(matches) > 1:
+                raise RiverKmProviderError(
+                    "River-km file contains tags for both Rijntakken and Maas."
+                )
+            definition = matches[0] if matches else _load_definition("generic")
 
         grouped: dict[str, list[RiverKmPoint]] = {}
         for point in points:
@@ -197,7 +210,7 @@ class RiverKmProvider:
             switch_km = self.definition.maas_switch_km
             if switch_km is None:
                 raise RuntimeError("The packaged Maas provider has no branch switch.")
-            if km < switch_km or "bm" not in self.branch_tags:
+            if km <= switch_km:
                 return "MA"
             return "BM"
 

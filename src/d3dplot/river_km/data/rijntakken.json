@@ -12,8 +12,8 @@
   "tracks": {
     "WA": {
       "rules": [
-        {"above_km": 960.15, "branch": "NI", "requires_tag": "NI"},
-        {"above_km": 952.85, "branch": "BO", "requires_tag": "BO"},
+        {"above_km": 960.15, "branch": "WA"},
+        {"above_km": 952.85, "branch": "WA"},
         {"above_km": 867.0, "branch": "WA"},
         {"above_km": 852.9, "branch": "BR"}
       ],
@@ -21,8 +21,8 @@
     },
     "WL": {
       "rules": [
-        {"above_km": 960.15, "branch": "NI", "requires_tag": "NI"},
-        {"above_km": 952.85, "branch": "BO", "requires_tag": "BO"},
+        {"above_km": 960.15, "branch": "WA"},
+        {"above_km": 952.85, "branch": "WA"},
         {"above_km": 867.0, "branch": "WA"},
         {"above_km": 852.9, "branch": "BR"}
       ],
@@ -30,8 +30,8 @@
     },
     "BO": {
       "rules": [
-        {"above_km": 960.15, "branch": "NI", "requires_tag": "NI"},
-        {"above_km": 952.85, "branch": "BO", "requires_tag": "BO"},
+        {"above_km": 960.15, "branch": "WA"},
+        {"above_km": 952.85, "branch": "WA"},
         {"above_km": 867.0, "branch": "WA"},
         {"above_km": 852.9, "branch": "BR"}
       ],
@@ -39,8 +39,8 @@
     },
     "NI": {
       "rules": [
-        {"above_km": 960.15, "branch": "NI", "requires_tag": "NI"},
-        {"above_km": 952.85, "branch": "BO", "requires_tag": "BO"},
+        {"above_km": 960.15, "branch": "WA"},
+        {"above_km": 952.85, "branch": "WA"},
         {"above_km": 867.0, "branch": "WA"},
         {"above_km": 852.9, "branch": "BR"}
       ],

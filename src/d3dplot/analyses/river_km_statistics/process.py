@@ -36,6 +36,7 @@ from d3dplot.river_km.geometry import (
     RiverKmSegmentGeometry,
     build_segment_geometry,
 )
+from d3dplot.river_km.providers import RiverKmProvider
 from d3dplot.river_km.regions import (
     RegionAssignmentError,
     RegionPolygon,
@@ -684,14 +685,32 @@ def prepare_region_segments(
         )
     _LOGGER.info(
         "Starting river-km geometry preparation: regions=%s; km_sets=%s; "
-        "half_width_m=%s.",
+        "track=%s; half_width_m=%s.",
         len(config.regions),
         len(config.river_km.sets),
+        config.river_km.track,
         config.river_km.half_width_m,
     )
     points, river_fingerprint, input_cache_action, input_cache_issue = (
         _load_river_km_points(config.river_km.file, layout, guard)
     )
+    provider = RiverKmProvider.from_points(
+        points,
+        track=config.river_km.track,
+    )
+    if provider.name == "maas" and provider.definition.maas_switch_km is not None:
+        switch_km = provider.definition.maas_switch_km
+        _LOGGER.info(
+            "Maas branch selection: track=%s; MA for km <= %s; BM for km > %s.",
+            config.river_km.track,
+            switch_km,
+            switch_km,
+        )
+    elif provider.name == "rijntakken" and config.river_km.track is not None:
+        _LOGGER.info(
+            "Rijntakken branch selection: track=%s; Matlab default branch rules.",
+            config.river_km.track,
+        )
     try:
         grid_fingerprint, merge_plan_fingerprint = _inspected_cache_fingerprints(
             grid_path,
