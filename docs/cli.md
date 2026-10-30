@@ -19,11 +19,13 @@ reference metadata. `--json` emits the same summary as structured JSON.
 `variables` lists detected raw NetCDF names, matching registered raw quantities
 and aliases, unregistered fields, and all registered derived quantities.
 
-Both commands use read-only discovery. To report raw fields and CRS, they read
-only the first map-file header from each sub-run; status detection may read the
-metadata it needs to determine completion times and state. They do not build a
-merge plan, create a cache, or modify model files. A simulation without map
-output can still be inspected with `info` and is reported as `not_started`.
+Both commands use read-only discovery. SMT discovery reads the model-input
+metadata from sub-run 0 and reuses it for later sub-runs. To report raw fields
+and CRS, `info`/`variables` read the first map-file header from each sub-run;
+optional full discovery header checks are controlled by
+`check_map_headers: true`. They do not build a merge plan, create a cache, or
+modify model files. A simulation without map output can still be inspected
+with `info` and is reported as `not_started`.
 
 ## Build the output-inspection cache
 

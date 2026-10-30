@@ -348,7 +348,10 @@ def _validate_project(
         diagnostics.record_validation_issues(static_report.issues)
 
     for simulation_config in config.simulations:
-        simulation, discovery_report = discover_simulation(simulation_config.path)
+        simulation, discovery_report = discover_simulation(
+            simulation_config.path,
+            check_map_headers=config.check_map_headers,
+        )
         issues.extend(discovery_report.issues)
         if diagnostics is not None:
             diagnostics.info(
@@ -511,7 +514,10 @@ def _inspect_project(
     if diagnostics is not None:
         diagnostics.record_validation_issues(static_report.issues)
     for simulation_config in simulation_configs:
-        simulation, discovery_report = discover_simulation(simulation_config.path)
+        simulation, discovery_report = discover_simulation(
+            simulation_config.path,
+            check_map_headers=config.check_map_headers,
+        )
         issues.extend(discovery_report.issues)
         if diagnostics is not None:
             diagnostics.info(

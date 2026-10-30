@@ -86,6 +86,30 @@ def test_discovery_classifies_synthetic_variants(
     )
 
 
+@pytest.mark.integration
+def test_smt_reads_model_input_only_from_first_subrun(
+    synthetic_case: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import d3dplot.simulation.subrun as subrun_module
+
+    original = subrun_module.validate_model_input
+    read_paths: list[Path] = []
+
+    def counted(path: Path) -> object:
+        read_paths.append(path)
+        return original(path)
+
+    monkeypatch.setattr(subrun_module, "validate_model_input", counted)
+    simulation, report = discover_simulation(synthetic_case / "simulations" / "r001")
+
+    assert simulation is not None
+    assert report.is_valid
+    assert len(read_paths) == 1
+    assert simulation.subruns[0].mdu.mdu_path == read_paths[0]
+    assert simulation.subruns[1].mdu.mdu_path != read_paths[0]
+
+
 def test_missing_simulation_reports_v_sim_001(tmp_path: Path) -> None:
     simulation, report = discover_simulation(tmp_path / "missing")
 
@@ -146,10 +170,22 @@ def test_unreadable_map_file_reports_v_out_002(tmp_path: Path) -> None:
     output.mkdir()
     (output / "dflowfm_map.nc").write_text("not a NetCDF file", encoding="utf-8")
 
-    simulation, report = discover_simulation(tmp_path)
+    simulation, report = discover_simulation(tmp_path, check_map_headers=True)
 
     assert simulation is None
     assert [issue.code for issue in report.errors] == ["V-OUT-002"]
+
+
+def test_unreadable_map_file_is_not_opened_by_default(tmp_path: Path) -> None:
+    _write_mdu(tmp_path)
+    output = tmp_path / "results"
+    output.mkdir()
+    (output / "dflowfm_map.nc").write_text("not a NetCDF file", encoding="utf-8")
+
+    simulation, report = discover_simulation(tmp_path)
+
+    assert simulation is not None
+    assert report.is_valid
 
 
 def test_classic_netcdf_map_file_is_readable(tmp_path: Path) -> None:
@@ -159,7 +195,7 @@ def test_classic_netcdf_map_file_is_readable(tmp_path: Path) -> None:
         netcdf_format="NETCDF3_CLASSIC",
     )
 
-    simulation, report = discover_simulation(tmp_path)
+    simulation, report = discover_simulation(tmp_path, check_map_headers=True)
 
     assert simulation is not None
     assert report.is_valid
@@ -172,7 +208,7 @@ def test_64bit_offset_netcdf_map_file_is_readable(tmp_path: Path) -> None:
         netcdf_format="NETCDF3_64BIT_OFFSET",
     )
 
-    simulation, report = discover_simulation(tmp_path)
+    simulation, report = discover_simulation(tmp_path, check_map_headers=True)
 
     assert simulation is not None
     assert report.is_valid
@@ -188,7 +224,7 @@ def test_truncated_classic_netcdf_map_file_reports_v_out_002(
     map_file = output / "dflowfm_map.nc"
     for truncated_header in (b"CDF\x01", b"CDF\x01\x00\x00\x00\x03"):
         map_file.write_bytes(truncated_header)
-        simulation, report = discover_simulation(tmp_path)
+        simulation, report = discover_simulation(tmp_path, check_map_headers=True)
 
         assert simulation is None
         assert [issue.code for issue in report.errors] == ["V-OUT-002"]

@@ -620,6 +620,7 @@ def _inspect_subrun_time_metadata(
         times=times,
         morph_times=morph_times,
         issues=issues,
+        check_mdu_time_bounds=False,
     )
 
 
@@ -962,6 +963,7 @@ def _finish_subrun_metadata(
     times: Sequence[_NumericSeries | None],
     morph_times: Sequence[_NumericSeries | None],
     issues: list[ValidationIssue],
+    check_mdu_time_bounds: bool = True,
 ) -> tuple[_SubRunInspection | None, tuple[ValidationIssue, ...]]:
     if (
         len(signatures) not in {0, subrun.partition_count}
@@ -982,6 +984,7 @@ def _finish_subrun_metadata(
         times,
         morph_times,
         subrun,
+        check_mdu_time_bounds=check_mdu_time_bounds,
     )
     if corrupt_map_indices:
         description = "; ".join(
@@ -1022,6 +1025,8 @@ def _inconsistent_map_times(
     times: Sequence[_NumericSeries | None],
     morph_times: Sequence[_NumericSeries | None],
     subrun: SubRun,
+    *,
+    check_mdu_time_bounds: bool = True,
 ) -> tuple[
     dict[int, set[int]],
     bool,
@@ -1034,7 +1039,8 @@ def _inconsistent_map_times(
         return corrupt, False, None, None
 
     numeric_times = cast(tuple[_NumericSeries, ...], tuple(times))
-    _mark_mdu_time_bounds(numeric_times, subrun, corrupt)
+    if check_mdu_time_bounds:
+        _mark_mdu_time_bounds(numeric_times, subrun, corrupt)
     reference_times, time_ok = _mark_inconsistent_series(numeric_times, corrupt)
 
     present_morph = [series is not None for series in morph_times]

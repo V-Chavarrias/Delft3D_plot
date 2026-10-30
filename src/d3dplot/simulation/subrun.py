@@ -30,6 +30,7 @@ class SubRun:
     model_input: ModelInput
     map_files: tuple[Path, ...]
     partitioned: bool
+    model_input_reused: bool = False
 
     @property
     def mdu(self) -> MduInfo:
@@ -45,6 +46,8 @@ class SubRun:
 def discover_subrun(
     folder: Path,
     index: int,
+    *,
+    check_map_headers: bool = False,
 ) -> tuple[SubRun | None, tuple[ValidationIssue, ...]]:
     """Read one sub-run's model inputs and identify its map output files."""
     mdu_path, issues = _find_mdu(folder)
@@ -55,7 +58,10 @@ def discover_subrun(
     if model_input is None:
         return None, input_report.issues
 
-    map_files, output_issues = discover_map_files(model_input.mdu)
+    map_files, output_issues = discover_map_files(
+        model_input.mdu,
+        check_headers=check_map_headers,
+    )
     if map_files is None:
         return None, output_issues
 
@@ -66,9 +72,87 @@ def discover_subrun(
             model_input=model_input,
             map_files=map_files.paths,
             partitioned=map_files.partitioned,
+            model_input_reused=False,
         ),
         input_report.issues + output_issues,
     )
+
+
+def discover_subrun_from_template(
+    template: SubRun,
+    folder: Path,
+    index: int,
+    *,
+    check_map_headers: bool = False,
+) -> tuple[SubRun | None, tuple[ValidationIssue, ...]]:
+    """Discover one SMT sub-run using the first sub-run's model-input metadata."""
+    model_input = _rebase_model_input(template, folder)
+    map_files, output_issues = discover_map_files(
+        model_input.mdu,
+        check_headers=check_map_headers,
+    )
+    if map_files is None:
+        return None, output_issues
+    return (
+        SubRun(
+            index=index,
+            folder=folder,
+            model_input=model_input,
+            map_files=map_files.paths,
+            partitioned=map_files.partitioned,
+            model_input_reused=True,
+        ),
+        output_issues,
+    )
+
+
+def _rebase_model_input(template: SubRun, folder: Path) -> ModelInput:
+    source_folder = template.folder
+    template_mdu = template.model_input.mdu
+    source_map = (
+        template_mdu.map_file
+        if template_mdu.map_file.is_absolute()
+        else template_mdu.output_dir / template_mdu.map_file
+    )
+    rebased_mdu = MduInfo(
+        mdu_path=_rebase_path(template_mdu.mdu_path, source_folder, folder),
+        refdate=template_mdu.refdate,
+        tunit=template_mdu.tunit,
+        tstart=template_mdu.tstart,
+        tstop=template_mdu.tstop,
+        tzone=template_mdu.tzone,
+        output_dir=_rebase_path(template_mdu.output_dir, source_folder, folder),
+        map_file=_rebase_path(source_map, source_folder, folder),
+        net_file=_rebase_optional_path(template_mdu.net_file, source_folder, folder),
+        mor_file=_rebase_optional_path(template_mdu.mor_file, source_folder, folder),
+        sed_file=_rebase_optional_path(template_mdu.sed_file, source_folder, folder),
+        gravity=template_mdu.gravity,
+        water_density=template_mdu.water_density,
+        tzone_explicit=template_mdu.tzone_explicit,
+    )
+    return ModelInput(
+        mdu=rebased_mdu,
+        morphology=template.model_input.morphology,
+        sediment=template.model_input.sediment,
+    )
+
+
+def _rebase_optional_path(
+    path: Path | None,
+    source_folder: Path,
+    target_folder: Path,
+) -> Path | None:
+    return None if path is None else _rebase_path(path, source_folder, target_folder)
+
+
+def _rebase_path(path: Path, source_folder: Path, target_folder: Path) -> Path:
+    try:
+        relative = path.resolve(strict=False).relative_to(
+            source_folder.resolve(strict=False)
+        )
+    except ValueError:
+        return path
+    return target_folder / relative
 
 
 def _find_mdu(folder: Path) -> tuple[Path | None, tuple[ValidationIssue, ...]]:

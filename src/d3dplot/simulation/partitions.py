@@ -54,8 +54,10 @@ class MapFiles:
 
 def discover_map_files(
     mdu: MduInfo,
+    *,
+    check_headers: bool = False,
 ) -> tuple[MapFiles | None, tuple[ValidationIssue, ...]]:
-    """Find map files from an MDU and verify their NetCDF headers read-only."""
+    """Find map files and optionally verify every NetCDF header read-only."""
     map_path = (
         mdu.map_file if mdu.map_file.is_absolute() else mdu.output_dir / mdu.map_file
     )
@@ -117,6 +119,9 @@ def discover_map_files(
         partitioned = False
     else:
         return None, (_missing_maps_issue(output_dir, "Map files are missing."),)
+
+    if not check_headers:
+        return MapFiles(paths=paths, partitioned=partitioned), ()
 
     issues: list[ValidationIssue] = []
     scipy_io: _SciPyIONetCDFModule | None = None

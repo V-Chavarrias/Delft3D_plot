@@ -40,7 +40,7 @@ Document map:
 | Item | Location | State |
 |------|----------|-------|
 | Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `main` includes the pushed `feat/acceptance-r209` merge (`4b88447`); WP 5.1 acceptance remains incomplete (§13.4); the local topic branch remains; WP 5.5 release automation is on `feat/pypi-release` |
-| Plan (this file) | `docs/architecture.md` | v6.85 |
+| Plan (this file) | `docs/architecture.md` | v6.86 |
 | Licence | `LICENSE` | GPL-3.0 |
 | Synthetic SMT and plain FM test case generator | `tools/synthetic_smt/` | Implemented and verified locally (§13.3) |
 | Land-boundary converter (`.mat` cache → `.ldb`) | `tools/mat_to_ldb.py` | Implemented. Used to recreate the Maas land boundary (D45) |
@@ -281,6 +281,7 @@ Status: **A** = agreed with the user; **P** = proposed in this plan and awaiting
 | D92 | Build or reuse one `grid.nc`/`merge_plan.nc` pair per simulation from sub-run 0, and build or reuse `times.nc` from `time`/`morft` metadata across all sub-runs; do not rescan later-subrun topology in `inspect`, `validate`, or plotting | The grids are invariant between sub-runs; different simulations have separate caches, and the expensive grid metadata is not needed to select or plot time-varying values | A |
 | D93 | Persist every valid-configuration validation or inspection report as a timestamped, guarded file under the reference output root's `tables/`; use the requested text/JSON format for validation and text for inspection | Reports must remain available after the command exits without shell redirection; model inputs stay read-only and output writes remain guarded | A |
 | D94 | `merge_plan.nc` contains one simulation-wide mapping with no `plan_of_subrun` or plan dimension; all SMT sub-runs and the single plain-FM sub-run use it | Different simulations can have different grids, but an SMT simulation does not change grid between sub-runs | A |
+| D95 | SMT discovery reads/parses the MDU, `.mor`, and `.sed` metadata only from sub-run 0 and rebases that template for later sub-runs; opening every map file briefly for NetCDF-header validation is optional and disabled by default via `check_map_headers` | SMT sub-runs share model-input settings; thousands of network-file opens are unnecessary for normal discovery | A |
 
 ## 3. Review of the plan (v6)
 
@@ -808,7 +809,10 @@ src/d3dplot/
 **SMT**:
 * sub-runs are `output/<n>` sorted **numerically** (not alphabetically: `10` comes after `9`);
 * the numbering must be contiguous (V-SIM-010);
-* inside each sub-run the MDU is chosen with the FM rule.
+* sub-run 0's MDU is chosen with the FM rule; its MDU, `.mor`, and `.sed`
+  metadata is reused for later sub-runs with paths rebased to each folder.
+  Status checks for template-based sub-runs do not apply per-sub-run MDU
+  stop-time bounds.
 
 Inside an SMT sub-run, relative paths in the MDU are resolved against the sub-run folder (e.g. `SedFile = ../../sed/…`).
 
@@ -829,7 +833,10 @@ Inside an SMT sub-run, relative paths in the MDU are resolved against the sub-ru
 **Output files**:
 * partitioned: `<output_dir>/<stem>_<pppp>_map.nc` with consecutive `pppp`;
 * otherwise: `<stem>_map.nc`.
-* Discovery opens each map header read-only. NetCDF3 classic/64-bit-offset headers use SciPy's memory-mapped reader; other formats use netCDF4. A header that cannot be parsed reports V-OUT-002.
+* Discovery enumerates map files and checks partition numbering by default. When
+  `check_map_headers: true`, it also opens each map header read-only. NetCDF3
+  classic/64-bit-offset headers use SciPy's memory-mapped reader; other formats
+  use netCDF4. A header that cannot be parsed reports V-OUT-002.
 
 The partition count must be equal in all sub-runs (V-OUT-003).
 
@@ -2465,6 +2472,7 @@ The complete model-quantity catalog (all v1 raw and derived registry entries, al
 
 | Version | Content |
 |---------|---------|
+| v6.86 | Reuse first-sub-run MDU/morphology/sediment metadata during SMT discovery and make all-map NetCDF header opens opt-in (`check_map_headers`, D95) |
 | v6.85 | Simplify `merge_plan.nc` to one simulation-wide mapping with no plan dimension or per-sub-run assignment (D94); rebuilds old caches through the schema bump |
 | v6.84 | Persist timestamped validation and inspection reports under the guarded `tables/` output folder by default (D93) |
 | v6.83 | Adopt first-sub-run grid/merge-plan preparation and all-sub-run time metadata scanning (D92); cache reuse now avoids reopening model metadata |

@@ -8,10 +8,15 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import StrEnum
+from functools import partial
 from pathlib import Path
 
 from d3dplot.paths import resolve_path_preserving_drive
-from d3dplot.simulation.subrun import SubRun, discover_subrun
+from d3dplot.simulation.subrun import (
+    SubRun,
+    discover_subrun,
+    discover_subrun_from_template,
+)
 from d3dplot.validate.report import ValidationIssue, ValidationReport
 
 _MAX_DISCOVERY_WORKERS = 64
@@ -36,6 +41,8 @@ class Simulation:
 
 def discover_simulation(
     path: Path,
+    *,
+    check_map_headers: bool = False,
 ) -> tuple[Simulation | None, ValidationReport]:
     """Discover one plain-FM or SMT simulation without modifying its inputs."""
     root = resolve_path_preserving_drive(path)
@@ -87,7 +94,18 @@ def discover_simulation(
         subrun_folders = [(0, root)]
 
     subruns: list[SubRun] = []
-    for subrun, subrun_issues in _discover_subruns(subrun_folders):
+    discovered_subruns = (
+        _discover_smt_subruns(
+            subrun_folders,
+            check_map_headers=check_map_headers,
+        )
+        if kind is SimulationKind.SMT
+        else _discover_subruns(
+            subrun_folders,
+            check_map_headers=check_map_headers,
+        )
+    )
+    for subrun, subrun_issues in discovered_subruns:
         issues.extend(subrun_issues)
         if subrun is not None:
             subruns.append(subrun)
@@ -103,22 +121,76 @@ def discover_simulation(
 
 def _discover_subruns(
     subrun_folders: list[tuple[int, Path]],
+    *,
+    check_map_headers: bool,
 ) -> list[tuple[SubRun | None, tuple[ValidationIssue, ...]]]:
     if not subrun_folders:
         return []
 
     worker_count = min(_MAX_DISCOVERY_WORKERS, len(subrun_folders))
     if worker_count == 1 or len(subrun_folders) < _MIN_SUBRUNS_FOR_PARALLEL:
-        return [discover_subrun(folder, index) for index, folder in subrun_folders]
+        return [
+            discover_subrun(
+                folder,
+                index,
+                check_map_headers=check_map_headers,
+            )
+            for index, folder in subrun_folders
+        ]
 
+    discover = partial(discover_subrun, check_map_headers=check_map_headers)
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
         return list(
             executor.map(
-                discover_subrun,
+                discover,
                 (folder for _, folder in subrun_folders),
                 (index for index, _ in subrun_folders),
             )
         )
+
+
+def _discover_smt_subruns(
+    subrun_folders: list[tuple[int, Path]],
+    *,
+    check_map_headers: bool,
+) -> list[tuple[SubRun | None, tuple[ValidationIssue, ...]]]:
+    """Read SMT model inputs once and reuse the first sub-run as a template."""
+    if not subrun_folders:
+        return []
+    first_index, first_folder = subrun_folders[0]
+    first = discover_subrun(
+        first_folder,
+        first_index,
+        check_map_headers=check_map_headers,
+    )
+    template, _ = first
+    if template is None:
+        return [first]
+
+    remaining = subrun_folders[1:]
+    if not remaining:
+        return [first]
+    discover = partial(
+        discover_subrun_from_template,
+        template,
+        check_map_headers=check_map_headers,
+    )
+    worker_count = min(_MAX_DISCOVERY_WORKERS, len(remaining))
+    if worker_count == 1 or len(remaining) < _MIN_SUBRUNS_FOR_PARALLEL:
+        discovered = [discover(folder, index) for index, folder in remaining]
+    else:
+        with ThreadPoolExecutor(
+            max_workers=worker_count,
+            thread_name_prefix="d3dplot-discovery",
+        ) as executor:
+            discovered = list(
+                executor.map(
+                    discover,
+                    (folder for _, folder in remaining),
+                    (index for index, _ in remaining),
+                )
+            )
+    return [first, *discovered]
 
 
 def _integer_subrun_folders(

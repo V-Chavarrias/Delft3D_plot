@@ -255,6 +255,13 @@ class ProjectConfig(ConfigModel):
         default=True,
         description=("Compare bed levels at duplicate SMT restart-boundary outputs."),
     )
+    check_map_headers: bool = Field(
+        default=False,
+        description=(
+            "Open every discovered map file briefly during discovery to verify "
+            "its NetCDF header."
+        ),
+    )
     analyses: list[AnalysisConfig] = Field(
         min_length=1,
         description="Built-in analyses to run.",

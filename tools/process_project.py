@@ -79,7 +79,10 @@ def _process_project(configuration_path: Path, *, serial: bool) -> int:
         configuration_path=configuration_path,
     ) as diagnostics:
         diagnostics.info(f"Starting simulation discovery: {simulation_config.path}.")
-        simulation, discovery_report = discover_simulation(simulation_config.path)
+        simulation, discovery_report = discover_simulation(
+            simulation_config.path,
+            check_map_headers=project.check_map_headers,
+        )
         diagnostics.info(
             "Simulation discovery finished: "
             f"found={simulation is not None}; "

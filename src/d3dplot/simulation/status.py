@@ -298,6 +298,7 @@ def _detect_subrun_status_for_model(
         subrun.map_files,
         now=now,
         stale_after=stale_after,
+        check_mdu_stop=not subrun.model_input_reused,
     )
 
 
@@ -368,6 +369,7 @@ def detect_subrun_status(
     *,
     now: datetime | None = None,
     stale_after: timedelta = DEFAULT_STATUS_STALE_AFTER,
+    check_mdu_stop: bool = True,
 ) -> SubRunStatus:
     """Detect one FM sub-run from map metadata and the tails of its ``.dia`` files."""
     checked_at = _as_utc(now if now is not None else datetime.now(UTC))
@@ -395,7 +397,7 @@ def detect_subrun_status(
     elif (
         latest_modified is not None
         and checked_at - latest_modified >= stale_after
-        and _is_before_mdu_stop(metadata, mdu)
+        and (not check_mdu_stop or _is_before_mdu_stop(metadata, mdu))
     ):
         state = SimulationState.STOPPED
     else:

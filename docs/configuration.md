@@ -72,6 +72,9 @@ keeps the output and masks affected faces, `skip` omits it, and `error` rejects
 it. `check_boundary_duplicates` defaults to `true` and compares bed levels at
 duplicate SMT restart outputs; mismatched `morft` is an error (`V-OUT-032`) and
 different bed levels are a warning (`V-OUT-033`).
+`check_map_headers` defaults to `false`; set it to `true` to open every
+discovered map file briefly during discovery and verify its NetCDF header. The
+default avoids thousands of network-file opens for large SMT runs.
 
 Map drawing options belong to the shared `map` block. In particular, use
 `map.render` (`polygons`, `raster`, or `auto`) for map rendering. Global figure
