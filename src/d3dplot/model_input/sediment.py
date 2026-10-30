@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from math import isfinite, sqrt
 from pathlib import Path
 
 from d3dplot.model_input.ini import (
@@ -26,6 +27,22 @@ class SedimentFraction:
     minimum_diameter_m: float | None
     maximum_diameter_m: float | None
     solid_density_kg_m3: float | None
+
+    @property
+    def effective_diameter_m(self) -> float | None:
+        """Return SedDia or Matlab-compatible geometric mean of a diameter range."""
+        if self.diameter_m is not None:
+            return self.diameter_m
+        if (
+            self.minimum_diameter_m is None
+            or self.maximum_diameter_m is None
+            or self.minimum_diameter_m <= 0
+            or self.maximum_diameter_m <= 0
+            or not isfinite(self.minimum_diameter_m)
+            or not isfinite(self.maximum_diameter_m)
+        ):
+            return None
+        return sqrt(self.minimum_diameter_m * self.maximum_diameter_m)
 
 
 @dataclass(frozen=True, slots=True)

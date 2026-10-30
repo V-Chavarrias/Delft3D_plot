@@ -322,6 +322,7 @@ def test_self_intersecting_segment_is_rejected() -> None:
         )
 
     assert error.value.code == "V-SMB-010"
+    assert error.value.geometry is not None
 
     permitted = build_segment_geometry(
         points,
@@ -331,3 +332,43 @@ def test_self_intersecting_segment_is_rejected() -> None:
         allow_invalid_segments=True,
     )
     assert permitted.invalid_segment_indices
+
+
+def test_invalid_segment_diagnostic_writes_figure(tmp_path: Path) -> None:
+    from d3dplot.analyses.river_km_statistics.diagnostic import (
+        write_invalid_segment_diagnostic,
+    )
+    from d3dplot.config.figure import FigureConfig
+    from d3dplot.store import OutputLayout, initialize_output_root
+
+    points = tuple(
+        RiverKmPoint(
+            x=float(x),
+            y=float(y),
+            label="A",
+            km=float(km),
+            km_text=str(km),
+        )
+        for km, (x, y) in enumerate(((0, 0), (0, 1), (0, 0), (0, 1)))
+    )
+    with pytest.raises(RiverKmGeometryError) as error:
+        build_segment_geometry(
+            points, [0.5, 1.5, 2.5], branches=["A"], half_width_m=10.0
+        )
+
+    geometry = error.value.geometry
+    assert geometry is not None
+    layout = OutputLayout(tmp_path / "d3dplot")
+    guard = initialize_output_root(layout, tool_version="test")
+    output = write_invalid_segment_diagnostic(
+        geometry,
+        segment_index=geometry.invalid_segment_indices[0],
+        region_name="region",
+        km_set_name="250m",
+        layout=layout,
+        guard=guard,
+        style=FigureConfig(),
+        fingerprint="test",
+    )
+
+    assert output.is_file()

@@ -148,6 +148,7 @@ def test_sediment_reader_supports_diameter_ranges(tmp_path: Path) -> None:
     assert fraction.diameter_m is None
     assert fraction.minimum_diameter_m == pytest.approx(0.0001)
     assert fraction.maximum_diameter_m == pytest.approx(0.001)
+    assert fraction.effective_diameter_m == pytest.approx((0.0001 * 0.001) ** 0.5)
     assert fraction.solid_density_kg_m3 == pytest.approx(2600.0)
 
 

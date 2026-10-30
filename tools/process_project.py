@@ -22,11 +22,17 @@ from d3dplot.config.selections import LayersSelection
 from d3dplot.execution.diagnostics import DiagnosticLog
 from d3dplot.execution.orchestrator import run_process_stage
 from d3dplot.execution.tasks import AnalysisTimeSelection, plan_process_tasks
-from d3dplot.simulation.discover import discover_simulation
-from d3dplot.simulation.inspection import inspect_simulation
+from d3dplot.simulation.discover import Simulation, discover_simulation
+from d3dplot.simulation.inspection import (
+    InspectionResult,
+    inspect_simulation,
+)
 from d3dplot.simulation.time_axis import TimeAxis, TimeSelectionResult
 from d3dplot.store import OutputLayout, initialize_output_root
-from d3dplot.validate import ValidationReport, write_validation_report
+from d3dplot.validate import (
+    ValidationReport,
+    write_validation_report,
+)
 from d3dplot.variables.context import QuantityRequest
 
 
@@ -60,7 +66,12 @@ def _quantity_requests(
     )
 
 
-def _process_project(configuration_path: Path, *, serial: bool) -> int:
+def _process_project(
+    configuration_path: Path,
+    *,
+    serial: bool,
+    reuse_inspection_cache: bool = False,
+) -> int:
     project = load_config(configuration_path)
     if len(project.simulations) != 1:
         raise ValueError(
@@ -103,19 +114,31 @@ def _process_project(configuration_path: Path, *, serial: bool) -> int:
             diagnostics.info(f"Validation report written: {validation_report_path}.")
             raise ValueError(discovery_report.to_text())
 
-        diagnostics.info(
-            f"Starting output inspection: simulation={simulation_config.label}."
-        )
-        inspection, inspection_report = inspect_simulation(
-            simulation,
-            layout,
-            crs=project.crs,
-            time_zone=(
-                str(project.time_zone) if project.time_zone is not None else None
-            ),
-            check_boundary_duplicates=project.check_boundary_duplicates,
-            forbidden_roots=project.output.forbidden_roots,
-        )
+        inspection: InspectionResult | None
+        inspection_report: ValidationReport
+        if reuse_inspection_cache:
+            diagnostics.warning(
+                "Reusing the existing inspection cache without revalidating "
+                "current model-output metadata."
+            )
+            inspection, inspection_report = _reuse_inspection_cache(
+                simulation,
+                layout,
+            )
+        else:
+            diagnostics.info(
+                f"Starting output inspection: simulation={simulation_config.label}."
+            )
+            inspection, inspection_report = inspect_simulation(
+                simulation,
+                layout,
+                crs=project.crs,
+                time_zone=(
+                    str(project.time_zone) if project.time_zone is not None else None
+                ),
+                check_boundary_duplicates=project.check_boundary_duplicates,
+                forbidden_roots=project.output.forbidden_roots,
+            )
         diagnostics.info(
             "Output inspection finished: "
             f"valid={inspection_report.is_valid}; "
@@ -282,6 +305,35 @@ def _process_project(configuration_path: Path, *, serial: bool) -> int:
     return subprocess.run(plot_command, check=False).returncode
 
 
+def _reuse_inspection_cache(
+    simulation: Simulation,
+    layout: OutputLayout,
+) -> tuple[InspectionResult, ValidationReport]:
+    """Return existing inspection paths without reading model-output metadata."""
+    cache_paths = (
+        layout.cache / "merge_plan.nc",
+        layout.cache / "times.nc",
+        layout.cache / "grid.nc",
+    )
+    missing = tuple(path for path in cache_paths if not path.is_file())
+    if missing:
+        missing_text = ", ".join(str(path) for path in missing)
+        raise ValueError(
+            "Cannot reuse the inspection cache; missing file(s): " + missing_text
+        )
+    return (
+        InspectionResult(
+            merge_plan_path=cache_paths[0],
+            times_path=cache_paths[1],
+            grid_paths=(cache_paths[2],),
+            reference_subrun=simulation.subruns[0].index,
+            cache_reused=True,
+            duration_seconds=0.0,
+        ),
+        ValidationReport(),
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
@@ -299,9 +351,21 @@ def main() -> int:
         action="store_true",
         help="Run tasks serially instead of using the configured executor.",
     )
+    parser.add_argument(
+        "--reuse-inspection-cache",
+        action="store_true",
+        help=(
+            "Reuse existing grid, merge-plan, and time caches without "
+            "rescanning model output."
+        ),
+    )
     arguments = parser.parse_args()
     configuration_path = arguments.configuration.expanduser().resolve(strict=True)
-    return _process_project(configuration_path, serial=arguments.serial)
+    return _process_project(
+        configuration_path,
+        serial=arguments.serial,
+        reuse_inspection_cache=arguments.reuse_inspection_cache,
+    )
 
 
 if __name__ == "__main__":

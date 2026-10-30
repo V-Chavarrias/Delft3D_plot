@@ -520,7 +520,10 @@ class Map2DTaskProcessor:
                         else ()
                     )
                     fraction_diameters_m = (
-                        tuple(item.diameter_m for item in model_sediment.fractions)
+                        tuple(
+                            item.effective_diameter_m
+                            for item in model_sediment.fractions
+                        )
                         if model_sediment is not None
                         else ()
                     )
@@ -539,8 +542,7 @@ class Map2DTaskProcessor:
                                     code=error.code,
                                     level="error",
                                     location=(
-                                        f"{work.analysis_key}/"
-                                        f"{request.requested_name}"
+                                        f"{work.analysis_key}/{request.requested_name}"
                                     ),
                                     message=str(error),
                                     hint=(

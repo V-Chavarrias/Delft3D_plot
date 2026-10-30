@@ -22,9 +22,16 @@ _shapely_geometry: Any = import_module("shapely.geometry")
 class RiverKmGeometryError(ValueError):
     """River-km segment geometry cannot be constructed safely."""
 
-    def __init__(self, message: str, *, code: str = "V-RKM-005") -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "V-RKM-005",
+        geometry: RiverKmSegmentGeometry | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
+        self.geometry = geometry
 
 
 @dataclass(frozen=True, slots=True)
@@ -280,14 +287,7 @@ def build_segment_geometry(
         for index, coordinates in enumerate(polygons)
         if not _shapely_geometry.Polygon(coordinates).is_valid
     )
-    if invalid_segment_indices and not allow_invalid_segments:
-        index = invalid_segment_indices[0]
-        raise RiverKmGeometryError(
-            f"River-km segment {index} is an invalid or self-intersecting polygon.",
-            code="V-SMB-010",
-        )
-
-    return RiverKmSegmentGeometry(
+    result = RiverKmSegmentGeometry(
         provider=provider.name,
         centres_km=retained_centres,
         edges_km=corrected_edges,
@@ -303,3 +303,11 @@ def build_segment_geometry(
         invalid_segment_indices=invalid_segment_indices,
         removed_centres_km=removed_centres,
     )
+    if invalid_segment_indices and not allow_invalid_segments:
+        index = invalid_segment_indices[0]
+        raise RiverKmGeometryError(
+            f"River-km segment {index} is an invalid or self-intersecting polygon.",
+            code="V-SMB-010",
+            geometry=result,
+        )
+    return result

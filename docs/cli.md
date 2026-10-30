@@ -151,7 +151,10 @@ The helper processes configured `map2d` and `river_km_statistics` quantities
 then invokes the regular `d3dplot plot` stage to create the configured figures.
 It writes guarded caches beneath `output.root`, supports `vertical: all` or
 explicit `vertical.layers`, and rebuilds all selected quantity caches
-regardless of the configured reprocess policy. It opens guarded `.dia` and
+regardless of the configured reprocess policy. Use
+`--reuse-inspection-cache` only when intentionally processing against the
+existing grid, merge-plan, and time caches without rechecking model output. It
+opens guarded `.dia` and
 debug `.log` files before simulation discovery and inspection, so preflight
 failures are recorded under `output.root/<label>/d3dplot/logs`. Add `--serial`
 to run sequentially for debugging. It does not modify model or measurement

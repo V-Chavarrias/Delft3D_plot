@@ -68,7 +68,7 @@ class QuantityContext:
         return cls(
             gravity_m_s2=model_input.mdu.gravity,
             water_density_kg_m3=model_input.mdu.water_density,
-            sediment_diameters_m=tuple(item.diameter_m for item in fractions),
+            sediment_diameters_m=tuple(item.effective_diameter_m for item in fractions),
             sediment_densities_kg_m3=tuple(
                 item.solid_density_kg_m3 for item in fractions
             ),

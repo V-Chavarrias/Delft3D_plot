@@ -24,6 +24,9 @@ from d3dplot.analyses.river_km_statistics.config import (
     KmRangeConfig,
     RiverKmStatisticsConfig,
 )
+from d3dplot.analyses.river_km_statistics.diagnostic import (
+    write_invalid_segment_diagnostic,
+)
 from d3dplot.execution.cache import CacheFingerprintReadError, read_cache_fingerprints
 from d3dplot.paths import resolve_path_preserving_drive
 from d3dplot.river_km.file import (
@@ -817,6 +820,38 @@ def prepare_region_segments(
             except RegionPolygonError as error:
                 raise RiverKmStatisticsError(str(error), code=error.code) from error
             except RiverKmGeometryError as error:
+                if (
+                    error.geometry is not None
+                    and error.geometry.invalid_segment_indices
+                ):
+                    segment_index = error.geometry.invalid_segment_indices[0]
+                    try:
+                        diagnostic_path = write_invalid_segment_diagnostic(
+                            error.geometry,
+                            segment_index=segment_index,
+                            region_name=region_config.name,
+                            km_set_name=km_set_name,
+                            layout=layout,
+                            guard=guard,
+                            style=config.figure,
+                            fingerprint=fingerprint,
+                        )
+                    except (
+                        OSError,
+                        RuntimeError,
+                        TypeError,
+                        ValueError,
+                    ) as diagnostic_error:
+                        _LOGGER.error(
+                            "Could not write invalid river-km segment diagnostic "
+                            "figure: %s.",
+                            diagnostic_error,
+                        )
+                    else:
+                        _LOGGER.error(
+                            "Wrote invalid river-km segment diagnostic figure: %s.",
+                            diagnostic_path,
+                        )
                 raise RiverKmStatisticsError(str(error), code=error.code) from error
             except RegionAssignmentError as error:
                 raise RiverKmStatisticsError(str(error), code=error.code) from error

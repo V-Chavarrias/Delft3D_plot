@@ -43,7 +43,7 @@ Document map:
 | Item | Location | State |
 |------|----------|-------|
 | Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `main` includes the pushed `feat/acceptance-r209` merge (`4b88447`); WP 5.1 acceptance remains incomplete (§13.4); the local topic branch remains; WP 5.5 release automation is on `feat/pypi-release` |
-| Plan (this file) | `docs/architecture.md` | v6.89 |
+| Plan (this file) | `docs/architecture.md` | v6.90 |
 | Licence | `LICENSE` | GPL-3.0 |
 | Synthetic SMT and plain FM test case generator | `tools/synthetic_smt/` | Implemented and verified locally (§13.3) |
 | Land-boundary converter (`.mat` cache → `.ldb`) | `tools/mat_to_ldb.py` | Implemented. Used to recreate the Maas land boundary (D45) |
@@ -288,6 +288,7 @@ Status: **A** = agreed with the user; **P** = proposed in this plan and awaiting
 | D96 | When `track: MA` selects the Maas provider, use tag `MA` for km ≤ 230.0 and `BM` for km > 230.0, even when the input file does not contain `BM` (coordinate lookup then reports missing branch data) | The user confirmed the Maas input convention; explicit track selection takes precedence over file tags | A |
 | D97 | Rijntakken track selection follows Matlab `branch_rijntakken.m` defaults: Waal-family tracks (`WA`, `WL`, `BO`, `NI`) use `WA` above km 867 and do not switch to `BO`/`NI` unless a future explicit option enables Matlab's `NI_BO` argument | Preserve the default Matlab call used by `gdm_load_rkm_polygons.m`; do not infer optional branches from file tags | A |
 | D98 | River-km geometry construction enables Matlab-style linear endpoint extrapolation when a selected branch's requested km lies just outside its available point range; direct provider calls remain strict, and each extrapolation is logged | Matlab `convert2rkm` extrapolates from the first/last branch segment; this is needed for the Maas MA/BM boundary gap | A |
+| D99 | Reuse parsed first-sub-run sediment metadata for all SMT sub-runs; when `.sed` provides `SedMinDia`/`SedMaxDia`, use their geometric mean as the effective diameter, matching Matlab `D3D_read_sed` | The referenced sediment file contains diameter ranges rather than `SedDia`; rereading later sub-runs is unnecessary and left derived quantities without diameters | A |
 
 ## 3. Review of the plan (v6)
 
@@ -833,7 +834,7 @@ Inside an SMT sub-run, relative paths in the MDU are resolved against the sub-ru
 | `output_dir` | `model.output.outputdir` | default `DFM_OUTPUT_<stem>` |
 | `map_file` | `model.output.mapfile` | default `<stem>_map.nc`; partitions `<stem>_<pppp>_map.nc` |
 | `net_file` | `model.geometry.netfile` | |
-| `mor_file`, `sed_file` | `model.sediment.morfile`, `model.sediment.sedfile` | then `.mor` → `MorFac`, `MorStt`; `.sed` → per fraction `Name`, `SedTyp`, `SedDia` or `SedMinDia`/`SedMaxDia`, **`RhoSol`** (D53) with the INI parser |
+| `mor_file`, `sed_file` | `model.sediment.morfile`, `model.sediment.sedfile` | then `.mor` → `MorFac`, `MorStt`; `.sed` → per fraction `Name`, `SedTyp`, `SedDia` or `SedMinDia`/`SedMaxDia`, **`RhoSol`** (D53) with the INI parser; a min/max range yields `sqrt(SedMinDia*SedMaxDia)` |
 | `gravity`, `water_density` | `model.physics.ag`, `model.physics.rhomean` | D53; defaults 9.81 and 1000 when absent |
 
 **Output files**:
@@ -2478,6 +2479,7 @@ The complete model-quantity catalog (all v1 raw and derived registry entries, al
 
 | Version | Content |
 |---------|---------|
+| v6.90 | Reuse first-sub-run sediment metadata and derive effective diameters from `SedMinDia`/`SedMaxDia` using the Matlab geometric mean (D99) |
 | v6.89 | Enable and log Matlab-style endpoint extrapolation during river-km geometry construction (D98) |
 | v6.88 | Match Matlab's default Rijntakken track switch rules and default Waal branch behavior (D97) |
 | v6.87 | Use explicit Maas track selection and switch from `MA` to `BM` above km 230.0, recording the branch rule in the processing log (D96) |
