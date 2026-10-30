@@ -683,9 +683,11 @@ def prepare_region_segments(
             code="V-CFG-001",
         )
     _LOGGER.info(
-        "Starting river-km geometry preparation: regions=%s; km_sets=%s.",
+        "Starting river-km geometry preparation: regions=%s; km_sets=%s; "
+        "half_width_m=%s.",
         len(config.regions),
         len(config.river_km.sets),
+        config.river_km.half_width_m,
     )
     points, river_fingerprint, input_cache_action, input_cache_issue = (
         _load_river_km_points(config.river_km.file, layout, guard)
