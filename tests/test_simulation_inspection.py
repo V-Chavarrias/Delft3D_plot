@@ -34,6 +34,7 @@ from d3dplot.validate.report import ValidationIssue
 def test_inspection_matches_dfm_tools_and_reuses_cache(
     synthetic_case: Path,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     simulation = _discover(synthetic_case / "simulations" / "r001")
     layout = OutputLayout(tmp_path / "d3dplot")
@@ -49,12 +50,20 @@ def test_inspection_matches_dfm_tools_and_reuses_cache(
     assert report.is_valid
     assert "V-OUT-033" not in {issue.code for issue in report.warnings}
     assert result.reference_subrun == 0
-    assert result.plan_count == 1
     assert result.merge_plan_path.is_file()
     assert result.times_path.is_file()
     assert result.grid_paths[0].is_file()
+    with netCDF4.Dataset(result.merge_plan_path) as merge_plan:
+        assert "plan_of_subrun" not in merge_plan.variables
+        assert "plan" not in merge_plan.dimensions
     _assert_time_axis_matches_expected(synthetic_case, result.times_path)
     _assert_values_match_dfm_tools(simulation, result.merge_plan_path)
+
+    def fail_if_scanned(*args: object, **kwargs: object) -> None:
+        raise AssertionError("cache reuse must not rescan model metadata")
+
+    monkeypatch.setattr(inspection, "_inspect_subrun_metadata", fail_if_scanned)
+    monkeypatch.setattr(inspection, "_inspect_subrun_time_metadata", fail_if_scanned)
 
     reused, reused_report = inspect_simulation(
         simulation,
@@ -95,7 +104,7 @@ def test_elapsed_morphological_seconds_use_map_time_origin(
 
 
 @pytest.mark.integration
-def test_large_simulation_metadata_inspection_uses_bounded_threads(
+def test_large_simulation_time_scan_uses_bounded_threads(
     synthetic_case: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -104,7 +113,7 @@ def test_large_simulation_metadata_inspection_uses_bounded_threads(
     thread_names: set[str] = set()
     thread_lock = Lock()
 
-    def fake_inspect_subrun_metadata(
+    def fake_inspect_subrun_time_metadata(
         subrun: object,
     ) -> tuple[None, tuple[ValidationIssue, ...]]:
         with thread_lock:
@@ -114,11 +123,11 @@ def test_large_simulation_metadata_inspection_uses_bounded_threads(
 
     monkeypatch.setattr(
         inspection,
-        "_inspect_subrun_metadata",
-        fake_inspect_subrun_metadata,
+        "_inspect_subrun_time_metadata",
+        fake_inspect_subrun_time_metadata,
     )
 
-    results = inspection._inspect_subruns_metadata(subruns)
+    results = inspection._inspect_subruns_time_metadata(subruns)
 
     assert results == ((None, ()),) * 8
     assert len(thread_names) > 1
@@ -146,7 +155,7 @@ def test_coordinate_matching_is_reported_for_plain_fm(
 
 
 @pytest.mark.integration
-def test_corrupt_partition_uses_first_time_consistent_reference(
+def test_corrupt_partition_keeps_first_subrun_grid_reference(
     synthetic_case: Path,
     tmp_path: Path,
 ) -> None:
@@ -162,7 +171,7 @@ def test_corrupt_partition_uses_first_time_consistent_reference(
     )
 
     assert result is not None
-    assert result.reference_subrun == 1
+    assert result.reference_subrun == 0
     assert "V-OUT-030" in {issue.code for issue in report.warnings}
     time_axis = TimeAxis.from_cache(result.times_path)
     corrupt_entries = [entry for entry in time_axis.entries if entry.corrupt_partitions]
@@ -278,7 +287,7 @@ def test_invalid_owned_global_number_is_rejected(
 
 
 @pytest.mark.integration
-def test_changed_topology_creates_a_second_merge_plan(
+def test_first_subrun_grid_is_reused_without_topology_rescan(
     synthetic_case: Path,
     tmp_path: Path,
 ) -> None:
@@ -302,8 +311,9 @@ def test_changed_topology_creates_a_second_merge_plan(
     )
 
     assert result is not None
-    assert result.plan_count == 2
-    assert "V-OUT-021" in {issue.code for issue in report.warnings}
+    assert "V-OUT-021" not in {issue.code for issue in report.warnings}
+    with netCDF4.Dataset(result.merge_plan_path) as dataset:
+        assert dataset.getncattr("topology_strategy") == "first_subrun"
 
 
 def _discover(path: Path) -> Simulation:
@@ -346,10 +356,10 @@ def _assert_values_match_dfm_tools(
     numpy = import_module("numpy")
     subrun = simulation.subruns[0]
     with netCDF4.Dataset(merge_plan_path) as plan:
-        offsets = [int(value) for value in plan.variables["partition_offset"][0]]
-        counts = [int(value) for value in plan.variables["partition_n_owned"][0]]
-        owned_local = [int(value) for value in plan.variables["owned_local"][0]]
-        global_positions = [int(value) for value in plan.variables["global_pos"][0]]
+        offsets = [int(value) for value in plan.variables["partition_offset"][:]]
+        counts = [int(value) for value in plan.variables["partition_n_owned"][:]]
+        owned_local = [int(value) for value in plan.variables["owned_local"][:]]
+        global_positions = [int(value) for value in plan.variables["global_pos"][:]]
         n_faces = int(plan.getncattr("n_faces"))
 
     scattered = numpy.full(n_faces, numpy.nan, dtype=numpy.float64)

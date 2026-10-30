@@ -13,7 +13,7 @@ from d3dplot.paths import resolve_path_preserving_drive
 
 _HASH_BLOCK_SIZE = 1024 * 1024
 _DIGEST_SIZE = 32
-CACHE_SCHEMA_VERSION = 2
+CACHE_SCHEMA_VERSION = 3
 
 
 def canonical_json(value: Mapping[str, object]) -> str:

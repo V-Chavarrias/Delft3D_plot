@@ -210,6 +210,16 @@ def test_validate_accepts_registered_and_present_raw_variables(
     assert (
         tmp_path / "generated" / "reference" / "d3dplot" / "cache" / "merge_plan.nc"
     ).is_file()
+    validation_reports = tuple(
+        (tmp_path / "generated" / "reference" / "d3dplot" / "tables").glob(
+            "validation_*.json"
+        )
+    )
+    assert len(validation_reports) == 1
+    assert json.loads(validation_reports[0].read_text(encoding="utf-8")) == {
+        "valid": True,
+        "issues": [],
+    }
     diagnostics = tuple(
         (tmp_path / "generated" / "reference" / "d3dplot" / "logs").glob(
             "d3dplot_*.dia"
@@ -255,10 +265,17 @@ def test_inspect_builds_and_reuses_cache_for_selected_simulation(
     )
 
     assert first.exit_code == 0, first.output
-    assert "smt: 1 merge plan(s)" in first.stdout
+    assert "smt: one merge plan" in first.stdout
     assert "cache built" in first.stdout
     assert (output_root / "smt" / "d3dplot" / "cache" / "merge_plan.nc").is_file()
     assert not (output_root / "plain" / "d3dplot").exists()
+    inspection_reports = tuple(
+        (output_root / "smt" / "d3dplot" / "tables").glob("inspection_*.txt")
+    )
+    assert len(inspection_reports) == 1
+    assert "Validation passed: no issues." in inspection_reports[0].read_text(
+        encoding="utf-8"
+    )
     diagnostics = tuple(
         (output_root / "smt" / "d3dplot" / "logs").glob("d3dplot_*.dia")
     )

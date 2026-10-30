@@ -78,8 +78,11 @@ Validation checks the YAML, simulation inputs, requested variables, and
 available map output. If those checks pass, it also builds or reuses the
 guarded grid, merge-plan, and time-axis inspection caches. `d3dplot inspect
 project.yaml` explicitly builds or refreshes those caches. These commands can
-write diagnostics and caches beneath the configured output root; model inputs
-remain read-only.
+write diagnostics, timestamped reports, and caches beneath the configured
+output root; model inputs remain read-only. Validation reports are written by
+default to `tables/validation_<timestamp>.txt` (or `.json` when
+`--format json` is used). Inspection reports use
+`tables/inspection_<timestamp>.txt`.
 
 The output store only writes inside a marked `d3dplot` output root. A new root
 is marked automatically; a non-empty, unmarked directory is rejected. See

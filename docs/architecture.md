@@ -4,6 +4,8 @@ Status: **v6.82; WP 1.10–1.11, WP 2.1–2.3, WP 3.1–3.5, WP 4.1–4.5, and W
 
 Current local processing: After the first run failed because the configured end at 250 requested km 230.25 outside track `MA`'s [3, 230] range, the local configuration was capped at 230. The follow-up ended during inspection after 2,344 s with 1,754 V-OUT-002 errors reporting missing map files; no process tasks or plotting ran, so the 230-km limit has not yet been validated. Two representative files are now present and readable, with August 2026 timestamps. The logs do not establish whether the inspection failures were caused by transient P-drive access or another scan-time issue.
 
+Inspection now builds the combined grid and merge plan from sub-run 0 only, reads `time`/`morft` metadata from every sub-run, and reuses the three caches before rescanning model metadata when their fingerprints match (D92).
+
 The synthetic overlay-only loop (40 frames × 1,000 measured points; median of 7 `time.perf_counter` runs) took 0.805739 s with profile overlays versus 0.000022 s without, an added 20.143 ms per frame; this excludes model plotting and figure finalisation.
 
 Document map:
@@ -38,7 +40,7 @@ Document map:
 | Item | Location | State |
 |------|----------|-------|
 | Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `main` includes the pushed `feat/acceptance-r209` merge (`4b88447`); WP 5.1 acceptance remains incomplete (§13.4); the local topic branch remains; WP 5.5 release automation is on `feat/pypi-release` |
-| Plan (this file) | `docs/architecture.md` | v6.80 |
+| Plan (this file) | `docs/architecture.md` | v6.85 |
 | Licence | `LICENSE` | GPL-3.0 |
 | Synthetic SMT and plain FM test case generator | `tools/synthetic_smt/` | Implemented and verified locally (§13.3) |
 | Land-boundary converter (`.mat` cache → `.ldb`) | `tools/mat_to_ldb.py` | Implemented. Used to recreate the Maas land boundary (D45) |
@@ -133,7 +135,7 @@ APIs the design relies on (check them first when upgrading):
 13. **WP 1.9** is complete locally on `feat/labels`: the Matlab mapping and translation catalogs are packaged with completed en/nl/es entries, comparison templates, and unit-scale definitions. The API supports project extra dictionaries, datum/fraction formatting, and warned NetCDF metadata fallback. All 100 CI-eligible tests, strict mypy, strict MkDocs, and changed-file Ruff/format checks pass; the wheel contains all three CSV resources.
 14. **WP 1.10** is complete locally on `feat/variables`: the registry covers 10 raw and 23 derived v1 quantities, resolves canonical names, Matlab aliases, and registered NetCDF candidates case-insensitively, and raises V-VAR-001 with canonical suggestions. Generated `docs/variables.md` is tested against the registry; the three missing label translations were added. All 115 CI-eligible tests, strict mypy, changed-file Ruff/format checks, and strict MkDocs pass. The registry is metadata-only; computation callbacks remain WP 2.2a/b.
 15. **WP 1.11** is complete locally on `feat/cli-part-1`: added the `d3dplot` console entry point and `python -m d3dplot`, plus `info`, `variables`, `schema`, `validate`, and `init`. `info`/`variables` read the first map-file header per sub-run for variables and CRS; the initial `validate` scope combined configuration checks, V-VAR name/raw-field availability checks, and simulation discovery without building an inspect cache (D63). `init` writes commented YAML and refuses to overwrite a target. WP 2.1 now adds cache inspection to `validate` and the dedicated `inspect` command (D64).
-16. **WP 2.1 implementation** is on `feat/inspect-phase`: partition identity, topology signatures, time-consistent reference selection, coordinate fallback, merge plans, grid geometry, atomic guarded caches, and CLI integration are implemented. Synthetic tests compare scattered values with dfm_tools, cover cache reuse, plain-FM coordinate matching, corrupt reference selection, invalid identity, and changed topologies; validation also builds/reuses caches when earlier checks have no errors. Read-only r209 discovery found 195 sub-runs and no issues in 200.628 s, but the full inspect run did not finish after more than 20 minutes and was stopped at the user's request. Its output was directed to and cleaned from local temporary storage.
+16. **WP 2.1 implementation** is on `feat/inspect-phase`: sub-run 0 partition identity and topology, first-sub-run merge plan/grid construction, all-sub-run time metadata, atomic guarded caches, and CLI integration are implemented. Synthetic tests compare scattered values with dfm_tools, cover cache reuse without metadata rescanning, plain-FM coordinate matching, corrupt time metadata, and first-sub-run grid reuse; validation also builds/reuses caches when earlier checks have no errors. Read-only r209 discovery found 195 sub-runs and no issues in 200.628 s, but the full inspect run did not finish after more than 20 minutes and was stopped at the user's request. Its output was directed to and cleaned from local temporary storage.
 17. **WP 2.2 implementation** is complete locally on `feat/map-reader-time-axis`: the face/edge `MapReader`, edge merge plan, `times.nc`, fixed-offset precedence, restart-boundary checks, duplicate resolution, selection, cross-simulation matching, and corrupt-output policies are implemented. Local synthetic tests reproduce all nine rows of `expected/time_axis.csv`, verify face/edge scattering and corrupt-partition metadata, and cover V-OUT-030/031/032/033 and V-TIME-002/010/011/012. P-drive acceptance remains deferred until local-data work is complete (D65), with any final model-data run read-only and its `output.root` on a local drive. **WP 2.2a is complete on `feat/quantity-engine`, commit `e890c45`; WP 2.3 is underway on `feat/execution`.**
 18. **WP 2.3 execution foundations** are implemented and locally validated on `feat/execution`: cross-analysis task grouping by simulation/sub-run/time block, stable sharding, fingerprint-policy decisions populated from one-pass NetCDF reads, CPU/memory-aware worker limits, serial and `spawn` executors with failure isolation, worker environment and logging-queue setup, run summaries, and guarded `.dia`/`.log` diagnostics. `validate` and `inspect` record provenance, validation findings, and cache outcomes. `run_process_stage` connects the executor to task diagnostics and guarded atomic run-summary CSV output. The 13 execution tests pass; full end-to-end CLI `run` integration remains.
 19. **WP 3.1 map2d processing** is implemented and locally validated on the synthetic SMT case. The processor requests raw and derived quantities from the quantity engine, writes fingerprinted/guarded NetCDF cache files, records quantity choices in `.dia`, and rejects retained vector dimensions with V-VAR-005. The integration test verifies `water_depth`, `froude_number`, `vorticity`, selected `d50`, and `water_level_rate`.
@@ -218,9 +220,9 @@ Status: **A** = agreed with the user; **P** = proposed in this plan and awaiting
 | D31 | No dask in the processing path. Parallelism only at task level, with single-threaded libraries in workers | Avoids nested parallelism and memory blow-ups | A |
 | D32 | Configuration: pydantic v2 models; YAML read with `yaml.safe_load`; CLI with typer | Typed, schema export | A |
 | D33 | The CRS comes from the configuration when map files have EPSG 0 | `r209` has EPSG 0 | A (v5) |
-| D34 | Validation includes a read-only **inspect** phase that builds the metadata cache. No value processing before a clean report; runtime-only checks are listed explicitly (§7.4) | "Validate first" needs metadata (independent review) | A |
+| D34 | Validation includes a read-only **inspect** phase that builds the required metadata cache from the first sub-run's grid plus every sub-run's time metadata. No value processing starts before a clean report; runtime-only checks are listed explicitly (§7.4) | "Validate first" needs the grid/time metadata, while later-sub-run topology is assumed equal (§7.6) | A |
 | D35 | **Recursive fingerprints** over all result-affecting inputs and upstream artefacts; content hashes for small inputs, stat-based identity for model output (§7.10) | Stale-cache safety (independent review) | A |
-| D36 | Merge plans are validated (partition identity, `globalnr`) and reused only for sub-runs with equal **topology signatures** (§7.6) | Safety for SMT (independent review) | A |
+| D36 | The first sub-run's partition identity, `globalnr`, and topology build the single merge plan reused by every sub-run; later sub-runs provide time/`morft` metadata only and are assumed to share the grid (§7.6) | The grid is invariant across SMT sub-runs; scanning large topology arrays in every sub-run dominated inspection time | A |
 | D37 | Deterministic sharding with a blake2b digest of canonical task keys | Python `hash()` is randomised | A |
 | D38 | Fixed UTC offsets only (no named time zones with DST); CF numeric UTC on disk | D-Flow FM uses offsets | A |
 | D39 | SMB geometry: boundaries inclusive for regions, shared cut lines to the lower segment; invalid or overlapping segments are errors unless overridden | Determinism (independent review) | A |
@@ -276,6 +278,9 @@ Status: **A** = agreed with the user; **P** = proposed in this plan and awaiting
 | D89 | When `morft` is expressed as elapsed seconds (or another supported standalone time unit), decode it using the origin in that map's CF `time` units; retain explicit CF origins on `morft` when present | D-Flow FM output can encode morphological time as elapsed units without an epoch; the hydrodynamic time coordinate provides the shared model origin needed for date-based selection | A |
 | D90 | Log parent-owned phase starts in `.dia`; log task starts/outcomes and detailed river-km, polygon, and profile-measurement input/cache operations in `.log`, flushing each start before the work begins | The user needs Matlab-like visibility into the active operation during long-running processing; keep user-facing diagnostics and detailed technical progress in their existing files | A |
 | D91 | Log map2d and river-km analysis starts/completions, time steps, quantity evaluation and raw reads, and processed-cache writes in `.log`; keep phase summaries in `.dia` | Per-task records alone do not tell the user which analysis or operation is currently active; detailed records make long-running processing observable without changing user-facing diagnostic content | A |
+| D92 | Build or reuse one `grid.nc`/`merge_plan.nc` pair per simulation from sub-run 0, and build or reuse `times.nc` from `time`/`morft` metadata across all sub-runs; do not rescan later-subrun topology in `inspect`, `validate`, or plotting | The grids are invariant between sub-runs; different simulations have separate caches, and the expensive grid metadata is not needed to select or plot time-varying values | A |
+| D93 | Persist every valid-configuration validation or inspection report as a timestamped, guarded file under the reference output root's `tables/`; use the requested text/JSON format for validation and text for inspection | Reports must remain available after the command exits without shell redirection; model inputs stay read-only and output writes remain guarded | A |
+| D94 | `merge_plan.nc` contains one simulation-wide mapping with no `plan_of_subrun` or plan dimension; all SMT sub-runs and the single plain-FM sub-run use it | Different simulations can have different grids, but an SMT simulation does not change grid between sub-runs | A |
 
 ## 3. Review of the plan (v6)
 
@@ -663,7 +668,7 @@ What it tests: plain FM discovery (DIMR with several components), `StartDateTime
                            ▼
   1 validate│ static → discovery → INSPECT → content checks → ValidationReport (§12)  │  seconds–minutes
             │   inspect = read-only scan of model output metadata; builds the        │
-            │   metadata cache: grid, merge plan(s), topology signatures, times,      │
+            │   metadata cache: sub-run 0 grid/merge plan and all-sub-run times,      │
             │   status, parsed small inputs (writes only inside the cache)            │
   2 prepare │ geometry (regions, segments, extents), land boundaries, measurements    │  once per input
   3 process │ (simulation × sub-run) tasks → one cache file per time step             │  parallel
@@ -779,7 +784,7 @@ src/d3dplot/
 2. **Validate** (§12), collecting all issues, in four phases:
    1. **static**: the configuration itself;
    2. **discovery**: folders, MDUs, sub-runs, output file lists (metadata only);
-   3. **inspect**: read-only scan of model-output metadata. It builds the *metadata cache*: `grid.nc`, merge plan(s), topology signatures (§7.6), `times.nc` with quality flags (§7.7), simulation status, and parsed small inputs (river-km files, `.ldb`, region polygons, measurement catalogues). This is the only part of validation that writes, and it writes only inside the cache (§7.17). Results are reused when their fingerprints match;
+   3. **inspect**: read-only scan of model-output metadata. It builds the *metadata cache*: `grid.nc` and one `merge_plan.nc` from sub-run 0, `times.nc` with quality flags from every sub-run (§7.7), simulation status, and parsed small inputs (river-km files, `.ldb`, region polygons, measurement catalogues). Later-subrun topology is assumed equal and is not rescanned. This is the only part of validation that writes, and it writes only inside the cache (§7.17). Results are reused when their fingerprints match;
    4. **content**: variables present, times available within tolerance, corrupt outputs at requested times, river-km ranges, measurement coverage. These use the metadata cache.
    
    Any error stops the run, unless `--force-invalid` is used for debugging. **No value processing starts before a clean report.**
@@ -834,15 +839,17 @@ The partition count must be equal in all sub-runs (V-OUT-003).
 
 dfm_tools does this gluing, but it rebuilds the whole grid every time a sub-run is opened: 75 s for one `r209` sub-run, 195 times. Yet the grid is the same in every sub-run and at every time; only the values change. So the tool does the expensive part **once per simulation** and stores the result. That stored result is the *merge plan*: for each map file, the list "local cell number → position in the full grid". Afterwards, getting the bed level of any sub-run and time means reading that variable from the 44 files and placing the values with the plan: about 1 s instead of 85 s. dfm_tools is still used to build the full grid once, and the result is checked against it.
 
-The rest of this section specifies how the plan is built, validated and used.
+The rest of this section specifies how the plan is built and used. The first
+sub-run is the grid reference for the whole simulation; later sub-runs are
+trusted to use the same local topology and are scanned only for time metadata.
 
-**Partition identity** (checked for every partition file during inspect, V-OUT-022):
+**Partition identity** (checked for every partition file of sub-run 0 during inspect, V-OUT-022):
 * the partition number `p` comes from the file name (`<stem>_<pppp>_map.nc`), and the set of numbers must be `0 … N−1` without gaps;
 * the owned faces of file `p` are those with `mesh2d_flowelem_domain == p`. This assumes D-Flow FM's convention (0-based domain number equal to the file number), which holds for `r209` and the synthetic case. **It is checked, not assumed**: every file must own at least one face, and the domain values found across all files must be exactly `0 … N−1`;
 * `mesh2d_flowelem_globalnr` (when present) must be ≥ 1 (1-based) on owned faces, unique across all owned faces of all partitions, and cover `1 … n_faces` exactly.
 
-**Build a merge plan** (inspect phase) on a reference sub-run: the first sub-run whose partitions pass the time/consistency checks. Sub-run 0 of `r209` would not.
-1. Open the sub-run with `dfm_tools.open_partitioned_dataset(..., drop_variables=["morft"], decode_times=False)` to get the merged `Ugrid2d` with ghost cells removed.
+**Build a merge plan** (inspect phase) on sub-run 0, independently of its time quality.
+1. Open the sub-run with `dfm_tools.open_partitioned_dataset(..., drop_variables=["time", "morft"], decode_times=False)` to get the merged `Ugrid2d` with ghost cells removed.
 2. For every partition `p`: `owned_local = flatnonzero(domain == p)`.
 3. Global position of each owned face in the merged grid:
    * **primary**: by `globalnr`, matched against the merged dataset's `globalnr`;
@@ -850,9 +857,9 @@ The rest of this section specifies how the plan is built, validated and used.
 4. Verify that every merged face is covered exactly once (V-OUT-020).
 5. Write `cache/grid.nc` and `cache/merge_plan.nc` (§9.3).
 
-**Edges** (WP 2.2, D67): map each partition's edge endpoints to the merged grid's nodes by coordinates within 1 mm, then match the endpoint pair to one merged edge. For partitioned output, an edge belongs to the lowest-numbered domain among its adjacent faces; this deterministically selects one copy, including at partition boundaries. A non-partitioned file owns every edge. Store the edge orientation relative to the merged UGRID edge direction, and verify every merged edge is covered exactly once. The edge topology is included in the partition signature so a plan is not reused if local edge ordering changes. Directed edge quantities can apply the stored orientation in the quantity engine.
+**Edges** (WP 2.2, D67): map each partition's edge endpoints to the merged grid's nodes by coordinates within 1 mm, then match the endpoint pair to one merged edge. For partitioned output, an edge belongs to the lowest-numbered domain among its adjacent faces; this deterministically selects one copy, including at partition boundaries. A non-partitioned file owns every edge. Store the edge orientation relative to the merged UGRID edge direction, and verify every merged edge is covered exactly once. The edge topology is included in the sub-run 0 signature. Directed edge quantities can apply the stored orientation in the quantity engine.
 
-**Topology signatures** (one per partition per sub-run, computed for **every** sub-run during inspect): `blake2b` of `(mesh2d_nFaces, mesh2d_flowelem_domain, mesh2d_flowelem_globalnr, mesh2d_face_nodes)` of the partition file. These are small integer arrays (for `r209` about 1–3 s per sub-run). A merge plan is reused for a sub-run only when all its partition signatures equal those of the plan. If they differ, a new plan is built for that group of sub-runs; `merge_plan.nc` can hold several plans, each with the list of sub-runs it serves. If the merged grids differ between plans, the analyses treat them as different grids, and cross-time comparisons regrid as for different simulations (§7.12). This is rare; it is reported as V-OUT-021 (warning).
+**Topology assumption**: the merge-plan topology signature is measured for sub-run 0 and recorded once for the simulation. Later-subrun topology is not compared during inspect because all sub-runs use the simulation-wide plan; if a selected value cannot be read or scattered with the cached plan, the read reports an explicit V-OUT/V-VAR error.
 
 **Reading** (`MapReader.read`):
 * for each partition, open with netCDF4 (`mode="r"`) and read the variable by **named dimensions**: the `VariableSpec` declares the expected dimensions (e.g. `time`, `mesh2d_nFaces`, `nBedLayers`, `nSedTot`). The reader maps them to positions in the file's actual dimension order, slices `time = t` and `face = owned_local`, and transposes to the canonical order. Unexpected dimensions are an error (V-VAR-004);
@@ -1174,7 +1181,7 @@ Every task key contains the subject (and the reference label for simulation diff
 * **Block size**: `block_size = clamp(ceil(n_times / (workers × 4)), 1, max_block_times)`. The factor 4 gives enough tasks for load balancing. `max_block_times` (default 50) limits memory. A sub-run never shares a task with another sub-run. Configurable: `execution.process_block_times`.
 * **Cost of a task**: open the map files of its sub-run (for `r209`, 44 files ≈ 1 s, §5.3) and read the requested times with the merge plan (≈ 1 s per variable and time). The merge plan itself is built once per simulation in the inspect phase, never per task. Opening the files once per block instead of once per sub-run costs about 1 s per extra block, which is negligible against the read time of a block.
 * **Very large single times** (hundreds of millions of faces, beyond v1): a block could be split further by partition. Not needed for the expected models; the task interface allows it later.
-* **Inspect phase**: reading `time`/`morft` and topology signatures is parallel per (sub-run × partition-file group), so a plain FM run with 44 partitions is also inspected in parallel.
+* **Inspect phase**: topology and merge-plan construction read sub-run 0 only; reading `time`/`morft` from the remaining sub-runs is parallel per (sub-run × partition-file group), so a plain FM run with 44 partitions still has one grid scan and one time scan.
 * **Plot stage**: independent of the model kind; parallel over plot groups.
 
 **Discovery validation** is the I/O-bound exception to the default process executor: for at least eight sub-runs it uses a `ThreadPoolExecutor` with up to 64 workers, one task per sub-run; smaller simulations are serial. There is no nested parallelism. netCDF4 access is protected by a lock because its native reader is not thread-safe.
@@ -1543,14 +1550,14 @@ The YAML alternative has the same fields plus optional `type`, `crs`, `value_fie
 
 * `grid.nc`: UGRID-1.0 `mesh2d` as written by xugrid (`Ugrid2d.to_dataset()`), plus `mesh2d_flowelem_ba` (face area), `mesh2d_face_x/y` and global attribute `crs` (from the configuration if EPSG 0).
 * `merge_plan.nc`:
-  * dimensions `plan`, `partition`, `owned_face`, `owned_edge`, `subrun`;
-  * `plan_of_subrun(subrun)`;
-  * per plan, faces: `partition_offset(plan, partition)`, `partition_n_owned(plan, partition)`, `owned_local(plan, owned_face)` (local face index in the partition file, 0-based), `global_pos(plan, owned_face)`, `grid_file(plan)`;
-  * per plan, edges (D67): `edge_partition_offset`, `edge_partition_n_owned`, `edge_owned_local(plan, owned_edge)`, `edge_global_pos(plan, owned_edge)`, and `edge_orientation(plan, owned_edge)` (+1/−1 relative to the merged UGRID edge direction);
-  * `signature(subrun, partition)` (hex string, §7.6);
-  * attributes `n_faces`, `n_edges`, `reference_subrun`, `matching` (`globalnr` | `coordinates`); `matching` describes the reference plan.
+  * dimensions `partition`, `owned_face`, and `owned_edge`;
+  * faces: `partition_offset(partition)`, `partition_n_owned(partition)`, `owned_local(owned_face)` (local face index in the partition file, 0-based), and `global_pos(owned_face)`;
+  * edges (D67): `edge_partition_offset`, `edge_partition_n_owned`, `edge_owned_local(owned_edge)`, `edge_global_pos(owned_edge)`, and `edge_orientation(owned_edge)` (+1/−1 relative to the merged UGRID edge direction);
+  * `signature(partition)` (hex string, §7.6);
+  * attributes `n_faces`, `n_edges`, `reference_subrun`, `matching` (`globalnr` | `coordinates`), `grid_file`, and the cache fingerprint/schema metadata.
   
-  Most simulations have a single plan.
+  There is one merge plan per simulation. Different simulations have separate
+  cache roots and therefore separate grid and merge-plan files.
 * `times.nc`: dimensions `time` and `partition`; `time(time)` is CF numeric UTC seconds since 1970-01-01 with a proleptic Gregorian calendar; variables `subrun(time)`, `local_index(time)`, `morph_time(time)` (same units/calendar as `time`), and `corrupt_partition(time, partition)` (int8, 1 = corrupt); global attributes include `source_utc_offset` and the cache fingerprint/schema metadata.
 * `grid.nc` also stores the grid geometry for spatial operators (§7.9a): `face_edges(face, max_edges)`, `face_edge_sign(face, max_edges)` (+1/−1 orientation), `edge_length(edge)`, `face_area(face)`.
 
@@ -1744,14 +1751,14 @@ header per sub-run for raw variable names and CRS. `info` reports per-sub-run
 partition counts and last hydrodynamic/morphological times; `--json` returns the
 same summary as structured JSON. `variables` lists detected raw NetCDF names,
 matching canonical registry entries and their aliases, plus the registered
-derived quantities. `inspect` checks partition identity and topology, selects a
-time-consistent reference sub-run, and atomically builds or reuses each
-simulation's grid and merge-plan caches. It accepts `--simulation <label>` to
-limit the run. `validate` runs configuration checks, validates known variable
-names and raw-field availability, and discovers the configured simulations;
-when those earlier checks have no errors, it also builds or reuses the inspect
-caches. `init` writes a commented starter YAML and refuses to overwrite an
-existing target.
+derived quantities. `inspect` checks partition identity and topology in sub-run
+0, reads time quality from every sub-run, and atomically builds or reuses the
+simulation's grid, merge-plan, and time-axis caches. It accepts
+`--simulation <label>` to limit the run. `validate` runs configuration checks,
+validates known variable names and raw-field availability, and discovers the
+configured simulations; when those earlier checks have no errors, it also
+builds or reuses the inspect caches. `init` writes a commented starter YAML and
+refuses to overwrite an existing target.
 
 `slurm write` writes `config/slurm_array.sh` beneath the reference simulation's
 marked output root; `--dry-run` prints it without creating files. The template
@@ -1793,10 +1800,8 @@ Codes are stable, documented, and tested one by one. **E** = error, **W** = warn
 | V-OUT-002 | E | Map file unreadable (not NetCDF, truncated) |
 | V-OUT-003 | E | Partition count differs between sub-runs |
 | V-OUT-020 | E | Merge plan does not cover each face exactly once, or coordinate matching is ambiguous |
-| V-OUT-021 | W | Topology signatures differ between sub-runs (several merge plans needed) |
 | V-OUT-022 | E | Partition identity: file numbers not `0…N−1`, domain values inconsistent with file numbers, `globalnr` not 1-based/unique/complete |
 | V-OUT-023 | W | Global face numbers are absent; merge-plan matching uses face centres within 1 mm |
-| V-OUT-024 | E | No sub-run has time-consistent partition metadata for a reference merge plan |
 | V-OUT-025 | W | Existing inspect cache is incomplete, unreadable, or stale and is rebuilt |
 | V-OUT-030 | W | Corrupt or inconsistent `time`/`morft` in a partition (lists sub-run, partition, times) |
 | V-OUT-031 | W | Implausible values (> 1e30 or non-finite) in a partition (runtime) |
@@ -2198,7 +2203,7 @@ The WP 1.2a generator and expected-output deliverables are implemented; their di
 
 | WP | Content | Done when |
 |----|---------|-----------|
-| 2.1 | Inspect phase: partition identity, merge plan(s) + `grid.nc`, topology signatures, reference sub-run selection (§7.6, §9.3), guarded cache persistence, `inspect` CLI, and validation integration | Synthetic scattered values equal dfm_tools; cache reuse, coordinate fallback, corrupt reference selection, invalid identity, and changed topology producing two plans are tested; (local) `r209` merge plan built |
+| 2.1 | Inspect phase: sub-run 0 partition identity, one merge plan + `grid.nc`, all-sub-run time metadata + `times.nc` (§7.6, §9.3), guarded cache persistence, `inspect` CLI, and validation integration | Synthetic scattered values equal dfm_tools; cache reuse without metadata rescanning, coordinate fallback, corrupt time metadata, and first-sub-run grid reuse are tested; (local) `r209` merge plan built |
 | 2.2 | Face and edge `MapReader`, edge merge plan (D67), quality checks, `times.nc`, `TimeAxis` (merge, duplicates, tz, selection, matching) | Implemented and tested on local synthetic data: all nine expected `time_axis.csv` rows reproduced; face/edge values scatter to the checked grids; boundary duplicates, corrupt-partition policies, V-OUT-030/031/032/033 and V-TIME-* covered. P-drive acceptance remains deferred per D65 |
 | 2.2a | **Quantity engine** (§7.9a): raw/derived registry, dependency resolution, read-once memory cache, grid geometry in `grid.nc`, use the edge merge plan from WP 2.2, and all 2D quantities marked "v1" in the catalogue of §7.9a (Froude, specific discharge, energy head, Shields number, velocity direction and vector, water-level rate, vorticity, stream functions, total sediment thickness, thresholded morphological active area, sediment transport magnitude (per fraction and summed), bed-load transport magnitude, mean grain sizes, grain-size percentiles); entry point `d3dplot.quantities`. **Generator extension**: the synthetic case gets `mesh2d_ucx`/`ucy` and `mesh2d_u1` (edges) with an analytic vorticity, `mesh2d_czs`, `mesh2d_thlyr`, `mesh2d_sxtot`/`sytot` and `mesh2d_sbcx`/`sbcy` per fraction, and `.sed` diameters and `RhoSol` (one fraction with a different value, to test per-fraction densities); the MDU gets `Ag = 9.813` and `Rhomean = 1000` (as the real runs), plus expected values | Local synthetic acceptance: every raw input is read once per (sub-run, time) when shared; all v1 quantities match hand-computed/analytic values, including vorticity across partition boundaries; the configurable active-area threshold follows the Matlab `Ltot_thres` default and comparison rule; missing dependencies report V-VAR-002 with the quantity chain. Direct-NetCDF acceptance on r209 and Rijn `D16000` remains deferred per D65 |
 | 2.2b | **3D quantities and sampling protocol** (§7.9a, §7.9b, D54, D55): layer dimension in `VariableSpec`, `zw`/`zc` (read or dfm_tools `reconstruct_zw_zcc`), vertical selections (`depth_average` with `z_range`, `elevation`), `velocity_magnitude_layer_mean`, `chloride_mass` (`sal2cl`), residence times (`.sub` with HYDROLIB-core `SubstanceModel`); the `Sampling` protocol with `GridSampling` only (§7.9b, D55). **Generator extension**: a 3D variant of the plain FM synthetic case (sigma layers; `mesh2d_ucmag` per layer, `mesh2d_sa1`, `mesh2d_cTR1`/`mesh2d_dTR1`, `mesh2d_flowelem_zw`/`zc`; a `.sub` with `RcDecTR1`), with analytic expected values | Every 3D quantity and vertical selection equals its analytic value; the dummy-sampling test of §7.9b passes; a section quantity in `map2d` → V-VAR-006 |
@@ -2460,6 +2465,9 @@ The complete model-quantity catalog (all v1 raw and derived registry entries, al
 
 | Version | Content |
 |---------|---------|
+| v6.85 | Simplify `merge_plan.nc` to one simulation-wide mapping with no plan dimension or per-sub-run assignment (D94); rebuilds old caches through the schema bump |
+| v6.84 | Persist timestamped validation and inspection reports under the guarded `tables/` output folder by default (D93) |
+| v6.83 | Adopt first-sub-run grid/merge-plan preparation and all-sub-run time metadata scanning (D92); cache reuse now avoids reopening model metadata |
 | v6.82 | Extend `.log` with named map2d and river-km analysis starts/completions, time-step, quantity, raw-read, and processed-cache events (D91). Combined synthetic map2d/river-km integration tests pass for r001 and r002 in 160.52 s; Ruff lint, changed-module mypy, and strict MkDocs pass. Ruff format check reports existing unrelated formatting in `map2d/process.py` and `test_map2d_process.py` |
 | v6.81 | Add flushed progress events for processing and plotting (D90): phase starts in `.dia`, task and detailed input/cache starts in `.log`, including polygon and profile-measurement reads. The 31 focused process/runner/geometry tests and two profile-plot tests pass; Ruff, mypy (89 source files), and strict MkDocs pass. The corrected Maas run finished with exit code 1: two tasks succeeded and two failed because 230.25 exceeds track `MA`'s `[3, 230]` range; progress logs confirm polygon-read events |
 | v6.80 | Support elapsed morphological time units by inheriting the map-time CF origin for inspection and status (D89); all 29 inspection/status tests, changed-module Ruff and strict mypy, and strict MkDocs pass. Real Maas processing has not yet been rerun |

@@ -71,6 +71,7 @@ from d3dplot.validate import (
     ValidationIssue,
     ValidationReport,
     validate_config,
+    write_validation_report,
 )
 from d3dplot.variables import (
     UnknownVariableError,
@@ -314,6 +315,7 @@ def validate(
     )
     if diagnostics is None:
         report = _validate_project(config, static_report)
+        _write_report_or_exit(config, report, report_format=report_format)
         _emit_report(report, report_format)
         if not report.is_valid:
             raise typer.Exit(code=1)
@@ -321,6 +323,12 @@ def validate(
 
     with diagnostics as diagnostic_log:
         report = _validate_project(config, static_report, diagnostic_log)
+        _write_report_or_exit(
+            config,
+            report,
+            report_format=report_format,
+            diagnostics=diagnostic_log,
+        )
         _emit_report(report, report_format)
         if not report.is_valid:
             diagnostic_log.error("Validation failed.")
@@ -387,7 +395,7 @@ def _validate_project(
                     diagnostics.info(
                         f"Inspection cache {cache_state}: "
                         f"simulation={simulation_config.label}; "
-                        f"merge_plans={result.plan_count}; "
+                        "merge_plan=single; "
                         f"duration={result.duration_seconds:.3f} s."
                     )
     elif diagnostics is not None:
@@ -467,6 +475,7 @@ def inspect(
     )
     if diagnostics is None:
         report, results = _inspect_project(config, static_report, simulation_configs)
+        _write_report_or_exit(config, report, prefix="inspection")
         _emit_inspection_report(report, results)
         if not report.is_valid:
             raise typer.Exit(code=1)
@@ -478,6 +487,12 @@ def inspect(
             static_report,
             simulation_configs,
             diagnostic_log,
+        )
+        _write_report_or_exit(
+            config,
+            report,
+            prefix="inspection",
+            diagnostics=diagnostic_log,
         )
         _emit_inspection_report(report, results)
         if not report.is_valid:
@@ -531,7 +546,7 @@ def _inspect_project(
                 diagnostics.info(
                     f"Inspection cache {cache_state}: "
                     f"simulation={simulation_config.label}; "
-                    f"merge_plans={result.plan_count}; "
+                    "merge_plan=single; "
                     f"duration={result.duration_seconds:.3f} s."
                 )
 
@@ -553,24 +568,13 @@ def _emit_inspection_report(
     for label, result in results:
         cache_state = "reused" if result.cache_reused else "built"
         typer.echo(
-            f"{label}: {result.plan_count} merge plan(s), reference sub-run "
+            f"{label}: one merge plan, reference sub-run "
             f"{result.reference_subrun}, cache {cache_state} "
             f"({result.duration_seconds:.2f} s): {result.merge_plan_path}"
         )
 
 
-def _make_diagnostic_log(
-    config: ProjectConfig,
-    involved_simulations: list[SimulationConfig],
-    *,
-    configuration: Path,
-    command_line: tuple[str, ...],
-    output_is_valid: bool,
-) -> DiagnosticLog | None:
-    """Create logs in the reference root and each simulation used by a command."""
-    if not output_is_valid:
-        return None
-
+def _reference_simulation_config(config: ProjectConfig) -> SimulationConfig:
     reference = config.reference_simulation
     if isinstance(reference, str):
         reference_simulation = next(
@@ -585,6 +589,60 @@ def _make_diagnostic_log(
         )
     if reference_simulation is None:
         raise ValueError("The configured reference simulation could not be resolved.")
+    return reference_simulation
+
+
+def _write_report_or_exit(
+    config: ProjectConfig,
+    report: ValidationReport,
+    *,
+    report_format: Literal["text", "json"] = "text",
+    prefix: Literal["validation", "inspection"] = "validation",
+    diagnostics: DiagnosticLog | None = None,
+) -> Path:
+    layout = OutputLayout.for_simulation(
+        _reference_simulation_config(config),
+        config.output,
+    )
+    try:
+        guard = initialize_output_root(
+            layout,
+            tool_version=__version__,
+            forbidden_roots=config.output.forbidden_roots,
+        )
+        path = write_validation_report(
+            report,
+            layout,
+            guard,
+            report_format=report_format,
+            prefix=prefix,
+        )
+    except (OSError, OutputWriteError, ValueError) as error:
+        message = f"Could not write {prefix} report: {error}"
+        if diagnostics is not None:
+            diagnostics.error(message)
+        typer.echo(message, err=True)
+        raise typer.Exit(code=1) from error
+
+    if diagnostics is not None:
+        diagnostics.info(f"{prefix.capitalize()} report written: {path}.")
+    typer.echo(f"{prefix.capitalize()} report: {path}", err=True)
+    return path
+
+
+def _make_diagnostic_log(
+    config: ProjectConfig,
+    involved_simulations: list[SimulationConfig],
+    *,
+    configuration: Path,
+    command_line: tuple[str, ...],
+    output_is_valid: bool,
+) -> DiagnosticLog | None:
+    """Create logs in the reference root and each simulation used by a command."""
+    if not output_is_valid:
+        return None
+
+    reference_simulation = _reference_simulation_config(config)
 
     ordered_simulations = (reference_simulation, *involved_simulations)
     layouts: list[OutputLayout] = []
@@ -965,21 +1023,6 @@ def _write_resolved_provenance(config: ProjectConfig) -> Path:
         base_dir=Path.cwd(),
     )
     return run_path.resolve(strict=True)
-
-
-def _reference_simulation_config(config: ProjectConfig) -> SimulationConfig:
-    reference = config.reference_simulation
-    if isinstance(reference, str):
-        for simulation in config.simulations:
-            if simulation.label == reference:
-                return simulation
-        raise ValueError(f"Configured reference simulation not found: {reference}")
-    try:
-        return config.simulations[reference]
-    except IndexError as error:
-        raise ValueError(
-            f"Configured reference simulation index is out of range: {reference}"
-        ) from error
 
 
 @app.command()

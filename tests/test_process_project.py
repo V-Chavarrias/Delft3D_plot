@@ -67,6 +67,9 @@ def test_inspection_failure_writes_diagnostic_and_debug_logs(
     assert "Starting output inspection:" in diagnostic_text
     assert "V-OUT-002" in diagnostic_text
     assert "d3dplot stopped" in diagnostic_text
+    validation_reports = tuple(layout.tables.glob("validation_*.txt"))
+    assert len(validation_reports) == 1
+    assert "V-OUT-002" in validation_reports[0].read_text(encoding="utf-8")
     debug_path = diagnostic_paths[0].with_suffix(".log")
     assert debug_path.is_file()
     assert "Starting output inspection:" in debug_path.read_text(encoding="utf-8")

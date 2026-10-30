@@ -36,6 +36,8 @@ class _NetCDFDataset(Protocol):
     variables: Mapping[str, _NetCDFVariable]
     dimensions: Mapping[str, object]
 
+    def getncattr(self, name: str) -> object: ...
+
 
 class _NetCDF4Module(Protocol):
     def Dataset(
@@ -105,7 +107,7 @@ class MapReader:
                     "V-OUT-020",
                     "error",
                     self._simulation.root,
-                    f"No merge plan is assigned to sub-run {subrun_index}.",
+                    f"No merge plan is available for sub-run {subrun_index}.",
                     "Run inspection again to rebuild the merge plan.",
                 )
             )
@@ -183,7 +185,7 @@ class MapReader:
                     "V-OUT-020",
                     "error",
                     self._simulation.root,
-                    f"No merge plan is assigned to sub-run {subrun_index}.",
+                    f"No merge plan is available for sub-run {subrun_index}.",
                     "Run inspection again to rebuild the merge plan.",
                 )
             )
@@ -553,10 +555,6 @@ def _load_plan_mappings(
             with _netcdf4_module().Dataset(merge_plan_path, mode="r") as dataset:
                 variables = dataset.variables
                 required = {
-                    "subrun_index",
-                    "plan_of_subrun",
-                    "plan_n_faces",
-                    "plan_n_edges",
                     "partition_offset",
                     "partition_n_owned",
                     "owned_local",
@@ -574,12 +572,6 @@ def _load_plan_mappings(
                         + ", ".join(sorted(missing))
                     )
 
-                subrun_indices = np.asarray(
-                    variables["subrun_index"][:], dtype=np.int64
-                )
-                plans = np.asarray(variables["plan_of_subrun"][:], dtype=np.int64)
-                plan_n_faces = np.asarray(variables["plan_n_faces"][:], dtype=np.int64)
-                plan_n_edges = np.asarray(variables["plan_n_edges"][:], dtype=np.int64)
                 arrays = {
                     name: np.asarray(variables[name][:])
                     for name in (
@@ -594,6 +586,8 @@ def _load_plan_mappings(
                         "edge_orientation",
                     )
                 }
+                n_faces = int(cast(Any, dataset.getncattr("n_faces")))
+                n_edges = int(cast(Any, dataset.getncattr("n_edges")))
     except (
         EOFError,
         IndexError,
@@ -612,46 +606,21 @@ def _load_plan_mappings(
             )
         ) from error
 
-    mappings: dict[int, _PlanMapping] = {}
-    for position, subrun_index in enumerate(subrun_indices):
-        plan_index = int(plans[position])
-        if plan_index < 0 or plan_index >= plan_n_faces.size:
-            raise MapReaderError(
-                _issue(
-                    "V-OUT-020",
-                    "error",
-                    merge_plan_path,
-                    f"Invalid plan index for sub-run {int(subrun_index)}.",
-                    "Run inspection again to rebuild the merge plan.",
-                )
-            )
-        mappings[int(subrun_index)] = _PlanMapping(
-            plan_index=plan_index,
-            n_faces=int(plan_n_faces[plan_index]),
-            n_edges=int(plan_n_edges[plan_index]),
-            partition_offset=arrays["partition_offset"][plan_index],
-            partition_n_owned=arrays["partition_n_owned"][plan_index],
-            owned_local=arrays["owned_local"][plan_index],
-            global_pos=arrays["global_pos"][plan_index],
-            edge_partition_offset=arrays["edge_partition_offset"][plan_index],
-            edge_partition_n_owned=arrays["edge_partition_n_owned"][plan_index],
-            edge_owned_local=arrays["edge_owned_local"][plan_index],
-            edge_global_pos=arrays["edge_global_pos"][plan_index],
-            edge_orientation=arrays["edge_orientation"][plan_index],
-        )
-
-    expected_subruns = {subrun.index for subrun in simulation.subruns}
-    if set(mappings) != expected_subruns:
-        raise MapReaderError(
-            _issue(
-                "V-OUT-020",
-                "error",
-                merge_plan_path,
-                "Merge-plan sub-run coverage does not match the simulation.",
-                "Run inspection again to rebuild the merge plan.",
-            )
-        )
-    return mappings
+    mapping = _PlanMapping(
+        plan_index=0,
+        n_faces=n_faces,
+        n_edges=n_edges,
+        partition_offset=arrays["partition_offset"],
+        partition_n_owned=arrays["partition_n_owned"],
+        owned_local=arrays["owned_local"],
+        global_pos=arrays["global_pos"],
+        edge_partition_offset=arrays["edge_partition_offset"],
+        edge_partition_n_owned=arrays["edge_partition_n_owned"],
+        edge_owned_local=arrays["edge_owned_local"],
+        edge_global_pos=arrays["edge_global_pos"],
+        edge_orientation=arrays["edge_orientation"],
+    )
+    return {subrun.index: mapping for subrun in simulation.subruns}
 
 
 def _partition_positions(

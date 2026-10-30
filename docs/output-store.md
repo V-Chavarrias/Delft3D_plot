@@ -18,6 +18,9 @@ exposes standard locations such as `cache`, `figures`, `tables`, `config`, and
 `logs`. See [configuration](./configuration.md#output-locations-and-safety)
 for the corresponding project settings.
 
+Validation and inspection reports are written atomically beneath `tables/` as
+`validation_<timestamp>.txt|json` or `inspection_<timestamp>.txt`.
+
 ## Marked roots and guarded writes
 
 `initialize_output_root` creates `.d3dplot-output` only when the root is new or

@@ -33,18 +33,20 @@ d3dplot inspect project.yaml --simulation reference
 ```
 
 `inspect` builds or reuses the grid, merge-plan, and checked time-axis caches
-for every configured simulation, or only the one selected by label. It checks
-partition identity and topology, time quality, and duplicate SMT restart
-boundaries; it also selects a time-consistent reference sub-run and reports the
-cache location and whether it was built or reused. Plain FM output without
+for every configured simulation, or only the one selected by label. It measures
+partition identity and topology from sub-run 0, reads time quality from every
+sub-run, and checks duplicate SMT restart boundaries. Plain FM output without
 global face numbers uses one-to-one face-centre matching within 1 mm and reports
 the coordinate-matching fallback as `V-OUT-023`. The time-axis cache stores
 UTC hydrodynamic and morphological times, merged sub-run/local indices, and
-corrupt-partition flags.
+corrupt-partition flags. Later-subrun topology is assumed to match sub-run 0.
 
 Generated caches are written atomically beneath the configured, guarded
 `output.root` (or the simulation's default `d3dplot` output folder). Model files
 remain read-only. `inspect` does not process quantities or create figures.
+It writes a timestamped text report to
+`tables/inspection_<timestamp>.txt` beneath the reference simulation's output
+root.
 Boundary `morft` mismatches are errors (`V-OUT-032`); boundary bed-level
 mismatches are warnings (`V-OUT-033`).
 
@@ -129,7 +131,9 @@ When these checks have no errors, `validate` also builds or reuses the same
 grid, merge-plan, and checked time-axis caches as `inspect`. Derived quantity
 dependencies are validated as part of this step, but it does not process
 quantities or create figures. Errors produce a non-zero exit code. Text is the
-default report format; JSON reports have the stable shape
+default report format, and the report is written to
+`tables/validation_<timestamp>.txt`. With `--format json`, it is written to
+`tables/validation_<timestamp>.json`; JSON reports have the stable shape
 `{"valid": true, "issues": []}`.
 
 ## Process quantities from Python

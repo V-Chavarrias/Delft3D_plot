@@ -26,6 +26,7 @@ from d3dplot.simulation.discover import discover_simulation
 from d3dplot.simulation.inspection import inspect_simulation
 from d3dplot.simulation.time_axis import TimeAxis, TimeSelectionResult
 from d3dplot.store import OutputLayout, initialize_output_root
+from d3dplot.validate import ValidationReport, write_validation_report
 from d3dplot.variables.context import QuantityRequest
 
 
@@ -69,6 +70,7 @@ def _process_project(configuration_path: Path, *, serial: bool) -> int:
 
     simulation_config = project.simulations[0]
     layout = OutputLayout.for_simulation(simulation_config, project.output)
+    validation_report_path: Path | None = None
     with DiagnosticLog.for_project(
         (layout,),
         tool_version=__version__,
@@ -85,6 +87,17 @@ def _process_project(configuration_path: Path, *, serial: bool) -> int:
         )
         diagnostics.record_validation_issues(discovery_report.issues)
         if simulation is None:
+            report_guard = initialize_output_root(
+                layout,
+                tool_version=__version__,
+                forbidden_roots=project.output.forbidden_roots,
+            )
+            validation_report_path = write_validation_report(
+                discovery_report,
+                layout,
+                report_guard,
+            )
+            diagnostics.info(f"Validation report written: {validation_report_path}.")
             raise ValueError(discovery_report.to_text())
 
         diagnostics.info(
@@ -106,8 +119,22 @@ def _process_project(configuration_path: Path, *, serial: bool) -> int:
             f"issues={len(inspection_report.issues)}."
         )
         diagnostics.record_validation_issues(inspection_report.issues)
+        validation_report = ValidationReport(
+            discovery_report.issues + inspection_report.issues
+        )
+        report_guard = initialize_output_root(
+            layout,
+            tool_version=__version__,
+            forbidden_roots=project.output.forbidden_roots,
+        )
+        validation_report_path = write_validation_report(
+            validation_report,
+            layout,
+            report_guard,
+        )
+        diagnostics.info(f"Validation report written: {validation_report_path}.")
         if inspection is None or not inspection_report.is_valid:
-            raise ValueError(inspection_report.to_text())
+            raise ValueError(validation_report.to_text())
 
         diagnostics.info("Starting cached time-axis read.")
         time_axis = TimeAxis.from_cache(inspection.times_path)
@@ -235,6 +262,8 @@ def _process_project(configuration_path: Path, *, serial: bool) -> int:
         f"{summary.failed_count} failed; {output_count} cache file(s) written."
     )
     print(f"Output root: {layout.root}")
+    if validation_report_path is not None:
+        print(f"Validation report: {validation_report_path}")
     print(f"Run summary: {layout.tables / 'run-summary.csv'}")
     print(f"Diagnostics: {layout.logs}")
     if summary.exit_code:
