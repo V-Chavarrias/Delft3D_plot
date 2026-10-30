@@ -43,7 +43,7 @@ Document map:
 | Item | Location | State |
 |------|----------|-------|
 | Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `main` includes the pushed `feat/acceptance-r209` merge (`4b88447`); WP 5.1 acceptance remains incomplete (§13.4); the local topic branch remains; WP 5.5 release automation is on `feat/pypi-release` |
-| Plan (this file) | `docs/architecture.md` | v6.88 |
+| Plan (this file) | `docs/architecture.md` | v6.89 |
 | Licence | `LICENSE` | GPL-3.0 |
 | Synthetic SMT and plain FM test case generator | `tools/synthetic_smt/` | Implemented and verified locally (§13.3) |
 | Land-boundary converter (`.mat` cache → `.ldb`) | `tools/mat_to_ldb.py` | Implemented. Used to recreate the Maas land boundary (D45) |
@@ -287,6 +287,7 @@ Status: **A** = agreed with the user; **P** = proposed in this plan and awaiting
 | D95 | SMT discovery reads/parses the MDU, `.mor`, and `.sed` metadata only from sub-run 0 and rebases that template for later sub-runs; opening every map file briefly for NetCDF-header validation is optional and disabled by default via `check_map_headers` | SMT sub-runs share model-input settings; thousands of network-file opens are unnecessary for normal discovery | A |
 | D96 | When `track: MA` selects the Maas provider, use tag `MA` for km ≤ 230.0 and `BM` for km > 230.0, even when the input file does not contain `BM` (coordinate lookup then reports missing branch data) | The user confirmed the Maas input convention; explicit track selection takes precedence over file tags | A |
 | D97 | Rijntakken track selection follows Matlab `branch_rijntakken.m` defaults: Waal-family tracks (`WA`, `WL`, `BO`, `NI`) use `WA` above km 867 and do not switch to `BO`/`NI` unless a future explicit option enables Matlab's `NI_BO` argument | Preserve the default Matlab call used by `gdm_load_rkm_polygons.m`; do not infer optional branches from file tags | A |
+| D98 | River-km geometry construction enables Matlab-style linear endpoint extrapolation when a selected branch's requested km lies just outside its available point range; direct provider calls remain strict, and each extrapolation is logged | Matlab `convert2rkm` extrapolates from the first/last branch segment; this is needed for the Maas MA/BM boundary gap | A |
 
 ## 3. Review of the plan (v6)
 
@@ -418,7 +419,7 @@ Tags: `GRD`, `M2D`, `M1D`, `PRF`, `SMB`, `HIS`, `HFM`, `CRS`, `STO`, plus legacy
 | `PK` | `PK` (error outside 867.05–878.05) |
 | `BR`, `RH` | as given |
 
-**Provider implementation and Matlab flags.** Provider tags, track thresholds, cutoffs, and `ds_pol_km` are stored in package data, not embedded in geometry code. Provider matching is case-insensitive. An explicit `track: MA` selects the Maas provider and uses `MA` through km 230.0, then `BM` above 230.0; if the selected tag is absent from the file, coordinate lookup reports the missing branch. Waal-family Rijntakken tracks use the default Matlab `waal_name = 'WA'`; the optional `NI_BO` argument is not exposed, so `BO` and `NI` are not selected by default. A single explicit branch is broadcast, or `branches` may supply one value per requested centre. A Rijntakken `track` takes precedence over file-based provider detection and explicit generic branches, matching `gdm_load_rkm_polygons.m`.
+**Provider implementation and Matlab flags.** Provider tags, track thresholds, cutoffs, and `ds_pol_km` are stored in package data, not embedded in geometry code. Provider matching is case-insensitive. An explicit `track: MA` selects the Maas provider and uses `MA` through km 230.0, then `BM` above 230.0; if the selected tag is absent from the file, coordinate lookup reports the missing branch. Waal-family Rijntakken tracks use the default Matlab `waal_name = 'WA'`; the optional `NI_BO` argument is not exposed, so `BO` and `NI` are not selected by default. A single explicit branch is broadcast, or `branches` may supply one value per requested centre. A Rijntakken `track` takes precedence over file-based provider detection and explicit generic branches, matching `gdm_load_rkm_polygons.m`. Geometry construction allows and logs Matlab-style endpoint extrapolation; direct provider coordinate calls remain strict by default.
 
 The Matlab checker maps legacy tag `fig_map_summerbed_01` to `SMB` and reads no geometry flags. `gdm_create_mat_SMB.m` and `gdm_plot_SMB.m` call `gdm_parse_summerbed.m`: `sb_pol` and `fpath_rkm` are required; `rkm_name` and `rkm` are required; `rkm_br` and `rkm_track` default empty, and one must supply a branch or track. `gdm_load_rkm_polygons.m` defaults its optional `parallel_distance` to 1000 m and `ds_pol` to 0.1 km. `do_plot_inpoly` defaults false for the per-segment diagnostic. The remaining `do_*`, `tim_tol`, and plotting-limit defaults in `gdm_parse_summerbed.m` apply to processing/plotting work packages, not provider geometry.
 
@@ -2477,6 +2478,7 @@ The complete model-quantity catalog (all v1 raw and derived registry entries, al
 
 | Version | Content |
 |---------|---------|
+| v6.89 | Enable and log Matlab-style endpoint extrapolation during river-km geometry construction (D98) |
 | v6.88 | Match Matlab's default Rijntakken track switch rules and default Waal branch behavior (D97) |
 | v6.87 | Use explicit Maas track selection and switch from `MA` to `BM` above km 230.0, recording the branch rule in the processing log (D96) |
 | v6.86 | Reuse first-sub-run MDU/morphology/sediment metadata during SMT discovery and make all-map NetCDF header opens opt-in (`check_map_headers`, D95) |

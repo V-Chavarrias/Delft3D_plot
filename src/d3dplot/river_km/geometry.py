@@ -240,14 +240,22 @@ def build_segment_geometry(
 
     centres_xy = np.asarray(
         [
-            provider.coordinates_at(float(km), branch)
+            provider.coordinates_at(
+                float(km),
+                branch,
+                allow_extrapolation=True,
+            )
             for km, branch in zip(retained_centres, retained_branches, strict=True)
         ],
         dtype=np.float64,
     )
     edges_xy = np.asarray(
         [
-            provider.coordinates_at(float(km), branch)
+            provider.coordinates_at(
+                float(km),
+                branch,
+                allow_extrapolation=True,
+            )
             for km, branch in zip(corrected_edges, edge_branches, strict=True)
         ],
         dtype=np.float64,

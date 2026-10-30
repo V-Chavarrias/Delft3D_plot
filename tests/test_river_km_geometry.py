@@ -191,6 +191,19 @@ def test_branch_coordinates_interpolate_without_extrapolation() -> None:
     assert error.value.code == "V-RKM-004"
 
 
+def test_branch_coordinates_can_match_matlab_endpoint_extrapolation() -> None:
+    points = (
+        RiverKmPoint(0.0, 0.0, "A", 0.0, "0"),
+        RiverKmPoint(20.0, 10.0, "A", 2.0, "2"),
+    )
+    provider = RiverKmProvider.from_points(points)
+
+    np.testing.assert_allclose(
+        provider.coordinates_at(2.01, "A", allow_extrapolation=True),
+        (20.1, 10.05),
+    )
+
+
 @given(
     st.lists(
         st.floats(

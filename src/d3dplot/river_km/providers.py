@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -24,6 +25,9 @@ class RiverKmProviderError(ValueError):
     def __init__(self, message: str, *, code: str = "V-RKM-002") -> None:
         super().__init__(message)
         self.code = code
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class _TrackRule(BaseModel):
@@ -224,8 +228,14 @@ class RiverKmProvider:
             "branch or track."
         )
 
-    def coordinates_at(self, km: float, branch: str) -> tuple[float, float]:
-        """Interpolate x/y in km along the selected branch without extrapolating."""
+    def coordinates_at(
+        self,
+        km: float,
+        branch: str,
+        *,
+        allow_extrapolation: bool = False,
+    ) -> tuple[float, float]:
+        """Interpolate x/y, optionally extrapolating at a branch endpoint."""
         if not math.isfinite(km):
             raise RiverKmProviderError(
                 f"Requested river km must be finite: {km!r}.",
@@ -240,11 +250,49 @@ class RiverKmProvider:
             )
 
         lower = points[0]
-        if km < lower.km or km > points[-1].km:
-            raise RiverKmProviderError(
-                f"River km {km:g} is outside branch {branch!r} range "
-                f"[{lower.km:g}, {points[-1].km:g}].",
-                code="V-RKM-004",
+        if km < lower.km:
+            if not allow_extrapolation or len(points) < 2:
+                raise RiverKmProviderError(
+                    f"River km {km:g} is outside branch {branch!r} range "
+                    f"[{lower.km:g}, {points[-1].km:g}].",
+                    code="V-RKM-004",
+                )
+            upper = points[1]
+            _LOGGER.warning(
+                "Extrapolating river-km coordinate: provider=%s; branch=%s; "
+                "km=%s; range=[%s, %s].",
+                self.name,
+                branch,
+                km,
+                lower.km,
+                points[-1].km,
+            )
+            fraction = (km - lower.km) / (upper.km - lower.km)
+            return (
+                lower.x + fraction * (upper.x - lower.x),
+                lower.y + fraction * (upper.y - lower.y),
+            )
+        if km > points[-1].km:
+            if not allow_extrapolation or len(points) < 2:
+                raise RiverKmProviderError(
+                    f"River km {km:g} is outside branch {branch!r} range "
+                    f"[{lower.km:g}, {points[-1].km:g}].",
+                    code="V-RKM-004",
+                )
+            lower, upper = points[-2], points[-1]
+            _LOGGER.warning(
+                "Extrapolating river-km coordinate: provider=%s; branch=%s; "
+                "km=%s; range=[%s, %s].",
+                self.name,
+                branch,
+                km,
+                points[0].km,
+                upper.km,
+            )
+            fraction = (km - lower.km) / (upper.km - lower.km)
+            return (
+                lower.x + fraction * (upper.x - lower.x),
+                lower.y + fraction * (upper.y - lower.y),
             )
         for upper in points[1:]:
             if km <= upper.km:
