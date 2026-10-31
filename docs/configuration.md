@@ -167,15 +167,19 @@ The analysis option `active_sediment_thickness_threshold_m` defaults to
 quantity (`ba_mor`): a face contributes its cell area when total sediment
 thickness is at least the threshold, and zero otherwise.
 
-The default figure style is 10 pt DejaVu Sans, 16 × 10 cm at 150 dpi. Maps use
-the `viridis` colormap, `auto` rendering, and `auto` aspect. The
+The default figure style is 10 pt DejaVu Sans, 16 × 10 cm at 150 dpi. Map
+titles use `yyyy-mm-dd HH:MM` by default; set `figure.time_format` (or an
+analysis-level `figure.time_format`) to change it. The format accepts
+`yyyy`, `mm`, `dd`, `HH`, `MM`, and `ss` tokens, or Python `strftime`
+directives. Maps use the `viridis` colormap for values and `RdYlBu` for
+time-difference plots, with `auto` rendering and `auto` aspect. The
 `river_km_statistics` analysis defaults to `mean_area_weighted` and the
 `profile` view.
 
 River-km files use the fixed comma-delimited `x, y, label, km` format. The
 branch is the label suffix after the first underscore and is matched
-case-insensitively. Rijntakken files require `river_km.track`; Maas files switch
-from `MA` to `BM` at 230.5 km only when `BM` is present. For a generic file with
+case-insensitively. Rijntakken files require `river_km.track`; `track: MA`
+selects the Maas provider and switches from `MA` to `BM` above 230.0 km. For a generic file with
 multiple branch tags, set `river_km.branches` to one branch to use throughout or
 one branch per requested km centre.
 

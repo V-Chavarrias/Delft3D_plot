@@ -106,6 +106,7 @@ def load_profile_measurements(
     layout: OutputLayout,
     guard: OutputWriteGuard,
     diagnostic: DiagnosticSink | None = None,
+    skip_missing: bool = False,
 ) -> dict[str, ProfileMeasurement]:
     """Load canonical NetCDF or cache requested variables from a Matlab file."""
     path = resolve_path_preserving_drive(source)
@@ -129,6 +130,7 @@ def load_profile_measurements(
             layout,
             guard,
             diagnostic,
+            skip_missing=skip_missing,
         )
     if path.suffix.casefold() != ".nc":
         raise ProfileMeasurementError(
@@ -150,11 +152,23 @@ def load_profile_measurements(
             variable,
             source_time_zone=None,
         )
-        result[variable] = _read_profile_netcdf(
-            path,
-            variable,
-            fingerprint=fingerprint,
-        )
+        try:
+            result[variable] = _read_profile_netcdf(
+                path,
+                variable,
+                fingerprint=fingerprint,
+            )
+        except ProfileMeasurementError as error:
+            if not (
+                skip_missing
+                and error.code == "V-MEA-005"
+                and "missing" in str(error).casefold()
+            ):
+                raise
+            if diagnostic is not None:
+                diagnostic(
+                    f"Skipped missing profile measurement {variable!r} from {path}."
+                )
     return result
 
 
@@ -296,15 +310,24 @@ def _load_mat_measurements(
     layout: OutputLayout,
     guard: OutputWriteGuard,
     diagnostic: DiagnosticSink | None,
+    *,
+    skip_missing: bool,
 ) -> dict[str, ProfileMeasurement]:
-    parsed = _read_mat_profiles(source, time_zone)
+    parsed = _read_mat_profiles(source, time_zone, diagnostic=diagnostic)
     missing = tuple(name for name in variables if name not in parsed)
     if missing:
-        raise ProfileMeasurementError(
-            "V-MEA-005",
-            f"Profile measurement variables are missing from {source}: "
-            f"{list(missing)}.",
-        )
+        if not skip_missing:
+            raise ProfileMeasurementError(
+                "V-MEA-005",
+                f"Profile measurement variables are missing from {source}: "
+                f"{list(missing)}.",
+            )
+        if diagnostic is not None:
+            for variable in missing:
+                diagnostic(
+                    f"Skipped missing profile measurement {variable!r} from {source}."
+                )
+        variables = tuple(name for name in variables if name in parsed)
     try:
         source_fingerprint = fingerprint_small_input(source)
     except (OSError, ValueError) as error:
@@ -363,6 +386,7 @@ def _load_mat_measurements(
 def _read_mat_profiles(
     source: Path,
     time_zone: str,
+    diagnostic: DiagnosticSink | None = None,
 ) -> dict[str, _ParsedProfile]:
     try:
         with source.open("rb") as stream:
@@ -414,6 +438,7 @@ def _read_mat_profiles(
             variable_fields.get("source"),
             source,
             time_zone,
+            diagnostic=diagnostic,
         )
         if variable_name in result:
             raise ProfileMeasurementError(
@@ -435,6 +460,7 @@ def _parse_mat_variable(
     raw_sources: object | None,
     source: Path,
     time_zone: str,
+    diagnostic: DiagnosticSink | None = None,
 ) -> _ParsedProfile:
     try:
         zone = timezone_from_offset(time_zone)
@@ -517,6 +543,27 @@ def _parse_mat_variable(
             "V-MEA-007",
             f"No valid statistics found for {variable!r} in {source}.",
         )
+    last_positions: dict[float, int] = {}
+    for index, value in enumerate(reference_km):
+        last_positions[float(value)] = index
+    keep_indices = np.asarray(sorted(last_positions.values()), dtype=np.int64)
+    if keep_indices.size != reference_km.size:
+        duplicate_values = sorted(
+            value
+            for value in last_positions
+            if sum(float(item) == value for item in reference_km) > 1
+        )
+        if diagnostic is not None:
+            diagnostic(
+                f"Measurement duplicate river-km coordinates for {variable!r}; "
+                f"kept the last value at km {duplicate_values}."
+            )
+        reference_km = reference_km[keep_indices]
+        if reference_distance is not None:
+            reference_distance = reference_distance[keep_indices]
+        parsed_statistics = {
+            name: values[keep_indices, :] for name, values in parsed_statistics.items()
+        }
     try:
         times_unsorted = tuple(
             _matlab_datenum_to_utc(value, zone) for value in reference_times
@@ -844,7 +891,7 @@ def _measurement_fingerprint(
         kind="river_km_profile_measurement",
         schema_version=CACHE_SCHEMA_VERSION,
         tool_version=__version__,
-        algorithm_version="profile-measurements-1",
+        algorithm_version="profile-measurements-2",
         parameters={
             "source_utc_offset": source_time_zone,
             "variable": variable,

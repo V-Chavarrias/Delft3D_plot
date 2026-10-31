@@ -66,6 +66,8 @@ class MapView:
         figure_config: FigureConfig,
         colormap: str,
         colorbar_label: str,
+        x_label: str | None = None,
+        y_label: str | None = None,
         initial_limits: tuple[float | None, float | None] | None = None,
         decorations: MapDecorations | None = None,
         measurement_panel: bool = False,
@@ -120,16 +122,20 @@ class MapView:
             figure.subplots_adjust(
                 left=0.06,
                 right=0.86,
-                bottom=0.08,
+                bottom=0.14,
                 top=0.92,
                 wspace=0.12,
             )
         else:
             axes = figure.add_subplot(1, 1, 1)
             measurement_axes = None
-            figure.subplots_adjust(left=0.08, right=0.86, bottom=0.08, top=0.92)
+            figure.subplots_adjust(left=0.10, right=0.86, bottom=0.14, top=0.92)
         axes.set_xlim(window.bounds[0], window.bounds[1])
         axes.set_ylim(window.bounds[2], window.bounds[3])
+        if x_label is not None:
+            axes.set_xlabel(x_label)
+        if y_label is not None:
+            axes.set_ylabel(y_label)
         if decorations is not None:
             decorations.draw_background(axes, window.bounds)
             axes.set_xlim(window.bounds[0], window.bounds[1])

@@ -43,7 +43,7 @@ Document map:
 | Item | Location | State |
 |------|----------|-------|
 | Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `main` includes the pushed `feat/acceptance-r209` merge (`4b88447`); WP 5.1 acceptance remains incomplete (§13.4); the local topic branch remains; WP 5.5 release automation is on `feat/pypi-release` |
-| Plan (this file) | `docs/architecture.md` | v6.90 |
+| Plan (this file) | `docs/architecture.md` | v6.93 |
 | Licence | `LICENSE` | GPL-3.0 |
 | Synthetic SMT and plain FM test case generator | `tools/synthetic_smt/` | Implemented and verified locally (§13.3) |
 | Land-boundary converter (`.mat` cache → `.ldb`) | `tools/mat_to_ldb.py` | Implemented. Used to recreate the Maas land boundary (D45) |
@@ -289,6 +289,9 @@ Status: **A** = agreed with the user; **P** = proposed in this plan and awaiting
 | D97 | Rijntakken track selection follows Matlab `branch_rijntakken.m` defaults: Waal-family tracks (`WA`, `WL`, `BO`, `NI`) use `WA` above km 867 and do not switch to `BO`/`NI` unless a future explicit option enables Matlab's `NI_BO` argument | Preserve the default Matlab call used by `gdm_load_rkm_polygons.m`; do not infer optional branches from file tags | A |
 | D98 | River-km geometry construction enables Matlab-style linear endpoint extrapolation when a selected branch's requested km lies just outside its available point range; direct provider calls remain strict, and each extrapolation is logged | Matlab `convert2rkm` extrapolates from the first/last branch segment; this is needed for the Maas MA/BM boundary gap | A |
 | D99 | Reuse parsed first-sub-run sediment metadata for all SMT sub-runs; when `.sed` provides `SedMinDia`/`SedMaxDia`, use their geometric mean as the effective diameter, matching Matlab `D3D_read_sed` | The referenced sediment file contains diameter ranges rather than `SedDia`; rereading later sub-runs is unnecessary and left derived quantities without diameters | A |
+| D100 | Map2d titles show only the formatted model time; default `figure.time_format` is `yyyy-mm-dd HH:MM`, map axes show localized x/y coordinate labels, colorbars show quantity and unit, and time-difference maps default to `RdYlBu` unless a colormap is explicitly configured | Make map figures self-explanatory while preserving explicit user colormap overrides | A |
+| D101 | Duplicate profile measurement river-km coordinates keep the last source row; the choice is logged and measurement caches use a bumped algorithm version | Match the requested last-value behavior while preserving deterministic cached measurements | A |
+| D102 | River-km plotting skips measurement variables absent from a configured measurement source and logs each skip; strict measurement conversion/API loading remains unchanged | Model profiles should still be plotted when an optional measurement file covers only some requested variables | A |
 
 ## 3. Review of the plan (v6)
 
@@ -2397,6 +2400,7 @@ Principles:
 | `clims_type`, `clims_type_var` | `color_limits_mode: fixed \| {days_since: date}` |
 | `fig_print` | `figure.formats: [png]` |
 | `fig_resolution`, `fig_size`, `font_size` | `figure.dpi`, `figure.size_cm`, `figure.font_size` (applied by the common finalisation, §7.14a) |
+| — | `figure.time_format` (map title format; `yyyy-mm-dd HH:MM` default) |
 | `fig_variable`, `fig_unit` | `display_name`, `display_scale` |
 | `do_movie`, `tim_movie` | `movie: {duration_s}` |
 | `Lref` | `labels.vertical_datum` |
@@ -2479,6 +2483,9 @@ The complete model-quantity catalog (all v1 raw and derived registry entries, al
 
 | Version | Content |
 |---------|---------|
+| v6.93 | Skip and log missing measurement variables during river-km plotting while retaining strict measurement loading by default (D102) |
+| v6.92 | Keep the last duplicate river-km measurement coordinate, log the choice, and invalidate older measurement caches (D101) |
+| v6.91 | Improve map2d figure labelling: time-only configurable titles, localized x/y labels, quantity colorbar labels, and `RdYlBu` default for time differences (D100) |
 | v6.90 | Reuse first-sub-run sediment metadata and derive effective diameters from `SedMinDia`/`SedMaxDia` using the Matlab geometric mean (D99) |
 | v6.89 | Enable and log Matlab-style endpoint extrapolation during river-km geometry construction (D98) |
 | v6.88 | Match Matlab's default Rijntakken track switch rules and default Waal branch behavior (D97) |

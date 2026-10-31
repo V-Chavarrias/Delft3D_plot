@@ -47,6 +47,7 @@ from d3dplot.plotting.finalize import (
     finalize_figure,
 )
 from d3dplot.plotting.movies import MovieWriterError, write_mp4
+from d3dplot.plotting.time import format_time_label
 from d3dplot.plotting.views.decorations import MapDecorations, MapDecorationsError
 from d3dplot.plotting.views.extents import (
     ExtentSet,
@@ -98,12 +99,17 @@ class Map2DPlotFrame:
     match_key: str
     time: datetime
     path: Path
+    morph_time: datetime | None = None
 
     def __post_init__(self) -> None:
         if not self.match_key or self.match_key != self.match_key.strip():
             raise ValueError("Map2DPlotFrame.match_key must be non-empty and trimmed.")
         if self.time.tzinfo is None or self.time.utcoffset() is None:
             raise ValueError("Map2DPlotFrame.time must be time-zone-aware.")
+        if self.morph_time is not None and (
+            self.morph_time.tzinfo is None or self.morph_time.utcoffset() is None
+        ):
+            raise ValueError("Map2DPlotFrame.morph_time must be time-zone-aware.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -360,10 +366,17 @@ def plot_map2d_group(
             output_time = (
                 paired_reference.time if paired_reference is not None else frame.time
             )
+            display_frame = paired_reference if paired_reference is not None else frame
+            display_time = (
+                display_frame.morph_time
+                if analysis.times.axis == "morphological"
+                and display_frame.morph_time is not None
+                else output_time
+            )
             scale = figure_config.display_scale
             if scale != 1.0:
                 map_values = map_values * scale
-            time_text = output_time.isoformat()
+            time_text = format_time_label(display_time, figure_config.time_format)
             label_kind = (
                 "percentage"
                 if comparison == "difference_simulation_relative"
@@ -384,13 +397,25 @@ def plot_map2d_group(
                 extra_dictionaries=project.labels.extra_dictionaries,
             )
             unit_label = value_label.unit
-            title = f"{quantity_label.text} — {output_subject} — {time_text}"
-            if comparison != "value":
-                title = f"{value_label.quantity} — {output_subject} — {time_text}"
-            if figure_config.display_name:
-                title = f"{figure_config.display_name} — {output_subject} — {time_text}"
+            title = time_text
+            colorbar_label = value_label.text
             if scale != 1.0:
                 unit_label = f"{unit_label} × {scale:g}"
+                colorbar_label = (
+                    f"{value_label.quantity} [{value_label.unit} × {scale:g}]"
+                )
+            x_axis_label = label(
+                "x_coord",
+                project.language,
+                "value",
+                extra_dictionaries=project.labels.extra_dictionaries,
+            ).text
+            y_axis_label = label(
+                "y_coord",
+                project.language,
+                "value",
+                extra_dictionaries=project.labels.extra_dictionaries,
+            ).text
 
             for window in extent_set.windows:
                 if window.faces.size == 0:
@@ -499,7 +524,7 @@ def plot_map2d_group(
                         kind="figure",
                         schema_version=CACHE_SCHEMA_VERSION,
                         tool_version=__version__,
-                        algorithm_version="map2d-plot-1",
+                        algorithm_version="map2d-plot-2",
                         parameters={
                             "analysis": analysis.model_dump(mode="json"),
                             "comparison": comparison,
@@ -556,8 +581,10 @@ def plot_map2d_group(
                             map_values,
                             map_config=analysis.map,
                             figure_config=figure_config,
-                            colormap=_colormap_for(analysis, variable),
-                            colorbar_label=unit_label,
+                            colormap=_colormap_for(analysis, variable, comparison),
+                            colorbar_label=colorbar_label,
+                            x_label=x_axis_label,
+                            y_label=y_axis_label,
                             initial_limits=limits,
                             decorations=decorations,
                             measurement_panel=show_measurements,
@@ -1003,8 +1030,17 @@ def _scaled_limits(
     )
 
 
-def _colormap_for(analysis: Map2DConfig, variable: str) -> str:
+def _colormap_for(
+    analysis: Map2DConfig,
+    variable: str,
+    comparison: Comparison,
+) -> str:
     configured = analysis.map.colormap
+    if (
+        comparison in {"difference_time", "difference_simulation_time"}
+        and "colormap" not in analysis.map.model_fields_set
+    ):
+        return "RdYlBu"
     if isinstance(configured, str):
         return configured
     return next(
@@ -1043,7 +1079,10 @@ def _figure_path(
         f"{safe_variable}_{comparison}_{timestamp}_c{color_index + 1}"
         f"_e{extent_index + 1}.png"
     )
-    return layout.figures / series / subject / filename
+    path = layout.figures / series / "map2d" / comparison
+    if "_simulation" in comparison or subject == "all_simulations":
+        path /= quote(subject, safe="-_.")
+    return path / safe_variable / filename
 
 
 def _movie_path(
@@ -1059,7 +1098,10 @@ def _movie_path(
     filename = (
         f"{safe_variable}_{comparison}_c{color_index + 1}_e{extent_index + 1}.mp4"
     )
-    return layout.figures / series / subject / filename
+    path = layout.figures / series / "map2d" / comparison
+    if "_simulation" in comparison or subject == "all_simulations":
+        path /= quote(subject, safe="-_.")
+    return path / filename
 
 
 def _config_fingerprint(project: ProjectConfig, analysis: Map2DConfig) -> str:

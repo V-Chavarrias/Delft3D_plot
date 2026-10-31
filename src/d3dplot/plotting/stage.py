@@ -354,7 +354,13 @@ def _load_map2d_source(
     frames: list[Map2DPlotFrame] = []
     grid_paths: set[Path] = set()
     for cache_path in cache_paths:
-        frame_time, cache_variable, cache_selection, grid_path = _read_cache_metadata(
+        (
+            frame_time,
+            morph_time,
+            cache_variable,
+            cache_selection,
+            grid_path,
+        ) = _read_cache_metadata(
             cache_path,
             layout,
         )
@@ -376,6 +382,7 @@ def _load_map2d_source(
                 match_key=frame_time.isoformat(),
                 time=frame_time,
                 path=cache_path,
+                morph_time=morph_time,
             )
         )
     if len(grid_paths) != 1:
@@ -397,7 +404,7 @@ def _load_map2d_source(
 def _read_cache_metadata(
     path: Path,
     layout: OutputLayout,
-) -> tuple[datetime, str, str, Path]:
+) -> tuple[datetime, datetime | None, str, str, Path]:
     resolved_path = path.resolve(strict=True)
     if not _is_within(resolved_path, layout.root):
         raise OutputWriteError(f"Cache path is outside the marked output root: {path}")
@@ -405,6 +412,7 @@ def _read_cache_metadata(
         with _NETCDF4_READ_LOCK:
             with netCDF4.Dataset(resolved_path, mode="r") as dataset:
                 time_value = getattr(dataset, "time", None)
+                morph_time_value = getattr(dataset, "morph_time", None)
                 variable_value = getattr(dataset, "variable", None)
                 selection_value = getattr(dataset, "selection", None)
                 grid_file_value = getattr(dataset, "grid_file", None)
@@ -446,6 +454,20 @@ def _read_cache_metadata(
             "V-PLOT-002",
             f"Map2d cache time must include a UTC offset: {path}.",
         )
+    morph_time: datetime | None = None
+    if isinstance(morph_time_value, str) and morph_time_value:
+        try:
+            morph_time = datetime.fromisoformat(morph_time_value)
+        except ValueError as error:
+            raise Map2DPlotError(
+                "V-PLOT-002",
+                f"Map2d cache has an invalid morphological time value: {path}.",
+            ) from error
+        if morph_time.tzinfo is None or morph_time.utcoffset() is None:
+            raise Map2DPlotError(
+                "V-PLOT-002",
+                f"Map2d cache morphological time must include a UTC offset: {path}.",
+            )
 
     try:
         grid_path = (resolved_path.parent / grid_file_value).resolve(strict=True)
@@ -458,7 +480,7 @@ def _read_cache_metadata(
         raise OutputWriteError(
             f"Inspected grid path is outside the marked output root: {grid_path}"
         )
-    return frame_time, variable_value, selection_value, grid_path
+    return frame_time, morph_time, variable_value, selection_value, grid_path
 
 
 def _selection(analysis: Map2DConfig, variable: str) -> str:

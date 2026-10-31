@@ -143,6 +143,71 @@ def test_mat_conversion_sorts_times_and_locations_and_preserves_metadata(
 
 
 @pytest.mark.unit
+def test_duplicate_river_km_coordinates_keep_last_measurement(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "duplicate_measurements.mat"
+    scipy.io.savemat(
+        source,
+        {
+            "data": {
+                "bl": {
+                    "val_mean": {
+                        "rkm": np.asarray([1.0, 2.0, 2.0]),
+                        "tim_dnum": np.asarray(
+                            [_datenum(2024, 1, 1), _datenum(2024, 1, 2)]
+                        ),
+                        "val": np.asarray([[10.0, 11.0], [20.0, 21.0], [30.0, 31.0]]),
+                        "unit": "bed elevation [m+NAP]",
+                    }
+                }
+            }
+        },
+    )
+    layout, guard = _root(tmp_path)
+    messages: list[str] = []
+
+    (measurement,) = load_profile_measurements(
+        source,
+        ["bed_level"],
+        time_zone="+00:00",
+        layout=layout,
+        guard=guard,
+        diagnostic=messages.append,
+    ).values()
+
+    np.testing.assert_array_equal(measurement.river_km, [1.0, 2.0])
+    np.testing.assert_allclose(
+        measurement.statistics["mean"],
+        [[10.0, 30.0], [11.0, 31.0]],
+    )
+    assert any("kept the last value" in message for message in messages)
+
+
+@pytest.mark.unit
+def test_missing_measurement_variables_are_skipped_when_requested(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "partial_measurements.mat"
+    _write_mat(source)
+    layout, guard = _root(tmp_path)
+    messages: list[str] = []
+
+    measurements = load_profile_measurements(
+        source,
+        ["bed_level", "mean_grain_size_geometric"],
+        time_zone="+00:00",
+        layout=layout,
+        guard=guard,
+        diagnostic=messages.append,
+        skip_missing=True,
+    )
+
+    assert set(measurements) == {"bed_level"}
+    assert any("Skipped missing profile measurement" in message for message in messages)
+
+
+@pytest.mark.unit
 def test_profile_and_time_series_matching_honor_tolerances(tmp_path: Path) -> None:
     source = tmp_path / "measurements.mat"
     _write_mat(source)

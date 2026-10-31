@@ -142,6 +142,13 @@ class FigureConfig(ConfigModel):
     dpi: PositiveInt = Field(
         default=150, description="Output resolution in dots per inch."
     )
+    time_format: str = Field(
+        default="yyyy-mm-dd HH:MM",
+        description=(
+            "Time format used in figure titles. Supports yyyy, mm, dd, HH, "
+            "MM, ss tokens or Python strftime directives."
+        ),
+    )
     formats: list[Literal["png"]] = Field(
         default_factory=_default_formats,
         min_length=1,

@@ -55,6 +55,7 @@ from d3dplot.plotting.finalize import (
     close_figure,
     finalize_figure,
 )
+from d3dplot.plotting.time import format_time_label
 from d3dplot.plotting.views.decorations import (
     MapDecorations,
     MapDecorationsError,
@@ -289,6 +290,7 @@ def _prepare_profile_measurement_inputs(
                     layout=layout,
                     guard=guard,
                     diagnostic=report,
+                    skip_missing=True,
                 )
             except ProfileMeasurementError as error:
                 raise RiverKmStatisticsPlotError(error.code, str(error)) from error
@@ -2008,14 +2010,9 @@ def _plot_time_average_profiles(
                         scale=0.001,
                         extra_dictionaries=project.labels.extra_dictionaries,
                     ).text,
-                    y_label=_axis_value_label(
-                        (
-                            f"{average.name} — "
-                            f"{_statistic_label(average_statistic, project)} of "
-                            f"{base_statistic_text}"
-                        ),
+                    y_label=_variable_axis_label(
                         variable,
-                        unit_text,
+                        project,
                         figure_config.display_scale,
                     ),
                     title=average_title,
@@ -2901,16 +2898,27 @@ def _plot_profiles(
             y_values = y_values[np.newaxis, :]
         else:
             y_values = y_values.T
-        line_labels = tuple(
-            name or _statistic_label(statistic, project) for name in component_labels
-        )
+        line_labels: tuple[str, ...]
+        if component_count == 1:
+            line_labels = ("model",) if measurement_overlays else ("",)
+        else:
+            line_labels = tuple(
+                name or _statistic_label(statistic, project)
+                for name in component_labels
+            )
         title = _figure_title(
             project,
             statistic_text,
             region_name,
             km_set_name,
             comparison,
-            frame.time,
+            (
+                frame.morph_time
+                if analysis.times.axis == "morphological"
+                and frame.morph_time is not None
+                else frame.time
+            ),
+            time_format=figure_config.time_format,
         )
         for limit_index, (x_limit, y_limit) in enumerate(limit_pairs):
             output_path = _line_path(
@@ -2930,7 +2938,7 @@ def _plot_profiles(
                 kind="figure",
                 schema_version=CACHE_SCHEMA_VERSION,
                 tool_version=__version__,
-                algorithm_version="river-km-lines-1",
+                algorithm_version="river-km-lines-2",
                 parameters={
                     "analysis": analysis.model_dump(mode="json"),
                     "comparison": comparison,
@@ -2976,7 +2984,8 @@ def _plot_profiles(
                     scale=0.001,
                     extra_dictionaries=project.labels.extra_dictionaries,
                 ).text,
-                y_label=_axis_value_label(statistic_text, variable, unit_text, scale),
+                y_label=_variable_axis_label(variable, project, scale),
+                show_legend=(len(line_labels) > 1 or bool(measurement_overlays)),
                 title=title,
                 x_limits=x_limit,
                 y_limits=y_limit,
@@ -3145,10 +3154,9 @@ def _plot_profile_all_times(
                 scale=0.001,
                 extra_dictionaries=project.labels.extra_dictionaries,
             ).text,
-            y_label=_axis_value_label(
-                statistic_text,
+            y_label=_variable_axis_label(
                 variable,
-                unit_text,
+                project,
                 figure_config.display_scale,
             ),
             title=title,
@@ -3325,10 +3333,9 @@ def _plot_space_time(
             matrix,
             figure_config=figure_config,
             colormap=_map_colormap(analysis, variable),
-            colorbar_label=_axis_value_label(
-                statistic_text,
+            colorbar_label=_variable_axis_label(
                 variable,
-                unit_text,
+                project,
                 figure_config.display_scale,
             ),
             x_label=label(
@@ -3510,10 +3517,9 @@ def _plot_time_series(
                 "quantity",
                 extra_dictionaries=project.labels.extra_dictionaries,
             ).text,
-            y_label=_axis_value_label(
-                statistic_text,
+            y_label=_variable_axis_label(
                 variable,
-                unit_text,
+                project,
                 figure_config.display_scale,
             ),
             title=title,
@@ -3627,16 +3633,14 @@ def _figure_title(
     comparison: str,
     time: datetime | None,
     *,
+    time_format: str = "yyyy-mm-dd HH:MM",
     component_name: str | None = None,
 ) -> str:
-    parts = [statistic_text, region_name, km_set_name]
-    if comparison != "value":
-        parts.append(comparison.replace("_", " "))
     if time is not None:
-        parts.append(time.isoformat())
+        return format_time_label(time, time_format)
     if component_name:
-        parts.append(component_name)
-    return " — ".join(parts)
+        return component_name
+    return "All times"
 
 
 def _display_mode(
@@ -3656,6 +3660,13 @@ def _display_mode(
     else:
         mode = configured
     if mode == "auto":
+        if get_variable_spec(variable).name in {
+            "mean_grain_size_arithmetic",
+            "mean_grain_size_geometric",
+            "mean_grain_size_geometric_output",
+            "grain_size_percentile",
+        }:
+            return "lines"
         return "stacked_area" if get_variable_spec(variable).extra_dims else "lines"
     return "lines" if mode == "lines" else "stacked_area"
 
@@ -3669,6 +3680,22 @@ def _axis_value_label(
     scale_text = f" × {scale:g}" if scale != 1.0 else ""
     unit = f" [{unit_text}{scale_text}]" if unit_text else ""
     return f"{statistic_text} — {variable}{unit}"
+
+
+def _variable_axis_label(
+    variable: str,
+    project: ProjectConfig,
+    scale: float,
+) -> str:
+    value_label = label(
+        variable,
+        project.language,
+        "value",
+        datum=project.labels.vertical_datum,
+        extra_dictionaries=project.labels.extra_dictionaries,
+    )
+    scale_text = f" × {scale:g}" if scale != 1.0 else ""
+    return f"{value_label.text}{scale_text}"
 
 
 def _paired_limits(
@@ -3708,14 +3735,16 @@ def _line_path(
         if time is not None
         else "all_times"
     )
+    path = layout.figures / quote(series, safe="-_.")
+    if subject == "all_simulations":
+        path /= quote(subject, safe="-_.")
     return (
-        layout.figures
-        / quote(series, safe="-_.")
-        / quote(subject, safe="-_.")
+        path
         / "river_km_statistics"
         / quote(region_name, safe="-_.")
         / quote(km_set_name, safe="-_.")
         / quote(variable.casefold(), safe="-_.")
+        / quote(comparison, safe="-_.")
         / f"{view_name}_{statistic}_{comparison}_{time_text}_l{limit_index + 1}.png"
     )
 

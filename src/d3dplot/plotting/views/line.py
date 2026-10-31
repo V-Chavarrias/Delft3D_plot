@@ -44,6 +44,7 @@ class LineView:
         x_label: str,
         y_label: str,
         title: str,
+        show_legend: bool = True,
         x_limits: AxisLimit | None = None,
         y_limits: AxisLimit | None = None,
     ) -> LineView:
@@ -76,7 +77,7 @@ class LineView:
         axes.set_xlabel(x_label)
         axes.set_ylabel(y_label)
         axes.set_title(title)
-        if labels:
+        if labels and show_legend:
             axes.legend()
         if x_limits is not None:
             axes.set_xlim(*x_limits)
