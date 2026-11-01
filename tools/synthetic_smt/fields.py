@@ -1,12 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Analytic model fields and SMT time structure. Expected results are derived from the same functions."""
+"""Analytic model fields and SMT time structure used for expected results."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 import numpy as np
-
 from mesh import Mesh
 from params import (
     GRAVITY_M_S2,
@@ -55,13 +54,19 @@ def bed_level(p: Params, s, n, t_mor_s, erosion_rate_m_per_day: float):
     s, n = np.asarray(s, float), np.asarray(n, float)
     base = p.z0 - p.slope * s
     channel = np.abs(n) < p.channel_half_width
-    bars = p.bar_amplitude * np.sin(2 * np.pi * s / p.bar_wavelength) * np.cos(np.pi * n / (2 * p.channel_half_width))
+    bars = (
+        p.bar_amplitude
+        * np.sin(2 * np.pi * s / p.bar_wavelength)
+        * np.cos(np.pi * n / (2 * p.channel_half_width))
+    )
     erosion = erosion_rate_m_per_day * np.asarray(t_mor_s, float) / DAY
     return np.where(channel, base + bars + erosion, base + p.floodplain_height)
 
 
 def hydro_fields(p: Params, s, bl, stage: float):
-    s1 = np.broadcast_to(p.z0 - p.slope * np.asarray(s, float) + p.base_depth + stage, np.shape(bl)).copy()
+    s1 = np.broadcast_to(
+        p.z0 - p.slope * np.asarray(s, float) + p.base_depth + stage, np.shape(bl)
+    ).copy()
     h = np.maximum(s1 - bl, 0.0)
     q = 2.0 * (1.0 + stage)
     u = np.where(h > 0.05, q / np.maximum(h, 0.05), 0.0)
@@ -80,17 +85,31 @@ def layer_fractions(p: Params, s) -> np.ndarray:
 
 
 def special_faces(p: Params, mesh: Mesh) -> dict[str, np.ndarray]:
-    """Faces that get NaN / Inf bed level (r001, sub-run 2, last map time): tests the SMB exclusion rule."""
+    """Faces with NaN/Inf bed level in r001, sub-run 2's last map time."""
     channel_col = np.isclose(mesh.face_n, -12.5)
     nan = np.flatnonzero(channel_col & np.isin(mesh.face_i, [50, 51, 52]))
     inf = np.flatnonzero(channel_col & (mesh.face_i == 75))
-    return {"nan": nan, "inf": inf, "subrun": np.array([2]), "time_index": np.array([2])}
+    return {
+        "nan": nan,
+        "inf": inf,
+        "subrun": np.array([2]),
+        "time_index": np.array([2]),
+    }
 
 
-def map_fields(p: Params, mesh: Mesh, sim: SimulationParams, run: SubRunTimes) -> dict[str, np.ndarray]:
+def map_fields(
+    p: Params, mesh: Mesh, sim: SimulationParams, run: SubRunTimes
+) -> dict[str, np.ndarray]:
     """All time-dependent fields on the global faces and edges."""
     nt = len(run.time)
-    bl = np.stack([bed_level(p, mesh.face_s, mesh.face_n, run.morft[k], sim.erosion_rate_m_per_day) for k in range(nt)])
+    bl = np.stack(
+        [
+            bed_level(
+                p, mesh.face_s, mesh.face_n, run.morft[k], sim.erosion_rate_m_per_day
+            )
+            for k in range(nt)
+        ]
+    )
     if sim.nan_faces:
         sp = special_faces(p, mesh)
         if run.index in sp["subrun"]:
@@ -98,7 +117,13 @@ def map_fields(p: Params, mesh: Mesh, sim: SimulationParams, run: SubRunTimes) -
             bl[k, sp["nan"]] = np.nan
             bl[k, sp["inf"]] = np.inf
     stage = p.stage_m[run.index]
-    bl_finite = np.where(np.isfinite(bl), bl, bed_level(p, mesh.face_s, mesh.face_n, run.morft[:, None], sim.erosion_rate_m_per_day))
+    bl_finite = np.where(
+        np.isfinite(bl),
+        bl,
+        bed_level(
+            p, mesh.face_s, mesh.face_n, run.morft[:, None], sim.erosion_rate_m_per_day
+        ),
+    )
     s1, h, u, taus = hydro_fields(p, mesh.face_s[None, :], bl_finite, stage)
     eastward = 0.6 * u
     northward = 0.8 * u
@@ -116,7 +141,10 @@ def map_fields(p: Params, mesh: Mesh, sim: SimulationParams, run: SubRunTimes) -
         np.stack((first_layer, second_layer), axis=-1),
         (nt, mesh.n_faces, p.n_bed_layers),
     ).copy()
-    frac = np.broadcast_to(layer_fractions(p, mesh.face_s), (nt, mesh.n_faces, p.n_bed_layers, p.n_fractions))
+    frac = np.broadcast_to(
+        layer_fractions(p, mesh.face_s),
+        (nt, mesh.n_faces, p.n_bed_layers, p.n_fractions),
+    )
     fraction_scale = np.arange(1, p.n_fractions + 1, dtype=np.float64) * (1 + stage)
     transport_x = np.broadcast_to(
         0.1 * fraction_scale,
@@ -149,10 +177,13 @@ def map_fields(p: Params, mesh: Mesh, sim: SimulationParams, run: SubRunTimes) -
     ) / edge_length
     edge_face_indices = np.clip(mesh.edge_faces, 0, mesh.n_faces - 1)
     edge_face_mask = mesh.edge_faces >= 0
-    edge_depth = np.sum(
-        h[:, edge_face_indices] * edge_face_mask[None, :, :],
-        axis=-1,
-    ) / edge_face_mask.sum(axis=1)[None, :]
+    edge_depth = (
+        np.sum(
+            h[:, edge_face_indices] * edge_face_mask[None, :, :],
+            axis=-1,
+        )
+        / edge_face_mask.sum(axis=1)[None, :]
+    )
 
     return {
         "mesh2d_mor_bl": bl,
@@ -170,6 +201,8 @@ def map_fields(p: Params, mesh: Mesh, sim: SimulationParams, run: SubRunTimes) -
         "mesh2d_sytot": transport_y,
         "mesh2d_sbcx": bedload_x,
         "mesh2d_sbcy": bedload_y,
-        "mesh2d_u1": np.broadcast_to(edge_velocity, (nt, mesh.edge_nodes.shape[0])).copy(),
+        "mesh2d_u1": np.broadcast_to(
+            edge_velocity, (nt, mesh.edge_nodes.shape[0])
+        ).copy(),
         "mesh2d_hu": edge_depth,
     }

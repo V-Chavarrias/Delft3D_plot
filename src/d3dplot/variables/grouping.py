@@ -3,9 +3,9 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from hashlib import blake2b
-import json
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -51,8 +51,7 @@ def sediment_class_membership(
     if (
         len(class_labels) != limits.size + 1
         or any(not label or label != label.strip() for label in class_labels)
-        or len({label.casefold() for label in class_labels})
-        != len(class_labels)
+        or len({label.casefold() for label in class_labels}) != len(class_labels)
     ):
         raise SedimentGroupingError(
             "Provide one unique, non-empty trimmed label per sediment-size class."

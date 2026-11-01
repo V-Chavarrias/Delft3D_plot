@@ -185,7 +185,7 @@ def build_segment_geometry(
     centres = _validated_centres(centres_km)
     if not math.isfinite(half_width_m) or half_width_m <= 0:
         raise RiverKmGeometryError("half_width_m must be positive and finite.")
-    provider = RiverKmProvider.from_points(points)
+    provider = RiverKmProvider.from_points(points, track=track)
     explicit_branches = (
         _expand_branches(branches, len(centres)) if provider.name == "generic" else None
     )

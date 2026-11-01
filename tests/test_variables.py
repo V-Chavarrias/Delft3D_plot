@@ -16,11 +16,13 @@ from d3dplot.variables import (
     render_variable_catalogue,
     suggest_variable_names,
 )
+from d3dplot.variables.context import QuantityRequest
 from d3dplot.variables.registry import (
     VariableLocation,
     VariableSpec,
     _build_registry,
 )
+from d3dplot.variables.selection import quantity_selection_label
 
 
 @pytest.mark.unit
@@ -66,6 +68,18 @@ def test_grain_size_percentile_aliases_resolve_to_the_canonical_quantity(
     name: str,
 ) -> None:
     assert get_variable_spec(name).name == "grain_size_percentile"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [("d10", "layer-1-d10"), ("d50", "layer-1-d50"), ("d90", "layer-1-d90")],
+)
+def test_grain_size_percentiles_have_distinct_selection_labels(
+    name: str,
+    expected: str,
+) -> None:
+    assert quantity_selection_label(QuantityRequest(name, layers=(1,))) == expected
 
 
 @pytest.mark.unit

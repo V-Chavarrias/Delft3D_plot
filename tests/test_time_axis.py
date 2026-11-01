@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 import pytest
 
@@ -184,8 +185,58 @@ def test_matches_reference_times_across_simulations() -> None:
     )
 
     assert matched.entries == (local_entries[1],)
+    assert len(matched.matches) == 1
+    assert matched.matches[0].reference == reference_entry
+    assert matched.matches[0].local == local_entries[1]
+    assert not matched.unmatched_reference_entries
+    assert local_entries[0] in matched.unmatched_local_entries
     assert not unmatched.entries
     assert unmatched.issues[0].code == "V-TIME-010"
+    assert unmatched.unmatched_reference_entries == (reference_entry,)
+
+
+def test_time_matching_reports_reference_outputs_reusing_one_local_output() -> None:
+    local_entry = _entry(0, 0)
+    reference_entries = (_entry(0, 0.1), _entry(1, 0.2))
+    local_axis = TimeAxis((local_entry,), "+00:00", morphology_available=False)
+
+    result = local_axis.match(
+        reference_entries,
+        axis="hydrodynamic",
+        tolerance=timedelta(seconds=1),
+    )
+
+    assert result.entries == (local_entry,)
+    assert len(result.matches) == 1
+    assert result.matches[0].reference == reference_entries[0]
+    assert result.unmatched_reference_entries == (reference_entries[1],)
+    assert not result.unmatched_local_entries
+
+
+@pytest.mark.parametrize(
+    ("duplicate_policy", "expected_index"),
+    (("last", 1), ("first", 0)),
+)
+def test_time_matching_uses_morphological_axis_and_duplicate_policy(
+    duplicate_policy: Literal["first", "last"],
+    expected_index: int,
+) -> None:
+    local_entries = (
+        _entry(0, 0, morph_seconds=0),
+        _entry(1, 100, morph_seconds=30),
+    )
+    reference_entry = _entry(2, 200, morph_seconds=15)
+    local_axis = TimeAxis(local_entries, "+00:00", morphology_available=True)
+
+    result = local_axis.match(
+        (reference_entry,),
+        axis="morphological",
+        tolerance=timedelta(seconds=20),
+        duplicate_morphological_times=duplicate_policy,
+    )
+
+    assert result.matches[0].local == local_entries[expected_index]
+    assert len(result.duplicates) == 1
 
 
 def test_cf_time_uses_encoded_or_fallback_offset_and_decodes_to_utc() -> None:

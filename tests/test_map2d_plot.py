@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +26,7 @@ from d3dplot.analyses.map2d.plot import (
     plot_map2d_group,
 )
 from d3dplot.config.project import ProjectConfig
+from d3dplot.config.selections import TimesConfig
 from d3dplot.plotting.views.decorations import _clip_line
 from d3dplot.store import (
     OutputLayout,
@@ -394,6 +395,66 @@ def test_plot_map2d_regrids_simulation_time_difference(
     )
     assert reused_regridder.output_paths == result.output_paths
     assert _HOOK_VALUES[-1] == (1.0,)
+
+
+@pytest.mark.unit
+def test_plot_map2d_matches_reference_times_and_uses_first_matched_baseline(
+    tmp_path: Path,
+) -> None:
+    project, analysis, source = _project_and_source(
+        tmp_path,
+        values=((9.0, 9.0), (2.0, 2.0), (5.0, 5.0)),
+        with_hook=True,
+    )
+    analysis = analysis.model_copy(
+        update={
+            "time_matching": "reference",
+            "times": TimesConfig(
+                at="all",
+                tolerance=timedelta(seconds=2),
+            ),
+        }
+    )
+    reference_frames = tuple(
+        Map2DPlotFrame(
+            match_key=f"reference-{index}",
+            time=source.frames[index + 1].time + timedelta(seconds=1),
+            path=_write_frame(
+                source.layout,
+                source.guard,
+                index + 10,
+                values,
+            ),
+        )
+        for index, values in enumerate(((1.0, 1.0), (3.0, 3.0)))
+    )
+    reference = Map2DPlotSource(
+        label="reference",
+        layout=source.layout,
+        guard=source.guard,
+        grid_path=source.grid_path,
+        frames=reference_frames,
+        model_time_zone="+00:00",
+    )
+    _HOOK_VALUES.clear()
+
+    result = plot_map2d_group(
+        project,
+        analysis,
+        source,
+        "water_depth",
+        "difference_simulation_time",
+        reference=reference,
+        fresh_figures=True,
+    )
+
+    assert len(result.output_paths) == 1
+    assert _HOOK_VALUES == [(1.0, 1.0)]
+    assert any(
+        "Unpaired output(s) from 'current'" in message
+        and "2021-01-01T00:00:00+00:00" in message
+        for message in result.messages
+    )
 
 
 @pytest.mark.unit

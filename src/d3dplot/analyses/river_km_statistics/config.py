@@ -197,8 +197,7 @@ class FractionGroupingConfig(ConfigModel):
         """Return whether any requested or canonical name is grouped."""
         configured = {_canonical_quantity_name(name) for name in self.variables}
         return any(
-            _canonical_quantity_name(name) in configured
-            for name in variable_names
+            _canonical_quantity_name(name) in configured for name in variable_names
         )
 
 

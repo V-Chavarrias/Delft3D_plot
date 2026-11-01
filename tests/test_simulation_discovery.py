@@ -255,6 +255,26 @@ def test_partition_count_must_match_between_smt_subruns(tmp_path: Path) -> None:
     assert [issue.code for issue in report.errors] == ["V-OUT-003"]
 
 
+def test_smt_absolute_output_directory_is_not_reused_for_later_subruns(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "smt.yml").write_text("model: dflowfm\n", encoding="utf-8")
+    shared_output = tmp_path / "shared_results"
+    for index in range(2):
+        subrun = tmp_path / "output" / str(index)
+        subrun.mkdir(parents=True)
+        (subrun / "dflowfm.mdu").write_text(
+            f"[Time]\nRefDate = 20200101\n[Output]\nOutputDir = {shared_output}\n",
+            encoding="utf-8",
+        )
+    _write_map(shared_output / "dflowfm_map.nc")
+
+    simulation, report = discover_simulation(tmp_path)
+
+    assert simulation is None
+    assert [issue.code for issue in report.errors] == ["V-SIM-012"]
+
+
 def test_parallel_smt_discovery_preserves_subrun_order(tmp_path: Path) -> None:
     (tmp_path / "smt.yml").write_text("model: dflowfm\n", encoding="utf-8")
     for index in range(8):

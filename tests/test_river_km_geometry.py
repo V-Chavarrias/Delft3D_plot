@@ -156,6 +156,20 @@ def test_mixed_recognized_river_tags_are_rejected() -> None:
     assert error.value.code == "V-RKM-002"
 
 
+def test_configured_track_overrides_mixed_provider_tags() -> None:
+    points = (*_axis_points("MA", range(3, 8)), *_axis_points("WA", range(3, 8)))
+
+    geometry = build_segment_geometry(
+        points,
+        [4.0, 5.0, 6.0],
+        track="MA",
+        half_width_m=10.0,
+    )
+
+    assert geometry.provider == "maas"
+    assert geometry.centre_branches == ("MA", "MA", "MA")
+
+
 def test_generic_multiple_branches_need_an_explicit_choice() -> None:
     provider = RiverKmProvider.from_points(_points("NORTH", "SOUTH"))
 

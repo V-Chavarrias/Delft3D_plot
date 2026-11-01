@@ -1142,6 +1142,12 @@ def _write_segment_statistics_file(
     stored_statistics = [
         name for name in config.statistics if name != "bed_slope_streamwise"
     ]
+    if (
+        config.multiply_by_width != "none"
+        and "mean" in config.statistics
+        and "mean_area_weighted" not in stored_statistics
+    ):
+        stored_statistics.append("mean_area_weighted")
     if "bed_slope_streamwise" in config.statistics and "mean" not in stored_statistics:
         stored_statistics.insert(0, "mean")
     statistic_values = np.stack([reduced[name] for name in stored_statistics], axis=1)

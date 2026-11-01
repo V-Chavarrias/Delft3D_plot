@@ -86,7 +86,31 @@ def discover_subrun_from_template(
     check_map_headers: bool = False,
 ) -> tuple[SubRun | None, tuple[ValidationIssue, ...]]:
     """Discover one SMT sub-run using the first sub-run's model-input metadata."""
-    model_input = _rebase_model_input(template, folder)
+    template_mdu = template.model_input.mdu
+    source_map = (
+        template_mdu.map_file
+        if template_mdu.map_file.is_absolute()
+        else template_mdu.output_dir / template_mdu.map_file
+    )
+    rebased_map = _rebase_path(source_map, template.folder, folder)
+    if rebased_map.resolve(strict=False) == source_map.resolve(strict=False):
+        return None, (
+            _simulation_issue(
+                "V-SIM-012",
+                template_mdu.mdu_path,
+                (
+                    f"SMT sub-run {index} would reuse map output "
+                    f"{source_map}, which cannot be rebased from sub-run "
+                    f"{template.index}."
+                ),
+                (
+                    "Configure OutputDir and MapFile in sub-run 0 as paths "
+                    "inside that folder so they can be rebased later."
+                ),
+            ),
+        )
+
+    model_input = _rebase_model_input(template, folder, map_file=rebased_map)
     map_files, output_issues = discover_map_files(
         model_input.mdu,
         check_headers=check_map_headers,
@@ -106,14 +130,14 @@ def discover_subrun_from_template(
     )
 
 
-def _rebase_model_input(template: SubRun, folder: Path) -> ModelInput:
+def _rebase_model_input(
+    template: SubRun,
+    folder: Path,
+    *,
+    map_file: Path,
+) -> ModelInput:
     source_folder = template.folder
     template_mdu = template.model_input.mdu
-    source_map = (
-        template_mdu.map_file
-        if template_mdu.map_file.is_absolute()
-        else template_mdu.output_dir / template_mdu.map_file
-    )
     rebased_mdu = MduInfo(
         mdu_path=_rebase_path(template_mdu.mdu_path, source_folder, folder),
         refdate=template_mdu.refdate,
@@ -122,7 +146,7 @@ def _rebase_model_input(template: SubRun, folder: Path) -> ModelInput:
         tstop=template_mdu.tstop,
         tzone=template_mdu.tzone,
         output_dir=_rebase_path(template_mdu.output_dir, source_folder, folder),
-        map_file=_rebase_path(source_map, source_folder, folder),
+        map_file=map_file,
         net_file=_rebase_optional_path(template_mdu.net_file, source_folder, folder),
         mor_file=_rebase_optional_path(template_mdu.mor_file, source_folder, folder),
         sed_file=_rebase_optional_path(template_mdu.sed_file, source_folder, folder),

@@ -20,6 +20,7 @@ from time import perf_counter
 from typing import Any, Literal, Protocol, TypeAlias, cast
 
 from d3dplot import __version__
+from d3dplot.config.selections import TimesConfig
 from d3dplot.simulation.discover import (
     _MAX_DISCOVERY_WORKERS,
     _MIN_SUBRUNS_FOR_PARALLEL,
@@ -27,10 +28,12 @@ from d3dplot.simulation.discover import (
 )
 from d3dplot.simulation.partitions import _NETCDF4_READ_LOCK
 from d3dplot.simulation.subrun import SubRun
+from d3dplot.simulation.time_axis import TimeAxis, TimeEntry
 from d3dplot.simulation.time_utils import (
     cf_time_units_with_origin,
     decode_cf_time,
     offset_text,
+    time_unit_seconds,
     timezone_from_cf_units,
     timezone_from_hours,
     timezone_from_offset,
@@ -43,6 +46,7 @@ from d3dplot.store import (
     atomic_path,
     fingerprint_artifact,
     fingerprint_model_output,
+    fingerprint_small_input,
     initialize_output_root,
 )
 from d3dplot.validate.report import ValidationIssue, ValidationReport
@@ -263,6 +267,9 @@ def inspect_simulation(
     time_zone: str | None = None,
     check_boundary_duplicates: bool = True,
     forbidden_roots: Sequence[str | Path] = (),
+    time_selections: Sequence[tuple[TimesConfig, Literal["first", "last"]]]
+    | None = None,
+    on_corrupt_output: Literal["mask", "error", "skip"] = "mask",
 ) -> tuple[InspectionResult | None, ValidationReport]:
     """Build or reuse the grid and time caches for a discovered simulation."""
     started = perf_counter()
@@ -302,6 +309,20 @@ def inspect_simulation(
         )
         return None, ValidationReport(tuple(issues))
 
+    try:
+        input_fingerprints.append(fingerprint_small_input(reference.mdu.mdu_path))
+    except (OSError, RuntimeError, ValueError) as error:
+        issues.append(
+            _issue(
+                "V-MDU-001",
+                "error",
+                reference.mdu.mdu_path,
+                f"Could not fingerprint reference MDU: {error}",
+                "Check that the reference MDU is readable.",
+            )
+        )
+        return None, ValidationReport(tuple(issues))
+
     parameters: dict[str, object] = {
         "crs": crs,
         "time_zone": time_zone,
@@ -310,6 +331,18 @@ def inspect_simulation(
         "reference_subrun": reference_subrun,
         "subruns": [subrun.index for subrun in simulation.subruns],
         "partition_count": reference.partition_count,
+        "time_selections": (
+            [
+                {
+                    "times": times.model_dump(mode="json"),
+                    "duplicate_morphological_times": duplicate_policy,
+                }
+                for times, duplicate_policy in time_selections
+            ]
+            if time_selections is not None
+            else None
+        ),
+        "on_corrupt_output": on_corrupt_output,
     }
     fingerprint = fingerprint_artifact(
         kind="inspect",
@@ -390,14 +423,19 @@ def inspect_simulation(
     if reference_metadata is None:
         return None, ValidationReport(tuple(issues))
 
-    time_metadata_results = _inspect_subruns_time_metadata(simulation.subruns[1:])
-    subrun_metadata = [reference_metadata]
-    for metadata, subrun_issues in time_metadata_results:
-        issues.extend(subrun_issues)
-        if metadata is not None:
-            subrun_metadata.append(metadata)
-
-    if len(subrun_metadata) != len(simulation.subruns) or _has_errors(issues):
+    (
+        subrun_metadata,
+        time_metadata_issues,
+        fully_inspected_subruns,
+    ) = _inspect_time_metadata_for_selection(
+        simulation,
+        reference_metadata,
+        time_zone=time_zone,
+        time_selections=time_selections,
+        on_corrupt_output=on_corrupt_output,
+    )
+    issues.extend(time_metadata_issues)
+    if subrun_metadata is None or _has_errors(issues):
         return None, ValidationReport(tuple(issues))
 
     if not reference_metadata.has_globalnr:
@@ -422,6 +460,7 @@ def inspect_simulation(
         subrun_metadata,
         time_zone=time_zone,
         check_boundary_duplicates=check_boundary_duplicates,
+        boundary_subruns=fully_inspected_subruns,
     )
     issues.extend(time_issues)
     if _has_errors(issues):
@@ -553,30 +592,188 @@ def inspect_simulation(
     )
 
 
+def _inspect_time_metadata_for_selection(
+    simulation: Simulation,
+    reference_metadata: _SubRunInspection,
+    *,
+    time_zone: str | None,
+    time_selections: Sequence[tuple[TimesConfig, Literal["first", "last"]]] | None,
+    on_corrupt_output: Literal["mask", "error", "skip"],
+) -> tuple[
+    list[_SubRunInspection] | None,
+    tuple[ValidationIssue, ...],
+    frozenset[int],
+]:
+    subruns = simulation.subruns[1:]
+    metadata_by_index = {simulation.subruns[0].index: reference_metadata}
+    fully_inspected = {simulation.subruns[0].index}
+    issues: list[ValidationIssue] = []
+    optimize = bool(time_selections) and all(
+        times.at == "last" for times, _ in time_selections or ()
+    )
+
+    def inspect_full(indices: set[int]) -> None:
+        targets = tuple(
+            subrun
+            for subrun in subruns
+            if subrun.index in indices and subrun.index not in fully_inspected
+        )
+        candidates = {
+            subrun.index: metadata_by_index[subrun.index]
+            for subrun in targets
+            if subrun.index in metadata_by_index
+        }
+        for subrun, (metadata, subrun_issues) in zip(
+            targets,
+            _inspect_subruns_time_metadata(targets, candidates=candidates),
+            strict=True,
+        ):
+            fully_inspected.add(subrun.index)
+            issues.extend(subrun_issues)
+            if metadata is not None:
+                metadata_by_index[subrun.index] = metadata
+
+    if not optimize:
+        inspect_full({subrun.index for subrun in subruns})
+    else:
+        suspect_subruns: set[int] = set()
+        for subrun in subruns:
+            candidate, _ = _inspect_subrun_time_candidate(subrun)
+            if candidate is None or candidate.corrupt_partitions:
+                suspect_subruns.add(subrun.index)
+            else:
+                metadata_by_index[subrun.index] = candidate
+        inspect_full(suspect_subruns)
+
+        while len(metadata_by_index) == len(simulation.subruns):
+            candidate_cache, candidate_issues = _prepare_time_axis(
+                simulation,
+                [metadata_by_index[subrun.index] for subrun in simulation.subruns],
+                time_zone=time_zone,
+                check_boundary_duplicates=False,
+                boundary_subruns=frozenset(),
+            )
+            selected = (
+                None
+                if _has_errors(candidate_issues)
+                else _selected_subrun_indices(
+                    candidate_cache,
+                    time_selections or (),
+                    on_corrupt_output=on_corrupt_output,
+                )
+            )
+            if selected is None:
+                inspect_full({subrun.index for subrun in subruns})
+                break
+
+            required = set(selected)
+            for position, subrun in enumerate(simulation.subruns):
+                if subrun.index not in selected:
+                    continue
+                if position > 0:
+                    required.add(simulation.subruns[position - 1].index)
+                if position + 1 < len(simulation.subruns):
+                    required.add(simulation.subruns[position + 1].index)
+            pending = required - fully_inspected
+            if not pending:
+                break
+            inspect_full(pending)
+
+    if len(metadata_by_index) != len(simulation.subruns):
+        return None, tuple(issues), frozenset(fully_inspected)
+    ordered = [metadata_by_index[subrun.index] for subrun in simulation.subruns]
+    return ordered, tuple(issues), frozenset(fully_inspected)
+
+
 def _inspect_subruns_time_metadata(
     subruns: Sequence[SubRun],
+    *,
+    candidates: Mapping[int, _SubRunInspection] | None = None,
 ) -> tuple[tuple[_SubRunInspection | None, tuple[ValidationIssue, ...]], ...]:
+    def inspect(
+        subrun: SubRun,
+    ) -> tuple[_SubRunInspection | None, tuple[ValidationIssue, ...]]:
+        candidate = None if candidates is None else candidates.get(subrun.index)
+        if candidate is None:
+            return _inspect_subrun_time_metadata(subrun)
+        return _inspect_subrun_time_metadata(
+            subrun,
+            candidate=candidate,
+        )
+
     if len(subruns) < _MIN_SUBRUNS_FOR_PARALLEL:
-        return tuple(_inspect_subrun_time_metadata(subrun) for subrun in subruns)
+        return tuple(inspect(subrun) for subrun in subruns)
 
     worker_count = min(_MAX_DISCOVERY_WORKERS, len(subruns))
     with ThreadPoolExecutor(
         max_workers=worker_count,
         thread_name_prefix="d3dplot-time-scan",
     ) as executor:
-        return tuple(executor.map(_inspect_subrun_time_metadata, subruns))
+        return tuple(executor.map(inspect, subruns))
+
+
+def _inspect_subrun_time_candidate(
+    subrun: SubRun,
+) -> tuple[_SubRunInspection | None, tuple[ValidationIssue, ...]]:
+    netcdf4 = _netcdf4_module()
+    path = subrun.map_files[0]
+    try:
+        with _NETCDF4_READ_LOCK, netcdf4.Dataset(path, mode="r") as dataset:
+            time_series = _read_numeric_series(dataset, _TIME)
+            morph_time_series = _read_numeric_series(dataset, _MORPH_TIME)
+    except (
+        EOFError,
+        IndexError,
+        OSError,
+        RuntimeError,
+        TypeError,
+        ValueError,
+    ) as error:
+        return None, (
+            _issue(
+                "V-OUT-002",
+                "error",
+                path,
+                f"Candidate map-time metadata could not be read: {error}",
+                "Restore or regenerate this D-Flow FM map output.",
+            ),
+        )
+    if time_series is None:
+        return None, (
+            _issue(
+                "V-OUT-002",
+                "error",
+                path,
+                "Required map-time variable 'time' is missing.",
+                "Restore a complete D-Flow FM map file.",
+            ),
+        )
+
+    return _finish_subrun_metadata(
+        subrun,
+        signatures=(),
+        owned_counts=(),
+        has_globalnr=False,
+        times=(time_series,) * subrun.partition_count,
+        morph_times=(morph_time_series,) * subrun.partition_count,
+        issues=[],
+        check_mdu_time_bounds=False,
+    )
 
 
 def _inspect_subrun_time_metadata(
     subrun: SubRun,
+    *,
+    candidate: _SubRunInspection | None = None,
 ) -> tuple[_SubRunInspection | None, tuple[ValidationIssue, ...]]:
     """Read only time metadata from one non-reference sub-run."""
     netcdf4 = _netcdf4_module()
     issues: list[ValidationIssue] = []
-    times: list[_NumericSeries | None] = []
-    morph_times: list[_NumericSeries | None] = []
+    times = [candidate.time_series] if candidate is not None else []
+    morph_times = [candidate.morph_time_series] if candidate is not None else []
 
-    for path in subrun.map_files:
+    paths = subrun.map_files[1:] if candidate is not None else subrun.map_files
+    for path in paths:
         try:
             with _NETCDF4_READ_LOCK, netcdf4.Dataset(path, mode="r") as dataset:
                 time_series = _read_numeric_series(dataset, _TIME)
@@ -1169,13 +1366,21 @@ def _mark_mdu_time_bounds(
     stop = _numeric_time_bound(subrun.mdu.tstop)
     if start is None and stop is None:
         return
+    mdu_seconds_per_unit = time_unit_seconds(subrun.mdu.tunit)
+    if mdu_seconds_per_unit is None:
+        return
+    start_seconds = start * mdu_seconds_per_unit if start is not None else None
+    stop_seconds = stop * mdu_seconds_per_unit if stop is not None else None
     for partition, item in enumerate(series):
-        values = item.values
+        map_seconds_per_unit = time_unit_seconds(item.units)
+        if map_seconds_per_unit is None:
+            continue
+        values = item.values * map_seconds_per_unit
         outside = np.zeros(values.shape, dtype=np.bool_)
-        if start is not None:
-            outside |= values < start - _TIME_TOLERANCE_S
-        if stop is not None:
-            outside |= values > stop + _TIME_TOLERANCE_S
+        if start_seconds is not None:
+            outside |= values < start_seconds - _TIME_TOLERANCE_S
+        if stop_seconds is not None:
+            outside |= values > stop_seconds + _TIME_TOLERANCE_S
         outside |= item.mask | ~np.isfinite(values)
         invalid_indices = np.flatnonzero(outside)
         if invalid_indices.size:
@@ -1195,12 +1400,50 @@ def _numeric_time_bound(value: float | str) -> float | None:
     return parsed if np.isfinite(parsed) else None
 
 
+def _selected_subrun_indices(
+    cache: _TimeAxisCache,
+    selections: Sequence[tuple[TimesConfig, Literal["first", "last"]]],
+    *,
+    on_corrupt_output: Literal["mask", "error", "skip"],
+) -> set[int] | None:
+    if not selections or any(times.at != "last" for times, _ in selections):
+        return None
+    axis = TimeAxis(
+        entries=tuple(
+            TimeEntry(
+                time_index=index,
+                subrun=record.subrun,
+                local_index=record.local_index,
+                time=record.time,
+                morph_time=record.morph_time,
+                corrupt_partitions=record.corrupt_partitions,
+            )
+            for index, record in enumerate(cache.records)
+        ),
+        source_utc_offset=cache.source_utc_offset,
+        morphology_available=cache.morphology_available,
+    )
+    selected_subruns: set[int] = set()
+    for times, duplicate_policy in selections:
+        result = axis.select(
+            times,
+            naive_time_zone=cache.source_utc_offset,
+            duplicate_morphological_times=duplicate_policy,
+            on_corrupt_output=on_corrupt_output,
+        )
+        if not result.is_valid or not result.entries:
+            return None
+        selected_subruns.update(entry.subrun for entry in result.entries)
+    return selected_subruns
+
+
 def _prepare_time_axis(
     simulation: Simulation,
     subrun_metadata: Sequence[_SubRunInspection],
     *,
     time_zone: str | None,
     check_boundary_duplicates: bool,
+    boundary_subruns: frozenset[int] | None = None,
 ) -> tuple[_TimeAxisCache, tuple[ValidationIssue, ...]]:
     issues: list[ValidationIssue] = []
     records_by_subrun: dict[int, list[_TimeRecord]] = {}
@@ -1456,12 +1699,18 @@ def _prepare_time_axis(
         if abs((previous_record.time - following_record.time).total_seconds()) > 1:
             continue
 
+        boundary_selected = boundary_subruns is None or (
+            previous.index in boundary_subruns and following.index in boundary_subruns
+        )
         previous_morph = previous_record.morph_time
         following_morph = following_record.morph_time
-        if (previous_morph is None) != (following_morph is None) or (
-            previous_morph is not None
-            and following_morph is not None
-            and abs((previous_morph - following_morph).total_seconds()) > 1
+        if boundary_selected and (
+            (previous_morph is None) != (following_morph is None)
+            or (
+                previous_morph is not None
+                and following_morph is not None
+                and abs((previous_morph - following_morph).total_seconds()) > 1
+            )
         ):
             issues.append(
                 ValidationIssue(
@@ -1480,7 +1729,7 @@ def _prepare_time_axis(
                 )
             )
 
-        if check_boundary_duplicates:
+        if check_boundary_duplicates and boundary_selected:
             try:
                 comparison = _compare_boundary_bed_levels(
                     previous,

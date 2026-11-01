@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import csv
 import math
+import re
 from contextlib import redirect_stdout
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -14,12 +15,14 @@ from pathlib import Path
 from shutil import copytree
 from threading import Lock, current_thread
 from time import sleep
+from types import SimpleNamespace
 
 import netCDF4
 import numpy as np
 import pytest
 
 import d3dplot.simulation.inspection as inspection
+from d3dplot.config.selections import TimesConfig
 from d3dplot.simulation import (
     Simulation,
     TimeAxis,
@@ -78,6 +81,48 @@ def test_inspection_matches_dfm_tools_and_reuses_cache(
 
 
 @pytest.mark.integration
+def test_mdu_change_invalidates_inspection_cache(
+    synthetic_case: Path,
+    tmp_path: Path,
+) -> None:
+    simulation_path = tmp_path / "mdu_change"
+    copytree(synthetic_case / "simulations" / "r001", simulation_path)
+    layout = OutputLayout(tmp_path / "d3dplot")
+
+    initial, initial_report = inspect_simulation(
+        _discover(simulation_path),
+        layout,
+        crs=None,
+        forbidden_roots=(),
+    )
+    assert initial is not None, initial_report.to_text()
+    assert initial_report.is_valid
+    assert not initial.cache_reused
+
+    mdu_path = simulation_path / "output" / "0" / "dflowfm.mdu"
+    mdu_text = mdu_path.read_text(encoding="utf-8")
+    updated_mdu_text, replacements = re.subn(
+        r"(?m)^(\s*Tzone\s*=\s*)1(?:\.0)?\s*$",
+        r"\g<1>2",
+        mdu_text,
+        count=1,
+    )
+    assert replacements == 1
+    mdu_path.write_text(updated_mdu_text, encoding="utf-8")
+
+    updated, updated_report = inspect_simulation(
+        _discover(simulation_path),
+        layout,
+        crs=None,
+        forbidden_roots=(),
+    )
+
+    assert updated is not None, updated_report.to_text()
+    assert not updated.cache_reused
+    assert "V-TIME-002" in {issue.code for issue in updated_report.warnings}
+
+
+@pytest.mark.integration
 def test_elapsed_morphological_seconds_use_map_time_origin(
     synthetic_case: Path,
     tmp_path: Path,
@@ -101,6 +146,119 @@ def test_elapsed_morphological_seconds_use_map_time_origin(
     assert result is not None, report.to_text()
     assert report.is_valid
     _assert_time_axis_matches_expected(synthetic_case, result.times_path)
+
+
+@pytest.mark.unit
+def test_mdu_bounds_convert_time_unit_to_map_seconds() -> None:
+    series = inspection._NumericSeries(
+        values=np.asarray([0.0, 60.0, 120.0]),
+        mask=np.asarray([False, False, False]),
+        units="seconds since 2021-01-01 00:00:00 +00:00",
+        calendar="standard",
+    )
+    subrun = SimpleNamespace(mdu=SimpleNamespace(tstart="0", tstop="1", tunit="M"))
+    corrupt: dict[int, set[int]] = {}
+
+    inspection._mark_mdu_time_bounds((series,), subrun, corrupt)
+
+    assert corrupt == {0: {2}}
+
+
+@pytest.mark.unit
+def test_last_selection_targets_only_the_candidate_subrun() -> None:
+    cache = inspection._TimeAxisCache(
+        records=tuple(
+            inspection._TimeRecord(
+                subrun=index,
+                local_index=0,
+                time=datetime(2021, 1, index + 1, tzinfo=UTC),
+                morph_time=None,
+                corrupt_partitions=(),
+            )
+            for index in range(3)
+        ),
+        source_utc_offset="+00:00",
+        partition_count=1,
+        morphology_available=False,
+    )
+
+    selected = inspection._selected_subrun_indices(
+        cache,
+        ((TimesConfig(at="last"), "last"),),
+        on_corrupt_output="mask",
+    )
+
+    assert selected == {2}
+
+
+@pytest.mark.unit
+def test_selected_subrun_scan_checks_neighbors_before_finishing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    simulation = SimpleNamespace(
+        subruns=tuple(SimpleNamespace(index=index) for index in range(5))
+    )
+    metadata = inspection._SubRunInspection(
+        signatures=(),
+        owned_counts=(),
+        has_globalnr=False,
+        time_consistent=True,
+        corrupt_partitions=(),
+        time_series=None,
+        morph_time_series=None,
+    )
+    fully_scanned: list[int] = []
+    reused_candidates: set[int] = set()
+
+    def candidate_scan(
+        subrun: SimpleNamespace,
+    ) -> tuple[inspection._SubRunInspection, tuple[ValidationIssue, ...]]:
+        return metadata, ()
+
+    def full_scan(
+        subruns: tuple[SimpleNamespace, ...],
+        *,
+        candidates: dict[int, inspection._SubRunInspection] | None = None,
+    ) -> tuple[tuple[inspection._SubRunInspection, tuple[ValidationIssue, ...]], ...]:
+        indices = [subrun.index for subrun in subruns]
+        fully_scanned.extend(indices)
+        reused_candidates.update(candidates or {})
+        return tuple((metadata, ()) for _ in subruns)
+
+    monkeypatch.setattr(inspection, "_inspect_subrun_time_candidate", candidate_scan)
+    monkeypatch.setattr(inspection, "_inspect_subruns_time_metadata", full_scan)
+    monkeypatch.setattr(
+        inspection,
+        "_prepare_time_axis",
+        lambda *args, **kwargs: (
+            inspection._TimeAxisCache(
+                records=(),
+                source_utc_offset="+00:00",
+                partition_count=1,
+                morphology_available=False,
+            ),
+            (),
+        ),
+    )
+    monkeypatch.setattr(
+        inspection,
+        "_selected_subrun_indices",
+        lambda *args, **kwargs: {2},
+    )
+
+    result, issues, fully_inspected = inspection._inspect_time_metadata_for_selection(
+        simulation,  # type: ignore[arg-type]
+        metadata,
+        time_zone=None,
+        time_selections=((TimesConfig(at="last"), "last"),),
+        on_corrupt_output="mask",
+    )
+
+    assert result is not None
+    assert not issues
+    assert fully_scanned == [1, 2, 3]
+    assert reused_candidates == {1, 2, 3}
+    assert fully_inspected == frozenset({0, 1, 2, 3})
 
 
 @pytest.mark.integration

@@ -16,6 +16,14 @@ from d3dplot import __version__
 from d3dplot.analyses.river_km_statistics.config import (
     RiverKmStatisticsConfig,
 )
+from d3dplot.analyses.river_km_statistics.plot import (
+    RiverKmStatisticsPlotError,
+    StatisticCacheFrame,
+    _comparison_values,
+    _plot_axis_times,
+    _source_statistic_values,
+    statistic_values,
+)
 from d3dplot.analyses.river_km_statistics.process import (
     RiverKmStatisticsError,
     bed_slope_streamwise,
@@ -30,6 +38,8 @@ from d3dplot.analyses.river_km_statistics.process import (
     prepare_region_segments,
     select_time_average_outputs,
 )
+from d3dplot.config.project import ProjectConfig
+from d3dplot.config.selections import TimesConfig
 from d3dplot.execution.tasks import AnalysisTimeSelection, plan_process_tasks
 from d3dplot.simulation.time_axis import TimeAxis, TimeEntry, TimeSelectionResult
 from d3dplot.store import OutputLayout, initialize_output_root
@@ -40,6 +50,49 @@ from d3dplot.variables.grouping import (
     group_sediment_fraction_components,
 )
 from d3dplot.variables.registry import get_variable_spec
+
+
+def _statistics_test_config(
+    *,
+    time_matching: str = "reference",
+    times: TimesConfig | None = None,
+) -> RiverKmStatisticsConfig:
+    return RiverKmStatisticsConfig.model_validate(
+        {
+            "variables": ["bed_level"],
+            "regions": [{"name": "region", "polygon": "region.shp"}],
+            "river_km": {
+                "file": "river.csv",
+                "sets": {"250m": [0.125, 0.375]},
+            },
+            "statistics": ["mean"],
+            "time_matching": time_matching,
+            "times": times or TimesConfig(at="all"),
+        }
+    )
+
+
+def _mean_frame(
+    index: int,
+    time: datetime,
+    value: float,
+    *,
+    morph_time: datetime | None = None,
+) -> StatisticCacheFrame:
+    return StatisticCacheFrame(
+        time=time,
+        morph_time=morph_time,
+        path=Path(f"statistics-{index}.nc"),
+        fingerprint=f"fingerprint-{index}",
+        grid_path=Path("grid.nc"),
+        km_centres=np.asarray([0.25]),
+        km_edge_start=np.asarray([0.125]),
+        km_edge_end=np.asarray([0.375]),
+        statistics=("mean",),
+        component_names=(),
+        values=np.asarray([[value]], dtype=np.float64),
+        segment_width_m=None,
+    )
 
 
 @pytest.mark.unit
@@ -103,6 +156,247 @@ def test_width_multiplication_and_region_difference_preserve_dimensions() -> Non
         [3.0, np.nan],
         equal_nan=True,
     )
+
+
+@pytest.mark.unit
+def test_width_multiplication_uses_area_weighted_mean() -> None:
+    analysis = RiverKmStatisticsConfig.model_validate(
+        {
+            "variables": ["bed_level"],
+            "regions": [{"name": "region", "polygon": "region.shp"}],
+            "river_km": {"file": "river.csv", "sets": {"250m": [0.125, 0.375]}},
+            "statistics": ["mean"],
+            "multiply_by_width": "flow",
+        }
+    )
+    frame = StatisticCacheFrame(
+        time=datetime(2021, 1, 1, tzinfo=UTC),
+        morph_time=None,
+        path=Path("statistics.nc"),
+        fingerprint="fingerprint",
+        grid_path=Path("grid.nc"),
+        km_centres=np.asarray([0.25]),
+        km_edge_start=np.asarray([0.125]),
+        km_edge_end=np.asarray([0.375]),
+        statistics=("mean", "mean_area_weighted"),
+        component_names=(),
+        values=np.asarray([[2.0, 3.0]]),
+        segment_width_m=np.asarray([4.0]),
+    )
+
+    np.testing.assert_array_equal(
+        statistic_values(frame, "mean", analysis),
+        [12.0],
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("time_matching", "expected_frame_index"),
+    (("reference", 1), ("own", 2)),
+)
+def test_simulation_time_comparison_matches_with_tolerance_and_uses_matched_baseline(
+    time_matching: str,
+    expected_frame_index: int,
+) -> None:
+    base = datetime(2021, 1, 1, tzinfo=UTC)
+    current_frames = (
+        _mean_frame(0, base, 9.0),
+        _mean_frame(1, base + timedelta(days=1), 2.0),
+        _mean_frame(2, base + timedelta(days=2), 5.0),
+    )
+    reference_frames = (
+        _mean_frame(10, base + timedelta(days=1, seconds=1), 1.0),
+        _mean_frame(11, base + timedelta(days=2, seconds=1), 3.0),
+    )
+    analysis = _statistics_test_config(
+        time_matching=time_matching,
+        times=TimesConfig(
+            at="all",
+            tolerance=timedelta(seconds=2),
+        ),
+    )
+    project = ProjectConfig.model_validate(
+        {
+            "simulations": [
+                {"path": "current", "label": "current"},
+                {"path": "reference", "label": "reference"},
+            ],
+            "reference_simulation": "reference",
+            "analyses": [analysis.model_dump(mode="python")],
+        }
+    )
+    messages: list[str] = []
+
+    compared = _comparison_values(
+        project.simulations[0],
+        project,
+        analysis,
+        current_frames,
+        tuple(statistic_values(frame, "mean", analysis) for frame in current_frames),
+        reference_frames,
+        "mean",
+        "difference_simulation_time",
+        report=messages.append,
+    )
+
+    assert len(compared) == 1
+    result_frame, result_values, fingerprints = compared[0]
+    expected_frames = (
+        reference_frames if time_matching == "reference" else current_frames
+    )
+    assert result_frame == expected_frames[expected_frame_index]
+    np.testing.assert_array_equal(result_values, [1.0])
+    assert len(fingerprints) == 2
+    assert any("2021-01-01T00:00:00+00:00" in message for message in messages)
+
+
+@pytest.mark.unit
+def test_region_difference_matches_on_morphological_time_axis() -> None:
+    morph_origin = datetime(2021, 1, 1, tzinfo=UTC)
+    analysis = _statistics_test_config(
+        times=TimesConfig(
+            at="all",
+            axis="morphological",
+            tolerance=timedelta(seconds=2),
+        )
+    )
+    left = _mean_frame(
+        0,
+        morph_origin + timedelta(days=1),
+        3.0,
+        morph_time=morph_origin,
+    )
+    right = _mean_frame(
+        1,
+        morph_origin + timedelta(days=5),
+        1.0,
+        morph_time=morph_origin + timedelta(seconds=1),
+    )
+    messages: list[str] = []
+
+    frames, values = _source_statistic_values(
+        (left,),
+        (right,),
+        "mean",
+        analysis,
+        report=messages.append,
+        context="region difference",
+    )
+
+    assert frames == (left,)
+    np.testing.assert_array_equal(values[0], [2.0])
+    assert not messages
+
+
+@pytest.mark.unit
+def test_region_difference_reports_times_outside_matching_tolerance() -> None:
+    morph_origin = datetime(2021, 1, 1, tzinfo=UTC)
+    analysis = _statistics_test_config(
+        times=TimesConfig(
+            at="all",
+            axis="morphological",
+            tolerance=timedelta(0),
+        )
+    )
+    left = _mean_frame(0, morph_origin, 3.0, morph_time=morph_origin)
+    right = _mean_frame(
+        1,
+        morph_origin + timedelta(days=1),
+        1.0,
+        morph_time=morph_origin + timedelta(seconds=1),
+    )
+    messages: list[str] = []
+
+    with pytest.raises(RiverKmStatisticsPlotError, match="matching output time"):
+        _source_statistic_values(
+            (left,),
+            (right,),
+            "mean",
+            analysis,
+            report=messages.append,
+            context="region difference",
+        )
+
+    assert any("V-TIME-010" in message for message in messages)
+    assert any(
+        "morphological=2021-01-01T00:00:01+00:00" in message for message in messages
+    )
+
+
+@pytest.mark.unit
+def test_plot_axis_times_uses_morphological_time_for_time_series_and_integrals() -> (
+    None
+):
+    analysis = RiverKmStatisticsConfig.model_validate(
+        {
+            "variables": ["bed_level"],
+            "regions": [{"name": "region", "polygon": "region.shp"}],
+            "river_km": {"file": "river.csv", "sets": {"250m": [0.125, 0.375]}},
+            "statistics": ["mean"],
+            "times": {"axis": "morphological"},
+        }
+    )
+    hydro_start = datetime(2021, 1, 1, tzinfo=UTC)
+    morph_start = hydro_start + timedelta(days=1)
+    frames = tuple(
+        StatisticCacheFrame(
+            time=hydro_start + timedelta(seconds=index),
+            morph_time=morph_start + timedelta(seconds=10 * index),
+            path=Path(f"statistics-{index}.nc"),
+            fingerprint=f"fingerprint-{index}",
+            grid_path=Path("grid.nc"),
+            km_centres=np.asarray([0.25]),
+            km_edge_start=np.asarray([0.125]),
+            km_edge_end=np.asarray([0.375]),
+            statistics=("mean",),
+            component_names=(),
+            values=np.asarray([[float(index)]]),
+            segment_width_m=None,
+        )
+        for index in range(2)
+    )
+
+    axis_times = _plot_axis_times(frames, analysis)
+
+    assert axis_times == (
+        morph_start,
+        morph_start + timedelta(seconds=10),
+    )
+    np.testing.assert_array_equal(
+        compute_cumulative([2.0, 3.0], axis_times),
+        [0.0, 20.0],
+    )
+
+
+@pytest.mark.unit
+def test_plot_axis_times_rejects_missing_morphological_time() -> None:
+    analysis = RiverKmStatisticsConfig.model_validate(
+        {
+            "variables": ["bed_level"],
+            "regions": [{"name": "region", "polygon": "region.shp"}],
+            "river_km": {"file": "river.csv", "sets": {"250m": [0.125, 0.375]}},
+            "statistics": ["mean"],
+            "times": {"axis": "morphological"},
+        }
+    )
+    frame = StatisticCacheFrame(
+        time=datetime(2021, 1, 1, tzinfo=UTC),
+        morph_time=None,
+        path=Path("statistics.nc"),
+        fingerprint="fingerprint",
+        grid_path=Path("grid.nc"),
+        km_centres=np.asarray([0.25]),
+        km_edge_start=np.asarray([0.125]),
+        km_edge_end=np.asarray([0.375]),
+        statistics=("mean",),
+        component_names=(),
+        values=np.asarray([[1.0]]),
+        segment_width_m=None,
+    )
+
+    with pytest.raises(RiverKmStatisticsPlotError, match="morphological times"):
+        _plot_axis_times((frame,), analysis)
 
 
 @pytest.mark.unit

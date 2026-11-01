@@ -35,6 +35,7 @@ from d3dplot.config.io import (
     write_resolved_config,
 )
 from d3dplot.config.project import ProjectConfig, SimulationConfig
+from d3dplot.config.selections import TimesConfig
 from d3dplot.execution.diagnostics import DiagnosticLog
 from d3dplot.execution.slurm import render_slurm_script
 from d3dplot.paths import resolve_path_preserving_drive
@@ -389,6 +390,8 @@ def _validate_project(
                 time_zone=config.time_zone,
                 check_boundary_duplicates=config.check_boundary_duplicates,
                 forbidden_roots=config.output.forbidden_roots,
+                time_selections=_inspection_time_selections(config),
+                on_corrupt_output=config.on_corrupt_output,
             )
             issues.extend(inspection_report.issues)
             if diagnostics is not None:
@@ -541,6 +544,8 @@ def _inspect_project(
             time_zone=config.time_zone,
             check_boundary_duplicates=config.check_boundary_duplicates,
             forbidden_roots=config.output.forbidden_roots,
+            time_selections=_inspection_time_selections(config),
+            on_corrupt_output=config.on_corrupt_output,
         )
         issues.extend(inspection_report.issues)
         if diagnostics is not None:
@@ -564,6 +569,26 @@ def _inspect_project(
             f"warnings={len(report.warnings)}."
         )
     return report, results
+
+
+def _inspection_time_selections(
+    config: ProjectConfig,
+) -> tuple[tuple[TimesConfig, Literal["first", "last"]], ...] | None:
+    has_reference_comparison = len(config.simulations) > 1 and any(
+        analysis.time_matching == "reference"
+        and any(
+            comparison.startswith("difference_simulation")
+            for comparison in analysis.comparisons
+        )
+        for analysis in config.analyses
+    )
+    if has_reference_comparison:
+        return None
+    selections = tuple(
+        (analysis.times, analysis.duplicate_morphological_times)
+        for analysis in config.analyses
+    )
+    return selections or None
 
 
 def _emit_inspection_report(

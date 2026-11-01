@@ -1,14 +1,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Centreline, curvilinear UGRID mesh and partitioning (with ghost cells) of the synthetic river."""
+"""Centreline, curvilinear UGRID mesh and ghost-cell partitioning."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.spatial import cKDTree
-
 from params import Params
+from scipy.spatial import cKDTree
 
 
 @dataclass
@@ -26,13 +25,13 @@ class Centreline:
         return x, y, th
 
     def xy(self, s_query, n_query):
-        """Map along/across coordinates (s, n) to x, y. n > 0 is to the left of the flow direction."""
+        """Map along/across coordinates (s, n) to x, y; n > 0 is left of flow."""
         x, y, th = self.at(s_query)
         n_query = np.asarray(n_query, dtype=float)
         return x - n_query * np.sin(th), y + n_query * np.cos(th)
 
     def sn(self, x, y):
-        """Approximate inverse mapping: nearest centreline point, then projection on tangent/normal."""
+        """Invert with nearest centreline points and tangent/normal projection."""
         tree = cKDTree(np.column_stack([self.x, self.y]))
         _, idx = tree.query(np.column_stack([np.ravel(x), np.ravel(y)]))
         dx = np.ravel(x) - self.x[idx]
@@ -45,7 +44,9 @@ class Centreline:
 
 def make_centreline(p: Params, step: float = 0.5) -> Centreline:
     s = np.arange(0.0, p.length + step / 2, step)
-    theta = p.theta0 + p.meander_amplitude_rad * np.sin(2 * np.pi * s / p.meander_wavelength)
+    theta = p.theta0 + p.meander_amplitude_rad * np.sin(
+        2 * np.pi * s / p.meander_wavelength
+    )
     cx, cy = np.cos(theta), np.sin(theta)
     x = p.x0 + np.concatenate([[0.0], np.cumsum(0.5 * (cx[1:] + cx[:-1]) * step)])
     y = p.y0 + np.concatenate([[0.0], np.cumsum(0.5 * (cy[1:] + cy[:-1]) * step)])
@@ -73,7 +74,7 @@ class Mesh:
 
 
 def _polygon_area_centroid(px: np.ndarray, py: np.ndarray):
-    """Shoelace area and centroid of polygons given as (F, k) arrays with NaN padding."""
+    """Shoelace area and centroid for (F, k) polygons with NaN padding."""
     area = np.zeros(px.shape[0])
     cx = np.zeros(px.shape[0])
     cy = np.zeros(px.shape[0])
@@ -105,11 +106,16 @@ def make_mesh(p: Params, cl: Centreline) -> Mesh:
     tri_lo, tri_hi = p.triangle_i
     for i in range(ni):
         for j in range(nj):
-            a, b, c, d = node_id[i, j], node_id[i + 1, j], node_id[i + 1, j + 1], node_id[i, j + 1]
+            a, b, c, d = (
+                node_id[i, j],
+                node_id[i + 1, j],
+                node_id[i + 1, j + 1],
+                node_id[i, j + 1],
+            )
             s_c = (i + 0.5) * p.ds
             if j == 0 and tri_lo <= i < tri_hi:
-                # split the outermost right-floodplain quad into two triangles (counterclockwise);
-                # parametric centres are the triangle centroids in (s, n)
+                # Split the outermost right-floodplain quad counterclockwise;
+                # parametric centres are triangle centroids in (s, n).
                 s0, s1, n0, n1 = s_nodes[i], s_nodes[i + 1], n_nodes[j], n_nodes[j + 1]
                 for tri, ts, tn in (
                     ((a, b, c), (s0 + 2 * s1) / 3, (2 * n0 + n1) / 3),
@@ -130,7 +136,9 @@ def make_mesh(p: Params, cl: Centreline) -> Mesh:
     py = np.where(face_nodes >= 0, ny[np.clip(face_nodes, 0, None)], np.nan)
     area, fx, fy = _polygon_area_centroid(px, py)
     if np.any(area <= 0):
-        raise RuntimeError("Mesh has faces with non-positive area (orientation or folding problem).")
+        raise RuntimeError(
+            "Mesh has faces with non-positive area (orientation or folding problem)."
+        )
 
     face_s = np.array(f_s)
     face_n = np.array(f_n)
@@ -152,18 +160,29 @@ def make_mesh(p: Params, cl: Centreline) -> Mesh:
                 edge_faces[e][1] = f
 
     half = ni // 2
-    partition = np.where(face_n > p.channel_half_width, 2, np.where(face_i < half, 0, 1))
+    partition = np.where(
+        face_n > p.channel_half_width, 2, np.where(face_i < half, 0, 1)
+    )
 
     return Mesh(
-        node_x=nx, node_y=ny, face_nodes=face_nodes, face_x=fx, face_y=fy, face_area=area,
-        face_s=face_s, face_n=face_n, face_i=face_i, face_partition=partition,
-        edge_nodes=np.array(edge_nodes, dtype=np.int64), edge_faces=np.array(edge_faces, dtype=np.int64),
+        node_x=nx,
+        node_y=ny,
+        face_nodes=face_nodes,
+        face_x=fx,
+        face_y=fy,
+        face_area=area,
+        face_s=face_s,
+        face_n=face_n,
+        face_i=face_i,
+        face_partition=partition,
+        edge_nodes=np.array(edge_nodes, dtype=np.int64),
+        edge_faces=np.array(edge_faces, dtype=np.int64),
     )
 
 
 @dataclass
 class Subset:
-    """Part of the global mesh written to one partition file: owned faces + one layer of ghost faces."""
+    """Part of the mesh written to one partition: owned and ghost faces."""
 
     partition: int
     faces: np.ndarray  # global face indices (sorted)
@@ -189,7 +208,11 @@ def partition_subset(mesh: Mesh, partition: int | None) -> Subset:
 
     in_subset = np.zeros(mesh.n_faces, dtype=bool)
     in_subset[faces] = True
-    edge_mask = (np.where(mesh.edge_faces >= 0, in_subset[np.clip(mesh.edge_faces, 0, None)], False)).any(axis=1)
+    edge_mask = (
+        np.where(
+            mesh.edge_faces >= 0, in_subset[np.clip(mesh.edge_faces, 0, None)], False
+        )
+    ).any(axis=1)
     edges = np.flatnonzero(edge_mask)
     fn = mesh.face_nodes[faces]
     nodes = np.unique(np.concatenate([fn[fn >= 0], mesh.edge_nodes[edges].ravel()]))
@@ -203,11 +226,16 @@ def partition_subset(mesh: Mesh, partition: int | None) -> Subset:
     local_en = node_map[mesh.edge_nodes[edges]]
     ef = mesh.edge_faces[edges]
     local_ef = np.where(ef >= 0, face_map[np.clip(ef, 0, None)], -1)
-    # keep the first neighbour filled (FM convention: boundary edges have the second entry empty)
+    # FM keeps the first neighbour filled and the second empty on boundary edges.
     swap = (local_ef[:, 0] < 0) & (local_ef[:, 1] >= 0)
     local_ef[swap] = local_ef[swap][:, ::-1]
 
     return Subset(
-        partition=-1 if partition is None else partition, faces=faces, nodes=nodes, edges=edges,
-        face_nodes=local_fn, edge_nodes=local_en, edge_faces=local_ef,
+        partition=-1 if partition is None else partition,
+        faces=faces,
+        nodes=nodes,
+        edges=edges,
+        face_nodes=local_fn,
+        edge_nodes=local_en,
+        edge_faces=local_ef,
     )

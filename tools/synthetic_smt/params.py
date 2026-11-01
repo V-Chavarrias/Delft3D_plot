@@ -31,7 +31,7 @@ class SimulationParams:
 class Params:
     seed: int = 1
 
-    # centreline: sine-generated curve, direction theta(s) = theta0 + omega*sin(2*pi*s/wavelength)
+    # Sine-generated centreline: theta(s) = theta0 + omega*sin(2*pi*s/wavelength).
     x0: float = 180_000.0
     y0: float = 330_000.0
     theta0: float = math.pi / 2
@@ -40,19 +40,21 @@ class Params:
     meander_amplitude_rad: float = 0.5
     km0: float = 10.0
 
-    # grid: along-channel step and across-channel node positions (n > 0 = left bank)
+    # Along-channel step and across-channel node positions (n > 0 = left bank).
     ds: float = 25.0
     channel_half_width: float = 50.0
     channel_dn: float = 25.0
     floodplain_width: float = 300.0
     floodplain_dn: float = 50.0
-    # quads split into two triangles: along-channel indices, outermost right-floodplain column
+    # Split quads into triangles at along-channel indices in the outermost
+    # right-floodplain column.
     triangle_i: tuple[int, int] = (200, 206)
 
-    # partitions: 0/1 = channel + right floodplain (upstream/downstream half), 2 = left floodplain strip
+    # Partitions 0/1 cover the channel and right floodplain; 2 covers the
+    # left-floodplain strip.
     n_partitions: int = 3
 
-    # bed level (m+NAP): z0 - slope*s + bars in the channel + erosion in morphological time
+    # Bed level (m+NAP): z0 - slope*s + channel bars + morphological erosion.
     z0: float = 40.0
     slope: float = 2.0e-4
     bar_amplitude: float = 0.5
@@ -61,7 +63,9 @@ class Params:
     base_depth: float = 3.0
 
     # SMT time structure
-    mdu_refdate: str = "20121231"  # deliberately different from the map time units (as in r209)
+    mdu_refdate: str = (
+        "20121231"  # deliberately different from the map time units (as in r209)
+    )
     morfac: float = 10.0
     spinup_s: float = 86_400.0
     hydro_days_after_spinup: tuple[float, ...] = (3.0, 6.0, 12.0, 9.0)
@@ -79,8 +83,14 @@ class Params:
     n_fractions: int = 3
     n_bed_layers: int = 2
 
-    # measurements (dates, local time +01:00); the last 2D one is outside the tolerance on purpose
-    smb_measurement_dates: tuple[str, ...] = ("2021-02-08", "2021-09-01", "2021-05-12", "2021-12-01")
+    # Measurement dates use local time +01:00; the last 2D date intentionally
+    # lies outside the time tolerance.
+    smb_measurement_dates: tuple[str, ...] = (
+        "2021-02-08",
+        "2021-09-01",
+        "2021-05-12",
+        "2021-12-01",
+    )
     raster_dates: tuple[str, ...] = ("2021-02-08", "2021-05-12", "2022-06-01")
     vakken_dates: tuple[str, ...] = ("2021-02-08", "2021-09-01")
     raster_resolution: float = 10.0
@@ -91,9 +101,16 @@ class Params:
     def n_nodes_across(self) -> list[float]:
         n_fp = round(self.floodplain_width / self.floodplain_dn)
         n_ch = round(2 * self.channel_half_width / self.channel_dn)
-        right = [-self.channel_half_width - self.floodplain_width + k * self.floodplain_dn for k in range(n_fp)]
-        channel = [-self.channel_half_width + k * self.channel_dn for k in range(n_ch + 1)]
-        left = [self.channel_half_width + (k + 1) * self.floodplain_dn for k in range(n_fp)]
+        right = [
+            -self.channel_half_width - self.floodplain_width + k * self.floodplain_dn
+            for k in range(n_fp)
+        ]
+        channel = [
+            -self.channel_half_width + k * self.channel_dn for k in range(n_ch + 1)
+        ]
+        left = [
+            self.channel_half_width + (k + 1) * self.floodplain_dn for k in range(n_fp)
+        ]
         return right + channel + left
 
     def to_dict(self) -> dict:

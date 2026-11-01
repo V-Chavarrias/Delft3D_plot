@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Project inputs in the same formats as the Maas project: river-km files, region shapefiles, land boundaries."""
+"""Maas-format project inputs: river-km files, regions and land boundaries."""
 
 from __future__ import annotations
 
@@ -7,10 +7,9 @@ from pathlib import Path
 
 import geopandas as gpd
 import numpy as np
-from shapely.geometry import Polygon
-
 from mesh import Centreline
 from params import Params
+from shapely.geometry import Polygon
 
 CRS = "EPSG:28992"
 
@@ -19,7 +18,10 @@ REGIONS = {
     "L1R1": (-50.0, 50.0),  # summer bed
     "L1L3": (0.0, 50.0),  # left half of the summer bed
     "R1R3": (-50.0, 0.0),  # right half of the summer bed
-    "WIDE": (-350.0, 350.0),  # whole model width: wider than a small half_width -> coverage warning
+    "WIDE": (
+        -350.0,
+        350.0,
+    ),  # whole model width: wider than a small half_width -> coverage warning
 }
 
 
@@ -28,10 +30,10 @@ def km_of_s(p: Params, s):
 
 
 def write_rkm_file(path: Path, cl: Centreline, s_values, km_values, tag: str):
-    """Fixed format: one header line; columns x, y, '<km>_<TAG>', km (spacing/format as rkm.csv of the Maas project)."""
+    """Write the fixed Maas CSV format with x, y, '<km>_<TAG>' and km columns."""
     x, y, _ = cl.at(s_values)
     lines = ["X,Y,MODELKM,KM "]
-    for xi, yi, km in zip(x, y, km_values):
+    for xi, yi, km in zip(x, y, km_values, strict=True):
         lines.append(f"   {xi:.6f},   {yi:.6f},{km:.2f}_{tag},  {km:.6f} ")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -44,7 +46,11 @@ def write_rkm_files(folder: Path, p: Params, cl: Centreline) -> dict[str, Path]:
         "rkm_1km": (s100[::10], km_of_s(p, s100[::10]), "MA"),
         "rkm_3km": (s100[::30], km_of_s(p, s100[::30]), "MA"),
         "rkm_generic": (s100, km_of_s(p, s100), "SY"),  # unknown tag -> generic river
-        "rkm_rijn": (s100, 870.0 + s100 / 1000.0, "WA"),  # Rijntakken tags -> track required
+        "rkm_rijn": (
+            s100,
+            870.0 + s100 / 1000.0,
+            "WA",
+        ),  # Rijntakken tags -> track required
     }
     out = {}
     for name, (s, km, tag) in files.items():
@@ -53,11 +59,15 @@ def write_rkm_files(folder: Path, p: Params, cl: Centreline) -> dict[str, Path]:
     return out
 
 
-def band_polygon(cl: Centreline, s0: float, s1: float, n0: float, n1: float, step: float = 25.0) -> Polygon:
+def band_polygon(
+    cl: Centreline, s0: float, s1: float, n0: float, n1: float, step: float = 25.0
+) -> Polygon:
     s = np.linspace(s0, s1, max(2, int(round((s1 - s0) / step)) + 1))
     xr, yr = cl.xy(s, np.full_like(s, n0))
     xl, yl = cl.xy(s[::-1], np.full_like(s, n1))
-    return Polygon(np.column_stack([np.concatenate([xr, xl]), np.concatenate([yr, yl])]))
+    return Polygon(
+        np.column_stack([np.concatenate([xr, xl]), np.concatenate([yr, yl])])
+    )
 
 
 def write_regions(folder: Path, p: Params, cl: Centreline) -> dict[str, Path]:
@@ -78,14 +88,16 @@ def land_boundary_lines(p: Params, cl: Centreline) -> list[np.ndarray]:
     for n in (-edge, edge):
         x, y = cl.xy(s, np.full_like(s, n))
         lines.append(np.column_stack([x, y]))
-    s_dike = np.arange(3000.0, 5001.0, 50.0)  # a "dike" on the left floodplain between km 13 and 15
+    s_dike = np.arange(
+        3000.0, 5001.0, 50.0
+    )  # a "dike" on the left floodplain between km 13 and 15
     x, y = cl.xy(s_dike, np.full_like(s_dike, 200.0))
     lines.append(np.column_stack([x, y]))
     return lines
 
 
 def write_land_boundaries(folder: Path, p: Params, cl: Centreline) -> dict[str, Path]:
-    """Land boundaries are input as .ldb (Tekal) only. Matlab's .mat versions were caches of .ldb files."""
+    """Write Tekal .ldb boundaries; Matlab .mat files were only .ldb caches."""
     folder.mkdir(parents=True, exist_ok=True)
     lines = land_boundary_lines(p, cl)
     txt = []

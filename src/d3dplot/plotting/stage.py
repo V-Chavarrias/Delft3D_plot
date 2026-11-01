@@ -7,6 +7,7 @@ import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from numbers import Integral
 from pathlib import Path
 from urllib.parse import quote
 
@@ -25,6 +26,7 @@ from d3dplot.analyses.map2d.process import map2d_selection_label
 from d3dplot.config.project import ProjectConfig, SimulationConfig
 from d3dplot.config.selections import LayersSelection
 from d3dplot.simulation.partitions import _NETCDF4_READ_LOCK
+from d3dplot.simulation.time_axis import TimeAxis
 from d3dplot.store import (
     OutputLayout,
     OutputWriteError,
@@ -351,6 +353,22 @@ def _load_map2d_source(
         )
 
     expected_variable = get_variable_spec(variable).name
+    try:
+        time_axis = TimeAxis.from_cache(layout.cache / "times.nc")
+    except ValueError as error:
+        raise Map2DPlotError("V-PLOT-002", str(error)) from error
+    time_selection = time_axis.select(
+        analysis.times,
+        naive_time_zone=time_axis.source_utc_offset,
+        duplicate_morphological_times=analysis.duplicate_morphological_times,
+        on_corrupt_output=project.on_corrupt_output,
+    )
+    if not time_selection.is_valid:
+        issue = next(issue for issue in time_selection.issues if issue.level == "error")
+        raise Map2DPlotError(issue.code, f"{issue.message} {issue.hint}")
+    selected_outputs = {
+        (entry.subrun, entry.local_index) for entry in time_selection.entries
+    }
     frames: list[Map2DPlotFrame] = []
     grid_paths: set[Path] = set()
     for cache_path in cache_paths:
@@ -360,6 +378,8 @@ def _load_map2d_source(
             cache_variable,
             cache_selection,
             grid_path,
+            subrun_index,
+            local_index,
         ) = _read_cache_metadata(
             cache_path,
             layout,
@@ -376,6 +396,8 @@ def _load_map2d_source(
                 f"Cache selection {cache_selection!r} does not match "
                 f"{selection!r}: {cache_path}.",
             )
+        if (subrun_index, local_index) not in selected_outputs:
+            continue
         grid_paths.add(grid_path)
         frames.append(
             Map2DPlotFrame(
@@ -384,6 +406,12 @@ def _load_map2d_source(
                 path=cache_path,
                 morph_time=morph_time,
             )
+        )
+    if not frames:
+        raise Map2DPlotError(
+            "V-PLOT-002",
+            f"No processed map2d cache files match the selected times for "
+            f"{simulation.label!r}, {variable!r}.",
         )
     if len(grid_paths) != 1:
         raise Map2DPlotError(
@@ -398,13 +426,14 @@ def _load_map2d_source(
         guard=guard,
         grid_path=next(iter(grid_paths)),
         frames=tuple(frames),
+        model_time_zone=time_axis.source_utc_offset,
     )
 
 
 def _read_cache_metadata(
     path: Path,
     layout: OutputLayout,
-) -> tuple[datetime, datetime | None, str, str, Path]:
+) -> tuple[datetime, datetime | None, str, str, Path, int, int]:
     resolved_path = path.resolve(strict=True)
     if not _is_within(resolved_path, layout.root):
         raise OutputWriteError(f"Cache path is outside the marked output root: {path}")
@@ -416,6 +445,8 @@ def _read_cache_metadata(
                 variable_value = getattr(dataset, "variable", None)
                 selection_value = getattr(dataset, "selection", None)
                 grid_file_value = getattr(dataset, "grid_file", None)
+                subrun_value = getattr(dataset, "subrun", None)
+                local_index_value = getattr(dataset, "local_index", None)
     except (OSError, RuntimeError, TypeError, ValueError) as error:
         raise Map2DPlotError(
             "V-PLOT-002",
@@ -441,6 +472,18 @@ def _read_cache_metadata(
         raise Map2DPlotError(
             "V-PLOT-002",
             f"Map2d cache has no valid grid-file value: {path}.",
+        )
+    if (
+        isinstance(subrun_value, bool)
+        or not isinstance(subrun_value, Integral)
+        or isinstance(local_index_value, bool)
+        or not isinstance(local_index_value, Integral)
+        or subrun_value < 0
+        or local_index_value < 0
+    ):
+        raise Map2DPlotError(
+            "V-PLOT-002",
+            f"Map2d cache has invalid sub-run/time-index metadata: {path}.",
         )
     try:
         frame_time = datetime.fromisoformat(time_value)
@@ -480,7 +523,15 @@ def _read_cache_metadata(
         raise OutputWriteError(
             f"Inspected grid path is outside the marked output root: {grid_path}"
         )
-    return frame_time, morph_time, variable_value, selection_value, grid_path
+    return (
+        frame_time,
+        morph_time,
+        variable_value,
+        selection_value,
+        grid_path,
+        int(subrun_value),
+        int(local_index_value),
+    )
 
 
 def _selection(analysis: Map2DConfig, variable: str) -> str:

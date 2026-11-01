@@ -1,8 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Recreate a land-boundary .ldb (Tekal, same format as .pli/.pol) from a Matlab land-boundary cache (.mat).
+"""Recreate a land-boundary .ldb from a Matlab land-boundary cache (.mat).
 
-The .mat holds one N x 2 array (default variable `ldb`) with polylines separated by NaN rows, as written by Matlab
-`D3D_read_ldb`. Original polyline names are not stored in the .mat, so blocks are named L000001, L000002, ...
+The .ldb uses Tekal format, like .pli/.pol. The .mat holds one N x 2 array
+(default variable `ldb`) with polylines separated by NaN rows, as written by
+Matlab `D3D_read_ldb`. Original polyline names are not stored in the .mat, so
+blocks are named L000001, L000002, ...
 
 Usage:
     python tools/mat_to_ldb.py <input.mat> <output.ldb> [--variable ldb] [--decimals 4]
@@ -38,7 +40,9 @@ def write_ldb(path: Path, lines: list[np.ndarray], decimals: int = 4):
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("mat", type=Path)
     ap.add_argument("ldb", type=Path)
     ap.add_argument("--variable", default="ldb")
@@ -46,7 +50,9 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
 
     out = args.ldb.resolve()
-    if out.drive.lower().startswith("p:") or str(out).replace("\\", "/").lower().startswith("/p/"):
+    if out.drive.lower().startswith("p:") or str(out).replace(
+        "\\", "/"
+    ).lower().startswith("/p/"):
         raise SystemExit(f"Refusing to write to the P-drive: {out}")
     if out.exists():
         raise SystemExit(f"Output exists, not overwriting: {out}")

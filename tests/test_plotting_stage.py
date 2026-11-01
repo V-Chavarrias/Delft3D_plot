@@ -23,6 +23,7 @@ from d3dplot.cli import app
 from d3dplot.config import load_config
 from d3dplot.plotting.stage import read_replot_metadata
 from d3dplot.store import (
+    CACHE_SCHEMA_VERSION,
     OutputLayout,
     OutputWriteGuard,
     atomic_path,
@@ -81,6 +82,24 @@ def test_plot_overrides_save_resolved_provenance_and_replot_one_figure(
     assert figures[1].read_bytes() == untouched_bytes
 
 
+@pytest.mark.integration
+def test_plot_uses_selected_outputs_and_model_time_zone(tmp_path: Path) -> None:
+    layout, configuration = _prepared_project(tmp_path, source_offset="+01:00")
+    config = yaml.safe_load(configuration.read_text(encoding="utf-8"))
+    config["analyses"][0]["times"] = {"at": "last"}
+    configuration.write_text(
+        yaml.safe_dump(config, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    plotted = runner.invoke(app, ["plot", str(configuration)])
+
+    assert plotted.exit_code == 0, plotted.output
+    figures = tuple(sorted(layout.figures.rglob("*.png")))
+    assert len(figures) == 1
+    assert "20210102T010000" in figures[0].name
+
+
 @pytest.mark.unit
 def test_replot_rejects_png_without_d3dplot_provenance(tmp_path: Path) -> None:
     layout = OutputLayout(tmp_path / "output")
@@ -94,7 +113,11 @@ def test_replot_rejects_png_without_d3dplot_provenance(tmp_path: Path) -> None:
     assert error.value.code == "V-PLOT-005"
 
 
-def _prepared_project(tmp_path: Path) -> tuple[OutputLayout, Path]:
+def _prepared_project(
+    tmp_path: Path,
+    *,
+    source_offset: str = "+00:00",
+) -> tuple[OutputLayout, Path]:
     layout = OutputLayout(tmp_path / "generated" / "reference" / "d3dplot")
     guard = initialize_output_root(
         layout,
@@ -102,20 +125,25 @@ def _prepared_project(tmp_path: Path) -> tuple[OutputLayout, Path]:
         forbidden_roots=(),
     )
     grid = _write_grid(layout, guard)
+    first_time = datetime(2021, 1, 1, tzinfo=UTC)
+    last_time = datetime(2021, 1, 2, tzinfo=UTC)
     _write_frame(
         layout,
         guard,
         grid,
-        datetime(2021, 1, 1, tzinfo=UTC),
+        first_time,
         (1.0, 2.0),
+        local_index=0,
     )
     _write_frame(
         layout,
         guard,
         grid,
-        datetime(2021, 1, 2, tzinfo=UTC),
+        last_time,
         (2.0, 3.0),
+        local_index=1,
     )
+    _write_time_axis_cache(layout, (first_time, last_time), source_offset)
     configuration = tmp_path / "project.yaml"
     configuration.write_text(
         yaml.safe_dump(
@@ -162,6 +190,8 @@ def _write_frame(
     grid_path: Path,
     time: datetime,
     values: tuple[float, float],
+    *,
+    local_index: int,
 ) -> Path:
     path = (
         layout.cache_data
@@ -181,7 +211,39 @@ def _write_frame(
             dataset.variable = "water_depth"
             dataset.selection = "all"
             dataset.grid_file = relative_grid
+            dataset.subrun = 0
+            dataset.local_index = local_index
     return path
+
+
+def _write_time_axis_cache(
+    layout: OutputLayout,
+    times: tuple[datetime, ...],
+    source_offset: str,
+) -> None:
+    path = layout.cache / "times.nc"
+    with netCDF4.Dataset(path, mode="w", format="NETCDF4") as dataset:
+        dataset.createDimension("time", len(times))
+        dataset.createDimension("partition", 1)
+        time_variable = dataset.createVariable("time", "f8", ("time",))
+        time_variable[:] = [time.timestamp() for time in times]
+        time_variable.units = "seconds since 1970-01-01 00:00:00"
+        time_variable.calendar = "proleptic_gregorian"
+        morph_time = dataset.createVariable("morph_time", "f8", ("time",))
+        morph_time[:] = np.nan
+        subrun = dataset.createVariable("subrun", "i4", ("time",))
+        subrun[:] = 0
+        local_index = dataset.createVariable("local_index", "i4", ("time",))
+        local_index[:] = np.arange(len(times))
+        corrupt = dataset.createVariable(
+            "corrupt_partition",
+            "i1",
+            ("time", "partition"),
+        )
+        corrupt[:] = 0
+        dataset.source_utc_offset = source_offset
+        dataset.morphology_available = 0
+        dataset.d3dplot_cache_schema = CACHE_SCHEMA_VERSION
 
 
 def _mutate_png_preserving_metadata(path: Path) -> None:

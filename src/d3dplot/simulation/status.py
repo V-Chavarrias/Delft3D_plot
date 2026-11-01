@@ -28,6 +28,7 @@ from d3dplot.simulation.discover import (
     _MIN_SUBRUNS_FOR_PARALLEL,
     Simulation,
     SimulationKind,
+    _integer_subrun_folders,
     discover_simulation,
 )
 from d3dplot.simulation.partitions import _NETCDF4_READ_LOCK
@@ -328,7 +329,15 @@ def inspect_simulation_status(
     checked_at = _as_utc(now if now is not None else datetime.now(UTC))
     _validate_stale_after(stale_after)
     kind = SimulationKind.SMT if (root / "smt.yml").is_file() else SimulationKind.FM
-    n_subruns = len(report.errors) if kind is SimulationKind.SMT else 1
+    if kind is SimulationKind.SMT:
+        subrun_folders, folder_issue = _integer_subrun_folders(root / "output")
+        if folder_issue is not None:
+            return None, ValidationReport((*report.issues, folder_issue))
+        if not subrun_folders:
+            return None, report
+        n_subruns = len(subrun_folders)
+    else:
+        n_subruns = 1
     subruns = tuple(
         SubRunStatus(
             index=index,

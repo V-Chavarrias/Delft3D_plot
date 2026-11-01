@@ -75,12 +75,23 @@ class DuplicateResolution:
 
 
 @dataclass(frozen=True, slots=True)
+class TimeMatch:
+    """One requested output paired with its matched local output."""
+
+    reference: TimeEntry
+    local: TimeEntry
+
+
+@dataclass(frozen=True, slots=True)
 class TimeSelectionResult:
     """Selected outputs, duplicate decisions, and validation diagnostics."""
 
     entries: tuple[TimeEntry, ...]
     duplicates: tuple[DuplicateResolution, ...]
     issues: tuple[ValidationIssue, ...]
+    matches: tuple[TimeMatch, ...] = ()
+    unmatched_reference_entries: tuple[TimeEntry, ...] = ()
+    unmatched_local_entries: tuple[TimeEntry, ...] = ()
 
     @property
     def is_valid(self) -> bool:
@@ -413,26 +424,38 @@ class TimeAxis:
         duplicate_morphological_times: DuplicatePolicy = "last",
         on_corrupt_output: CorruptOutputPolicy = "mask",
     ) -> TimeSelectionResult:
-        """Match reference-simulation outputs to the nearest local outputs."""
+        """Match requested outputs to the nearest local outputs."""
         candidates, issues = self._candidates(axis)
         if candidates is None:
-            return TimeSelectionResult((), (), tuple(issues))
+            return TimeSelectionResult(
+                (),
+                (),
+                tuple(issues),
+                unmatched_reference_entries=tuple(reference_entries),
+                unmatched_local_entries=self.entries,
+            )
         if not reference_entries:
             issues.append(
                 _issue(
                     "V-TIME-010",
                     "error",
-                    "The reference simulation has no selected outputs to match.",
-                    "Select at least one usable reference time.",
+                    "No selected outputs are available to match.",
+                    "Select at least one usable output time.",
                 )
             )
-            return TimeSelectionResult((), (), tuple(issues))
+            return TimeSelectionResult(
+                (),
+                (),
+                tuple(issues),
+                unmatched_local_entries=self.entries,
+            )
 
         duplicate_policy = _effective_duplicate_policy(
             axis,
             duplicate_morphological_times,
         )
         selected: list[TimeEntry] = []
+        requested_matches: list[TimeMatch] = []
         duplicates: list[DuplicateResolution] = []
         for reference_entry in reference_entries:
             requested_time = _axis_time(reference_entry, axis)
@@ -442,10 +465,10 @@ class TimeAxis:
                         "V-TIME-010",
                         "error",
                         (
-                            f"Reference output index {reference_entry.time_index} "
+                            f"Requested output index {reference_entry.time_index} "
                             f"has no {axis} time."
                         ),
-                        "Use a reference output with a valid time on this axis.",
+                        "Use an output with a valid time on this axis.",
                     )
                 )
                 continue
@@ -460,17 +483,28 @@ class TimeAxis:
                 issues.append(selection_issue)
             if entry is not None:
                 selected.append(entry)
+                requested_matches.append(TimeMatch(reference_entry, entry))
             if duplicate is not None:
                 duplicates.append(duplicate)
 
         selected = _unique_in_hydrodynamic_order(selected)
         selected = _apply_corrupt_policy(selected, on_corrupt_output, issues)
+        selected_keys = {(entry.subrun, entry.local_index) for entry in selected}
+        matched_local_keys: set[tuple[int, int]] = set()
+        matches: list[TimeMatch] = []
+        for match in requested_matches:
+            local_key = (match.local.subrun, match.local.local_index)
+            if local_key not in selected_keys or local_key in matched_local_keys:
+                continue
+            matches.append(match)
+            matched_local_keys.add(local_key)
+        matched_reference_indices = {match.reference.time_index for match in matches}
         if not selected and not any(issue.level == "error" for issue in issues):
             issues.append(
                 _issue(
                     "V-TIME-010",
                     "error",
-                    "No usable output could be matched to the reference times.",
+                    "No usable output could be matched to the requested times.",
                     "Check the output time axis and configured matching tolerance.",
                 )
             )
@@ -478,6 +512,17 @@ class TimeAxis:
             entries=tuple(selected),
             duplicates=tuple(duplicates),
             issues=tuple(issues),
+            matches=tuple(matches),
+            unmatched_reference_entries=tuple(
+                entry
+                for entry in reference_entries
+                if entry.time_index not in matched_reference_indices
+            ),
+            unmatched_local_entries=tuple(
+                entry
+                for entry in self.entries
+                if (entry.subrun, entry.local_index) not in matched_local_keys
+            ),
         )
 
     def _candidates(

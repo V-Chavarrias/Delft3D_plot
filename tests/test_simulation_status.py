@@ -102,6 +102,31 @@ def test_path_status_reports_not_started_when_map_output_is_absent(
 
 
 @pytest.mark.unit
+def test_smt_status_counts_all_subruns_when_one_has_no_maps(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "smt.yml").write_text("model: dflowfm\n", encoding="utf-8")
+    for index in range(3):
+        (tmp_path / "output" / str(index)).mkdir(parents=True)
+    (tmp_path / "output" / "0" / "dflowfm.mdu").write_text(
+        "[Time]\nRefDate = 20200101\n[Output]\nOutputDir = results\n",
+        encoding="utf-8",
+    )
+    for index in (0, 2):
+        results = tmp_path / "output" / str(index) / "results"
+        results.mkdir()
+        _write_map(results / "dflowfm_map.nc", time_value=0)
+
+    status, report = inspect_simulation_status(tmp_path)
+
+    assert status is not None
+    assert status.state is SimulationState.NOT_STARTED
+    assert [subrun.index for subrun in status.subruns] == [0, 1, 2]
+    assert status.to_csv_row()["n_subruns"] == 3
+    assert [issue.code for issue in report.errors] == ["V-OUT-001"]
+
+
+@pytest.mark.unit
 @pytest.mark.skipif(os.name != "nt", reason="Windows mapped-drive path behavior")
 def test_missing_mapped_drive_status_keeps_drive_path(
     monkeypatch: pytest.MonkeyPatch,

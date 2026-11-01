@@ -27,6 +27,8 @@ def quantity_selection_label(
         parts.append("layer-" + "-".join(str(index) for index in request.layers))
     if request.sum_fractions:
         parts.append("sum-fractions")
+    if request.percentile is not None:
+        parts.append(f"d{int(request.percentile)}")
     if component_grouping is not None:
         if not component_grouping or component_grouping != component_grouping.strip():
             raise ValueError("component_grouping must be non-empty and trimmed.")

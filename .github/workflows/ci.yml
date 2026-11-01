@@ -25,9 +25,9 @@ jobs:
       - name: Install
         run: uv sync --locked --extra dev
       - name: Lint
-        run: uv run --no-sync ruff check src tests
+        run: uv run --no-sync ruff check src tests tools
       - name: Check formatting
-        run: uv run --no-sync ruff format --check src tests
+        run: uv run --no-sync ruff format --check src tests tools
       - name: Type-check
         run: uv run --no-sync mypy src/d3dplot
       - name: Test

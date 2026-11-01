@@ -58,6 +58,8 @@ from d3dplot.plotting.views.extents import (
 from d3dplot.plotting.views.map import MapView, MapViewError
 from d3dplot.plotting.writers import get_figure_writer
 from d3dplot.simulation.partitions import _NETCDF4_READ_LOCK
+from d3dplot.simulation.time_axis import TimeAxis, TimeEntry
+from d3dplot.simulation.time_utils import timezone_from_offset
 from d3dplot.store import (
     CACHE_SCHEMA_VERSION,
     OutputLayout,
@@ -274,10 +276,16 @@ def plot_map2d_group(
             output_guard,
         )
         reference_frames = (
-            _match_reference_frames(source.frames, reference.frames)
+            _match_reference_frames(source, reference, analysis, report)
             if uses_reference and reference is not None
             else {}
         )
+        if uses_reference and not reference_frames:
+            raise Map2DPlotError(
+                "V-TIME-010",
+                "No selected map output times could be matched between "
+                f"{source.label!r} and {target_source.label!r}.",
+            )
         color_limits = _color_limit_sets(analysis, variable, comparison)
         style_hash = _config_fingerprint(project, analysis)
         measurement_catalogue: MapMeasurementCatalogue | None = None
@@ -320,7 +328,11 @@ def plot_map2d_group(
         first_current_fingerprint: str | None = None
         first_reference: _FloatArray | None = None
         first_reference_fingerprint: str | None = None
-        for frame_index, frame in enumerate(source.frames):
+        matched_frame_index = 0
+        for frame in source.frames:
+            paired_reference = reference_frames.get(frame.match_key)
+            if uses_reference and paired_reference is None:
+                continue
             current_values, current_fingerprint = _read_frame(frame, variable)
             if current_values.size != current_grid.n_face:
                 raise Map2DPlotError(
@@ -331,11 +343,11 @@ def plot_map2d_group(
             if first_current is None:
                 first_current = current_values
                 first_current_fingerprint = current_fingerprint
-            paired_reference: Map2DPlotFrame | None = None
             reference_values: _FloatArray | None = None
             reference_fingerprint: str | None = None
             if uses_reference:
-                paired_reference = reference_frames[frame.match_key]
+                if paired_reference is None:
+                    raise AssertionError("Matched map frame has no reference pair.")
                 reference_values, reference_fingerprint = _read_frame(
                     paired_reference,
                     variable,
@@ -360,19 +372,38 @@ def plot_map2d_group(
                 current_grid,
             )
             if comparison in {"difference_time", "difference_simulation_time"}:
-                if frame_index == 0 and not analysis.include_initial_time_difference:
+                if (
+                    matched_frame_index == 0
+                    and not analysis.include_initial_time_difference
+                ):
                     report(f"Initial zero-difference frame omitted for {variable!r}.")
+                    matched_frame_index += 1
                     continue
-            output_time = (
-                paired_reference.time if paired_reference is not None else frame.time
+            matched_frame_index += 1
+            use_reference_time = (
+                uses_reference and analysis.time_matching == "reference"
             )
-            display_frame = paired_reference if paired_reference is not None else frame
+            output_time = (
+                paired_reference.time
+                if use_reference_time and paired_reference is not None
+                else frame.time
+            )
+            display_frame = (
+                paired_reference
+                if use_reference_time and paired_reference is not None
+                else frame
+            )
+            display_source = target_source if use_reference_time else source
             display_time = (
                 display_frame.morph_time
                 if analysis.times.axis == "morphological"
                 and display_frame.morph_time is not None
                 else output_time
             )
+            display_zone = timezone_from_offset(
+                display_source.model_time_zone or "+00:00"
+            )
+            display_time = display_time.astimezone(display_zone)
             scale = figure_config.display_scale
             if scale != 1.0:
                 map_values = map_values * scale
@@ -490,7 +521,7 @@ def plot_map2d_group(
                         output_subject,
                         variable,
                         comparison,
-                        output_time,
+                        output_time.astimezone(display_zone),
                         color_index,
                         window.index,
                     )
@@ -600,7 +631,7 @@ def plot_map2d_group(
                     if scaled_measurement is not None:
                         measurement_title = (
                             f"{measurement_label.text} — "
-                            f"{scaled_measurement.mean_time.isoformat()}"
+                            f"{scaled_measurement.mean_time.astimezone(display_zone).isoformat()}"
                         )
                     panel_limits = limits
                     if panel_limits is None:
@@ -820,19 +851,116 @@ def _read_frame(frame: Map2DPlotFrame, variable: str) -> tuple[_FloatArray, str]
 
 
 def _match_reference_frames(
-    current: Sequence[Map2DPlotFrame],
-    reference: Sequence[Map2DPlotFrame],
+    current: Map2DPlotSource,
+    reference: Map2DPlotSource,
+    analysis: Map2DConfig,
+    report: DiagnosticSink,
 ) -> Mapping[str, Map2DPlotFrame]:
-    reference_by_key = {frame.match_key: frame for frame in reference}
-    missing = [
-        frame.match_key for frame in current if frame.match_key not in reference_by_key
-    ]
-    if missing:
-        raise Map2DPlotError(
-            "V-PLOT-003",
-            "Reference simulation is missing matched map times: " + ", ".join(missing),
+    reference_matching = analysis.time_matching == "reference"
+    target_source = reference if reference_matching else current
+    candidate_source = current if reference_matching else reference
+    target_frames = target_source.frames
+    candidate_frames = candidate_source.frames
+
+    def entries_for(frames: Sequence[Map2DPlotFrame]) -> tuple[TimeEntry, ...]:
+        return tuple(
+            TimeEntry(
+                time_index=index,
+                subrun=0,
+                local_index=index,
+                time=frame.time,
+                morph_time=frame.morph_time,
+                corrupt_partitions=(),
+            )
+            for index, frame in enumerate(frames)
         )
-    return reference_by_key
+
+    target_entries = entries_for(target_frames)
+    candidate_entries = entries_for(candidate_frames)
+    candidate_axis = TimeAxis(
+        candidate_entries,
+        candidate_source.model_time_zone or "+00:00",
+        morphology_available=any(
+            entry.morph_time is not None for entry in candidate_entries
+        ),
+    )
+    selection = candidate_axis.match(
+        target_entries,
+        axis=analysis.times.axis,
+        tolerance=analysis.times.tolerance,
+        duplicate_morphological_times=analysis.duplicate_morphological_times,
+    )
+    for issue in selection.issues:
+        report(f"{issue.code}: {issue.message}")
+
+    def frame_time_text(frame: Map2DPlotFrame) -> str:
+        if analysis.times.axis == "hydrodynamic":
+            return frame.time.isoformat()
+        if frame.morph_time is None:
+            return (
+                f"hydrodynamic={frame.time.isoformat()} "
+                "(morphological time unavailable)"
+            )
+        return (
+            f"morphological={frame.morph_time.isoformat()} "
+            f"(hydrodynamic={frame.time.isoformat()})"
+        )
+
+    for duplicate in selection.duplicates:
+        candidates_text = ", ".join(
+            frame_time_text(candidate_frames[entry.time_index])
+            for entry in duplicate.candidates
+        )
+        chosen = candidate_frames[duplicate.chosen.time_index]
+        requested = (
+            duplicate.requested_time.isoformat()
+            if duplicate.requested_time is not None
+            else "the requested time"
+        )
+        report(
+            f"Resolved duplicate {analysis.times.axis} time {requested} for "
+            f"{candidate_source.label!r}: candidates {candidates_text}; "
+            f"chose {frame_time_text(chosen)}."
+        )
+
+    matched_targets = {match.reference.time_index for match in selection.matches}
+    matched_candidates = {match.local.time_index for match in selection.matches}
+    if selection.unmatched_reference_entries:
+        unmatched_text = ", ".join(
+            frame_time_text(target_frames[entry.time_index])
+            for entry in selection.unmatched_reference_entries
+        )
+        report(
+            f"V-TIME-010: Dropped {len(selection.unmatched_reference_entries)} "
+            f"unmatched selected output(s) from {target_source.label!r} on the "
+            f"{analysis.times.axis} axis: {unmatched_text}."
+        )
+    if selection.unmatched_local_entries:
+        unmatched_text = ", ".join(
+            frame_time_text(candidate_frames[entry.time_index])
+            for entry in selection.unmatched_local_entries
+        )
+        report(
+            f"V-TIME-010: Unpaired output(s) from {candidate_source.label!r} "
+            f"were not used for {target_source.label!r} times on the "
+            f"{analysis.times.axis} axis: {unmatched_text}."
+        )
+
+    reference_by_current_key: dict[str, Map2DPlotFrame] = {}
+    for match in selection.matches:
+        target_frame = target_frames[match.reference.time_index]
+        candidate_frame = candidate_frames[match.local.time_index]
+        current_frame, reference_frame = (
+            (candidate_frame, target_frame)
+            if reference_matching
+            else (target_frame, candidate_frame)
+        )
+        reference_by_current_key[current_frame.match_key] = reference_frame
+    if len(matched_targets) != len(selection.matches) or len(matched_candidates) != len(
+        selection.matches
+    ):
+        raise AssertionError("Time-axis matching returned duplicate frame pairs.")
+    return reference_by_current_key
 
 
 def _comparison_values(

@@ -72,7 +72,7 @@ from d3dplot.plotting.views.map import MapView, MapViewError, face_polygons
 from d3dplot.plotting.views.space_time import SpaceTimeView
 from d3dplot.plotting.writers import get_figure_writer
 from d3dplot.simulation.partitions import _NETCDF4_READ_LOCK
-from d3dplot.simulation.time_axis import TimeAxis, TimeSelectionResult
+from d3dplot.simulation.time_axis import TimeAxis, TimeEntry, TimeSelectionResult
 from d3dplot.store import (
     CACHE_SCHEMA_VERSION,
     OutputLayout,
@@ -160,6 +160,21 @@ class _ProfileMeasurementOverlay:
 
 
 DiagnosticSink = Callable[[str], None]
+
+
+def _plot_axis_times(
+    frames: Sequence[StatisticCacheFrame],
+    analysis: RiverKmStatisticsConfig,
+) -> tuple[datetime, ...]:
+    if analysis.times.axis == "hydrodynamic":
+        return tuple(frame.time for frame in frames)
+    if any(frame.morph_time is None for frame in frames):
+        raise RiverKmStatisticsPlotError(
+            "V-TIME-012",
+            "A morphological time axis was requested for cached statistics "
+            "without morphological times.",
+        )
+    return tuple(frame.morph_time for frame in frames if frame.morph_time is not None)
 
 
 def _quantity_request(
@@ -556,6 +571,12 @@ def statistic_values(
     analysis: RiverKmStatisticsConfig,
 ) -> _Array:
     """Return one statistic, applying plot-stage width or slope operations."""
+    statistic_source = (
+        "mean_area_weighted"
+        if analysis.multiply_by_width != "none"
+        and statistic in {"mean", "mean_area_weighted"}
+        else statistic
+    )
     if statistic == "bed_slope_streamwise":
         if "mean" not in frame.statistics:
             raise RiverKmStatisticsPlotError(
@@ -567,12 +588,12 @@ def statistic_values(
             frame.km_centres,
         )
     else:
-        if statistic not in frame.statistics:
+        if statistic_source not in frame.statistics:
             raise RiverKmStatisticsPlotError(
                 "V-PLOT-002",
-                f"Statistic {statistic!r} is missing from {frame.path}.",
+                f"Statistic {statistic_source!r} is missing from {frame.path}.",
             )
-        result = np.asarray(frame.values[:, frame.statistics.index(statistic)])
+        result = np.asarray(frame.values[:, frame.statistics.index(statistic_source)])
     if analysis.multiply_by_width != "none" and statistic in {
         "mean",
         "mean_area_weighted",
@@ -2097,6 +2118,7 @@ def _plot_region_views(
                 reference_frames,
                 statistic,
                 comparison,
+                report=report,
             )
             if not compared:
                 continue
@@ -2292,6 +2314,7 @@ def _comparison_values(
     statistic: str,
     comparison: Comparison,
     *,
+    report: DiagnosticSink,
     reference_values: tuple[_Array, ...] | None = None,
 ) -> tuple[tuple[StatisticCacheFrame, _Array, tuple[str, ...]], ...]:
     reference = _reference_simulation(project)
@@ -2307,72 +2330,99 @@ def _comparison_values(
     ):
         return ()
 
-    reference_by_time = (
-        {frame.time: frame for frame in reference_frames}
-        if reference_frames is not None
-        else {}
-    )
-    reference_values_by_time = (
-        {
-            frame.time: value
-            for frame, value in zip(
-                reference_frames or (),
-                reference_values,
-                strict=True,
+    if len(frames) != len(current):
+        raise RiverKmStatisticsPlotError(
+            "V-PLOT-002",
+            "Current statistic frames and values have inconsistent lengths.",
+        )
+    if (
+        reference_frames is not None
+        and reference_values is not None
+        and (len(reference_frames) != len(reference_values))
+    ):
+        raise RiverKmStatisticsPlotError(
+            "V-PLOT-002",
+            "Reference statistic frames and values have inconsistent lengths.",
+        )
+
+    reference_pairs: tuple[tuple[int, int], ...] = ()
+    if comparison in _DIFFERENCE_COMPARISONS:
+        if reference_frames is None:
+            raise AssertionError("Reference frames were validated above.")
+        if analysis.time_matching == "reference":
+            matched = _match_statistic_frame_indices(
+                reference_frames,
+                frames,
+                analysis,
+                report,
+                context=(
+                    f"simulation comparison {simulation.label!r} against "
+                    f"{reference.label!r}"
+                ),
             )
-        }
-        if reference_values is not None
-        else {}
-    )
-    current_by_time = {
-        frame.time: value for frame, value in zip(frames, current, strict=True)
-    }
-    common_times = (
-        tuple(time for time in current_by_time if time in reference_by_time)
-        if comparison in _DIFFERENCE_COMPARISONS
-        else tuple(current_by_time)
-    )
-    if comparison in _DIFFERENCE_COMPARISONS and not common_times:
+            reference_pairs = tuple(
+                (local_index, reference_index)
+                for reference_index, local_index in matched
+            )
+        else:
+            matched = _match_statistic_frame_indices(
+                frames,
+                reference_frames,
+                analysis,
+                report,
+                context=(
+                    f"simulation comparison {simulation.label!r} against "
+                    f"{reference.label!r}"
+                ),
+            )
+            reference_pairs = tuple(
+                (current_index, reference_index)
+                for current_index, reference_index in matched
+            )
+
+    if comparison in _DIFFERENCE_COMPARISONS and not reference_pairs:
         raise RiverKmStatisticsPlotError(
             "V-SMB-014",
             "No matching simulation times exist for the configured comparison.",
         )
 
     result: list[tuple[StatisticCacheFrame, _Array, tuple[str, ...]]] = []
-    base_time = common_times[0] if common_times else None
-    base_current: _Array | None = None
-    base_reference: _Array | None = None
-    if comparison in {"difference_time", "difference_simulation_time"}:
-        if base_time is None:
-            base_time = frames[0].time
-        base_current = current_by_time[base_time]
-        if comparison == "difference_simulation_time":
-            reference_frame = reference_by_time[base_time]
-            base_reference = (
-                reference_values_by_time[base_time]
-                if base_time in reference_values_by_time
-                else statistic_values(reference_frame, statistic, analysis)
-            )
-
-    for time in common_times:
-        frame = next(item for item in frames if item.time == time)
-        values = current_by_time[time]
-        fingerprints = [frame.fingerprint]
-        if comparison == "difference_time":
-            if time == base_time and not analysis.include_initial_time_difference:
+    if comparison == "difference_time":
+        if not frames:
+            return ()
+        base_current = current[0]
+        for index, frame in enumerate(frames):
+            if index == 0 and not analysis.include_initial_time_difference:
                 continue
-            if base_current is None:
-                raise AssertionError("Time-difference baseline was not resolved.")
-            values = values - base_current
-        elif comparison in _DIFFERENCE_COMPARISONS:
-            reference_frame = reference_by_time[time]
-            reference_data = (
-                reference_values_by_time[time]
-                if time in reference_values_by_time
-                else statistic_values(reference_frame, statistic, analysis)
+            result.append(
+                (
+                    frame,
+                    np.asarray(current[index] - base_current, dtype=np.float64),
+                    (frame.fingerprint,),
+                )
             )
-            if values.shape != reference_data.shape or not np.allclose(
-                frame.km_centres,
+        return tuple(result)
+
+    if comparison in _DIFFERENCE_COMPARISONS:
+        if reference_frames is None:
+            raise AssertionError("Reference frames were validated above.")
+        resolved_reference_values = reference_values or tuple(
+            statistic_values(frame, statistic, analysis) for frame in reference_frames
+        )
+        baseline_current: _Array | None = None
+        baseline_reference: _Array | None = None
+        for pair_index, (current_index, reference_index) in enumerate(reference_pairs):
+            frame = (
+                reference_frames[reference_index]
+                if analysis.time_matching == "reference"
+                else frames[current_index]
+            )
+            current_frame = frames[current_index]
+            reference_frame = reference_frames[reference_index]
+            current_values = current[current_index]
+            reference_data = resolved_reference_values[reference_index]
+            if current_values.shape != reference_data.shape or not np.allclose(
+                current_frame.km_centres,
                 reference_frame.km_centres,
                 rtol=0,
                 atol=1e-8,
@@ -2382,22 +2432,39 @@ def _comparison_values(
                     "Simulation comparison requires matching river-kilometre "
                     "centres and component dimensions.",
                 )
-            fingerprints.append(reference_frame.fingerprint)
-            values = values - reference_data
+
+            comparison_fingerprints = (
+                current_frame.fingerprint,
+                reference_frame.fingerprint,
+            )
+            values = current_values - reference_data
+            if pair_index == 0:
+                baseline_current = current_values
+                baseline_reference = reference_data
             if comparison == "difference_simulation_time":
-                if time == base_time and not analysis.include_initial_time_difference:
+                if pair_index == 0 and not analysis.include_initial_time_difference:
                     continue
-                if base_current is None or base_reference is None:
+                if baseline_current is None or baseline_reference is None:
                     raise AssertionError("Simulation-time baseline was not resolved.")
-                values = values - (base_current - base_reference)
+                values = values - (baseline_current - baseline_reference)
             elif comparison == "difference_simulation_relative":
                 values = difference_simulation_relative(
-                    current_by_time[time],
+                    current_values,
                     reference_data,
                 )
-        result.append(
-            (frame, np.asarray(values, dtype=np.float64), tuple(fingerprints))
-        )
+            result.append(
+                (
+                    frame,
+                    np.asarray(values, dtype=np.float64),
+                    comparison_fingerprints,
+                )
+            )
+        return tuple(result)
+
+    for frame, values in zip(frames, current, strict=True):
+        values = np.asarray(values, dtype=np.float64)
+        frame_fingerprints = (frame.fingerprint,)
+        result.append((frame, values, frame_fingerprints))
     return tuple(result)
 
 
@@ -2406,19 +2473,28 @@ def _source_statistic_values(
     partner_frames: tuple[StatisticCacheFrame, ...] | None,
     statistic: str,
     analysis: RiverKmStatisticsConfig,
+    *,
+    report: DiagnosticSink,
+    context: str,
 ) -> tuple[tuple[StatisticCacheFrame, ...], tuple[_Array, ...]]:
     left_values = tuple(
         statistic_values(frame, statistic, analysis) for frame in frames
     )
     if partner_frames is None:
         return frames, left_values
-    right_by_time = {frame.time: frame for frame in partner_frames}
+    pairs = _match_statistic_frame_indices(
+        frames,
+        partner_frames,
+        analysis,
+        report,
+        context=context,
+    )
     aligned_frames: list[StatisticCacheFrame] = []
     differences: list[_Array] = []
-    for frame, left in zip(frames, left_values, strict=True):
-        right_frame = right_by_time.get(frame.time)
-        if right_frame is None:
-            continue
+    for frame_index, partner_index in pairs:
+        frame = frames[frame_index]
+        right_frame = partner_frames[partner_index]
+        left = left_values[frame_index]
         right = statistic_values(right_frame, statistic, analysis)
         if left.shape != right.shape or not np.allclose(
             frame.km_centres,
@@ -2439,6 +2515,102 @@ def _source_statistic_values(
             "Region differences require at least one matching output time.",
         )
     return tuple(aligned_frames), tuple(differences)
+
+
+def _match_statistic_frame_indices(
+    target_frames: tuple[StatisticCacheFrame, ...],
+    candidate_frames: tuple[StatisticCacheFrame, ...],
+    analysis: RiverKmStatisticsConfig,
+    report: DiagnosticSink,
+    *,
+    context: str,
+) -> tuple[tuple[int, int], ...]:
+    def entries_for(
+        frames: tuple[StatisticCacheFrame, ...],
+    ) -> tuple[TimeEntry, ...]:
+        return tuple(
+            TimeEntry(
+                time_index=index,
+                subrun=0,
+                local_index=index,
+                time=frame.time,
+                morph_time=frame.morph_time,
+                corrupt_partitions=(),
+            )
+            for index, frame in enumerate(frames)
+        )
+
+    target_entries = entries_for(target_frames)
+    candidate_entries = entries_for(candidate_frames)
+    candidate_axis = TimeAxis(
+        candidate_entries,
+        "+00:00",
+        morphology_available=any(
+            entry.morph_time is not None for entry in candidate_entries
+        ),
+    )
+    selection = candidate_axis.match(
+        target_entries,
+        axis=analysis.times.axis,
+        tolerance=analysis.times.tolerance,
+        duplicate_morphological_times=analysis.duplicate_morphological_times,
+    )
+    for issue in selection.issues:
+        report(f"{issue.code}: {issue.message}")
+
+    def frame_time_text(frame: StatisticCacheFrame) -> str:
+        if analysis.times.axis == "hydrodynamic":
+            return frame.time.isoformat()
+        if frame.morph_time is None:
+            return (
+                f"hydrodynamic={frame.time.isoformat()} "
+                "(morphological time unavailable)"
+            )
+        return (
+            f"morphological={frame.morph_time.isoformat()} "
+            f"(hydrodynamic={frame.time.isoformat()})"
+        )
+
+    for duplicate in selection.duplicates:
+        candidates_text = ", ".join(
+            frame_time_text(candidate_frames[entry.time_index])
+            for entry in duplicate.candidates
+        )
+        chosen = candidate_frames[duplicate.chosen.time_index]
+        requested = (
+            duplicate.requested_time.isoformat()
+            if duplicate.requested_time is not None
+            else "the requested time"
+        )
+        report(
+            f"Resolved duplicate {analysis.times.axis} time {requested} for "
+            f"{context}: candidates {candidates_text}; "
+            f"chose {frame_time_text(chosen)}."
+        )
+
+    if selection.unmatched_reference_entries:
+        unmatched_text = ", ".join(
+            frame_time_text(target_frames[entry.time_index])
+            for entry in selection.unmatched_reference_entries
+        )
+        report(
+            f"V-TIME-010: Dropped {len(selection.unmatched_reference_entries)} "
+            f"unmatched selected output(s) for {context} on the "
+            f"{analysis.times.axis} axis: {unmatched_text}."
+        )
+    if selection.unmatched_local_entries:
+        unmatched_text = ", ".join(
+            frame_time_text(candidate_frames[entry.time_index])
+            for entry in selection.unmatched_local_entries
+        )
+        report(
+            f"V-TIME-010: Unpaired output(s) for {context} on the "
+            f"{analysis.times.axis} axis were not used: {unmatched_text}."
+        )
+    return tuple(
+        (match.reference.time_index, match.local.time_index)
+        for match in selection.matches
+    )
 
 
 def _plot_grouped_sources(
@@ -2478,6 +2650,8 @@ def _plot_grouped_sources(
                     source.partner_frames,
                     statistic,
                     analysis,
+                    report=report,
+                    context=f"region source {source.label!r}",
                 )
                 reference_values: tuple[_Array, ...] | None = None
                 reference_frames = source.reference_frames
@@ -2489,6 +2663,8 @@ def _plot_grouped_sources(
                         source.reference_partner_frames,
                         statistic,
                         analysis,
+                        report=report,
+                        context=f"reference region source {source.label!r}",
                     )
                 compared = _comparison_values(
                     source.simulation,
@@ -2499,6 +2675,7 @@ def _plot_grouped_sources(
                     reference_frames,
                     statistic,
                     comparison,
+                    report=report,
                     reference_values=reference_values,
                 )
                 if compared:
@@ -3253,10 +3430,11 @@ def _plot_space_time(
             "V-SMB-014",
             "The space_time view requires at least two selected output times.",
         )
+    axis_times = _plot_axis_times(times, analysis)
     first = times[0]
     km_edges = _km_edges(first)
     time_centres = np.asarray(
-        [mdates.date2num(frame.time) for frame in times],
+        [mdates.date2num(time) for time in axis_times],
         dtype=np.float64,
     )
     time_edges = _centre_edges(time_centres)
@@ -3314,7 +3492,7 @@ def _plot_space_time(
             None,
             extra={
                 "component": component_name,
-                "times": [frame.time.isoformat() for frame in times],
+                "times": [time.isoformat() for time in axis_times],
             },
         )
         if _reuse_figure(
@@ -3362,7 +3540,7 @@ def _plot_space_time(
             comparison=comparison,
             variable=variable,
             simulation=simulation.label,
-            time=times[-1].time,
+            time=axis_times[-1],
             extent=(
                 float(km_edges[0]),
                 float(km_edges[-1]),
@@ -3373,7 +3551,7 @@ def _plot_space_time(
             data={
                 "values": matrix,
                 "km_edges": km_edges,
-                "times": tuple(frame.time for frame in times),
+                "times": axis_times,
             },
             labels={"title": title, "value": statistic_text},
             language=project.language,
@@ -3423,6 +3601,7 @@ def _plot_time_series(
     if not analysis.time_series_locations_km:
         report("No time_series_locations_km configured; time_series view skipped.")
         return (), ()
+    axis_times = _plot_axis_times(times, analysis)
     first = times[0]
     figure_config = project.effective_figure(analysis)
     statistic_text, unit_text = _value_label(variable, statistic, project)
@@ -3430,7 +3609,7 @@ def _plot_time_series(
         overlay.measurement.fingerprint for overlay in measurement_overlays
     )
     time_values = np.asarray(
-        [mdates.date2num(frame.time) for frame in times],
+        [mdates.date2num(time) for time in axis_times],
         dtype=np.float64,
     )
     output_paths: list[Path] = []
@@ -3491,7 +3670,7 @@ def _plot_time_series(
                 "component_labels": component_labels,
                 "location_km": location_km,
                 "selected_km": chosen_km,
-                "times": [frame.time.isoformat() for frame in times],
+                "times": [time.isoformat() for time in axis_times],
                 "measurement_fingerprints": measurement_fingerprints,
             },
         )
@@ -3543,7 +3722,7 @@ def _plot_time_series(
             variable,
             comparison,
             simulation.label,
-            times[-1].time,
+            axis_times[-1],
             time_values,
             y_values,
             output_path,
@@ -3554,7 +3733,7 @@ def _plot_time_series(
             extra_data={
                 "km": chosen_km,
                 "requested_km": float(location_km),
-                "times": tuple(frame.time for frame in times),
+                "times": axis_times,
                 "measurements": measurement_data,
             },
         )
@@ -3597,9 +3776,10 @@ def _plot_cumulative(
     fresh_figures: bool,
     report: DiagnosticSink,
 ) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
+    axis_times = _plot_axis_times(times, analysis)
     cumulative = compute_cumulative(
         np.stack(values, axis=0),
-        tuple(frame.time for frame in times),
+        axis_times,
     )
     cumulative_values = tuple(cumulative[index] for index in range(cumulative.shape[0]))
     return _plot_profiles(

@@ -20,6 +20,7 @@ _TIME_UNIT_SECONDS = {
     "seconds": 1.0,
     "min": 60.0,
     "mins": 60.0,
+    "m": 60.0,
     "minute": 60.0,
     "minutes": 60.0,
     "h": 3600.0,

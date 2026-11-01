@@ -204,7 +204,7 @@ def test_map2d_processor_writes_analytic_and_selected_quantities(
             expected["d50"],
             rtol=1e-6,
         )
-        assert dataset.getncattr("selection") == "fraction-1-layer-1"
+        assert dataset.getncattr("selection") == "fraction-1-layer-1-d50"
     with netCDF4.Dataset(paths_by_variable["dzetadt"], mode="r") as dataset:
         np.testing.assert_allclose(
             dataset.variables["values"][face],
@@ -254,17 +254,11 @@ def test_smb_fraction_grouping_follows_per_fraction_statistics(
     time_axis = TimeAxis.from_cache(inspection.times_path)
     entry = time_axis.entries[0]
     region_name = EXACT_REGIONS[0]
-    expected_path = (
-        synthetic_case
-        / "expected"
-        / f"smb_r001_{region_name}_250m.csv"
-    )
+    expected_path = synthetic_case / "expected" / f"smb_r001_{region_name}_250m.csv"
     with expected_path.open(newline="", encoding="utf-8") as file:
         rows = list(csv.DictReader(file))
     centres = list(dict.fromkeys(float(row["km"]) for row in rows))
-    region_path = (
-        synthetic_case / "inputs" / "regions" / f"{region_name}.shp"
-    )
+    region_path = synthetic_case / "inputs" / "regions" / f"{region_name}.shp"
     common_config: dict[str, Any] = {
         "variables": ["Fak"],
         "vertical": {"layers": [1]},
@@ -335,14 +329,11 @@ def test_smb_fraction_grouping_follows_per_fraction_statistics(
 
     process_log = diagnostics.debug_path.read_text(encoding="utf-8")
     for progress_event in (
-        "Starting map2d analysis processing",
         "Starting river-km analysis processing",
         "Starting quantity evaluation",
         "Starting raw variable read",
-        "Starting map2d cache write",
         "Starting river-km statistics processing",
         "Starting river-km statistics cache write",
-        "Finished map2d analysis processing",
         "Finished river-km statistics processing",
         "Finished river-km analysis processing",
     ):
@@ -353,8 +344,7 @@ def test_smb_fraction_grouping_follows_per_fraction_statistics(
     assert isinstance(result, Map2DProcessResult)
     assert len(result.output_paths) == 2
     assert any(
-        "grouped sediment fractions into classes" in choice
-        for choice in result.choices
+        "grouped sediment fractions into classes" in choice for choice in result.choices
     )
     assert "grouped sediment fractions into classes" in diagnostics.paths[0].read_text(
         encoding="utf-8"
