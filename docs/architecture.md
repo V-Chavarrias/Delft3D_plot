@@ -400,7 +400,7 @@ Severity: **H** = wrong results, a red build, or a plan rule broken; **M** = inc
 | RV-28 | M | `variables/compute.py:283-297` | On an empty bed layer (Σ F = 0), `dm` returns 0 and `dg` returns 1 mm instead of NaN. | Return NaN where Σ F ≈ 0, as the percentiles already do |
 | RV-29 | M | `variables/registry.py:212`; `engine._select_values` | <ul><li>The alias `umag_layer` resolves to the depth-averaged `velocity_magnitude` (§7.9a has a separate layered quantity).</li><li>A fraction selection on `dm`/`dg`/`dXX` is silently ignored, contrary to §7.9a, and `test_map2d_process.py:120` relies on that.</li></ul> | Map the alias correctly. Report V-VAR-003 for the fraction selection |
 | RV-30 | M | `river_km/regions.py:207-224` | The V-SMB-011 coverage test uses `e2−e1`/`eₙ−eₙ₋₁` as the end-plane directions, but the cut lines are perpendicular to `θ₁ = atan2(e3−e1)` (§4.5). In bends this gives false or missed uncovered faces. | Use `geometry.angles_rad[0]`/`[-1]` |
-| RV-31 | M | `analyses/map2d/config.py:44-56`; `config/figure.py`; `MapViewConfig` | Several options are accepted and then ignored: `export`, `view_3d`, `velocity_vectors`, `mask_range`, `figure.formats` (the writer is hard-coded to PNG), `display_name` and `map.fixed_weirs`. | Reject them with V-CFG-001 ("not implemented in v1") or implement them. Silently accepting an option misleads users |
+| RV-31 | M | `analyses/map2d/config.py:44-56`; `config/figure.py`; `MapViewConfig` | Several options are accepted and then ignored: `export`, `view_3d`, `velocity_vectors`, `mask_range`, `figure.formats` (the writer is hard-coded to PNG), `display_name` and `map.fixed_weirs`. | **Resolved locally:** `mask_range` and `velocity_vectors` (`scaled` or `normalized`) are implemented; `figure.formats` accepts only `png`, its sole writer. `export`, `view_3d`, `display_name` and `map.fixed_weirs` raise V-CFG-001 ("not implemented in v1") when set to a non-default value. Regression tests cover both paths |
 | RV-32 | M | `labels/data/variable_to_key.csv`; `map2d/plot.py:385, 392` | Canonical names such as `water_depth` have no label key; the CSV maps only Matlab names. The result is a fallback to NetCDF metadata and 44 warnings in the test run. `label()` is called per frame. | Map every registry canonical name and add a test over the registry. Build labels once per group |
 | RV-33 | M | `cli.py` (`validate`/`inspect`, `_make_diagnostic_log`) | A forbidden or unwritable `output.root` gives a traceback instead of a clean exit. Unknown `--simulation` exits with 2 in `inspect` and 1 in `plot`. `replot` does not catch `RiverKmStatisticsPlotError`. | Handle these, document the exit codes in `cli.md`, and add tests |
 | RV-34 | M | `execution/cache.py:96` | One unreadable cache file stops planning. Under `if_changed`, it should be treated as a mismatch and rebuilt, with a `.dia` warning. | Treat it as stale |
@@ -2586,8 +2586,8 @@ Principles:
 | Matlab | Python |
 |--------|--------|
 | `do_3D` | `view_3d` |
-| `do_vector` | `velocity_vectors: none \| scaled \| normalized` |
-| `do_fxw`, `color_fxw` | `fixed_weirs: none \| input \| snapped`, `fixed_weirs_color` |
+| `do_vector` | `velocity_vectors: none \| scaled \| normalized` (implemented in v1: one fixed reference scale per view, every face drawn, no thinning) |
+| `do_fxw`, `color_fxw` | `fixed_weirs: none \| input \| snapped`, `fixed_weirs_color` (**not implemented in v1**: rejected with V-CFG-001) |
 | `do_axis_equal` | `aspect: equal \| auto` |
 | `plot_tiles` | `background_tiles` |
 | `epsg_in` | `crs` |
