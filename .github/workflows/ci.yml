@@ -24,6 +24,12 @@ jobs:
           enable-cache: true
       - name: Install
         run: uv sync --locked --extra dev
+      - name: Install HYDROLIB-core integration branch
+        run: >-
+          uv pip install
+          --python "$(uv run python -c 'import sys; print(sys.executable)')"
+          "hydrolib-core @
+          git+https://github.com/Deltares/HYDROLIB-core.git@69096c172a75ae06d8e6ed14ee4ab395ebd8bfaf"
       - name: Lint
         run: uv run --no-sync ruff check src tests tools
       - name: Check formatting
