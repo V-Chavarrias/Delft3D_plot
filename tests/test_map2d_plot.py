@@ -801,6 +801,51 @@ def test_map2d_invalid_overlay_inputs_have_stable_validation_codes(
 
 
 @pytest.mark.unit
+def test_map2d_rejects_non_face_variables_and_missing_reference(
+    tmp_path: Path,
+) -> None:
+    project, analysis, source = _project_and_source(
+        tmp_path / "edge-variable",
+        values=((1.0, 2.0),),
+        variable="mesh2d_u1",
+    )
+    with pytest.raises(Map2DPlotError) as error:
+        plot_map2d_group(project, analysis, source, "mesh2d_u1", "value")
+    assert error.value.code == "V-PLOT-003"
+
+    project, analysis, source = _project_and_source(
+        tmp_path / "missing-reference",
+        values=((1.0, 2.0),),
+    )
+    with pytest.raises(Map2DPlotError) as error:
+        plot_map2d_group(
+            project,
+            analysis,
+            source,
+            "water_depth",
+            "difference_simulation",
+        )
+    assert error.value.code == "V-PLOT-003"
+
+
+@pytest.mark.unit
+def test_map2d_invalid_figure_hook_has_stable_validation_code(
+    tmp_path: Path,
+) -> None:
+    for index, hook in enumerate(
+        ("hook_without_separator", "d3dplot_missing_module_for_test:hook")
+    ):
+        project, analysis, source = _project_and_source(
+            tmp_path / f"invalid-hook-{index}",
+            values=((1.0, 2.0),),
+            hooks=[hook],
+        )
+        with pytest.raises(Map2DPlotError) as error:
+            plot_map2d_group(project, analysis, source, "water_depth", "value")
+        assert error.value.code == "V-HOOK-001"
+
+
+@pytest.mark.unit
 def test_measurement_panel_is_hook_visible_and_omitted_for_simulation_differences(
     tmp_path: Path,
 ) -> None:

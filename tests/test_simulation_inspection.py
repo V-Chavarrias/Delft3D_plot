@@ -123,6 +123,37 @@ def test_mdu_change_invalidates_inspection_cache(
 
 
 @pytest.mark.integration
+def test_unreadable_cache_file_is_rebuilt_with_warning(
+    synthetic_case: Path,
+    tmp_path: Path,
+) -> None:
+    simulation_path = tmp_path / "unreadable_cache"
+    copytree(synthetic_case / "simulations" / "r001", simulation_path)
+    layout = OutputLayout(tmp_path / "d3dplot")
+
+    initial, initial_report = inspect_simulation(
+        _discover(simulation_path),
+        layout,
+        crs=None,
+        forbidden_roots=(),
+    )
+    assert initial is not None, initial_report.to_text()
+    assert initial_report.is_valid
+    initial.times_path.write_bytes(b"not a netcdf file")
+
+    rebuilt, rebuilt_report = inspect_simulation(
+        _discover(simulation_path),
+        layout,
+        crs=None,
+        forbidden_roots=(),
+    )
+
+    assert rebuilt is not None, rebuilt_report.to_text()
+    assert not rebuilt.cache_reused
+    assert "V-OUT-025" in {issue.code for issue in rebuilt_report.warnings}
+
+
+@pytest.mark.integration
 def test_elapsed_morphological_seconds_use_map_time_origin(
     synthetic_case: Path,
     tmp_path: Path,

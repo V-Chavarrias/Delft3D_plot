@@ -433,6 +433,37 @@ def test_polygon_time_difference_matches_shuffled_ids(
     assert_inputs_unchanged(before, (catalogue_path, baseline_path, current_path))
 
 
+def test_malformed_map_catalogue_has_measurement_format_code(tmp_path: Path) -> None:
+    layout, guard = _output(tmp_path)
+    header_only = tmp_path / "header_only.csv"
+    header_only.write_text("time,file,factor\n", encoding="utf-8")
+
+    with pytest.raises(MapMeasurementError, match="empty") as error:
+        inspect_map_catalogue(
+            header_only,
+            PathsConfig(),
+            layout,
+            guard,
+            time_zone="+00:00",
+        )
+    assert error.value.code == "V-MEA-002"
+
+    missing_factor = tmp_path / "missing_factor.csv"
+    missing_factor.write_text(
+        "time,file\n2021-01-01T00:00:00,a.tif\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(MapMeasurementError, match="requires") as error:
+        inspect_map_catalogue(
+            missing_factor,
+            PathsConfig(),
+            layout,
+            guard,
+            time_zone="+00:00",
+        )
+    assert error.value.code == "V-MEA-002"
+
+
 def test_missing_catalogue_has_measurement_validation_code(tmp_path: Path) -> None:
     layout, guard = _output(tmp_path)
 
