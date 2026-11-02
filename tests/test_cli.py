@@ -15,6 +15,9 @@ from d3dplot.config import load_config
 
 runner = CliRunner()
 
+# The synthetic case has an MDU RefDate that differs from the map time origin (as r209).
+SYNTHETIC_EXPECTED_ISSUE_CODES = {"V-MDU-002"}
+
 
 @pytest.mark.unit
 def test_schema_command_prints_project_json_schema() -> None:
@@ -109,7 +112,11 @@ def test_init_writes_valid_starter_and_refuses_overwrite(
         ["validate", str(configuration), "--format", "json"],
     )
     assert validation.exit_code == 0, validation.output
-    assert json.loads(validation.stdout) == {"valid": True, "issues": []}
+    payload = json.loads(validation.stdout)
+    assert payload["valid"] is True
+    assert {issue["code"] for issue in payload["issues"]} == (
+        SYNTHETIC_EXPECTED_ISSUE_CODES
+    )
 
     overwrite = runner.invoke(
         app,
@@ -206,16 +213,21 @@ def test_validate_accepts_registered_and_present_raw_variables(
     )
 
     assert result.exit_code == 0, result.output
-    assert json.loads(result.stdout) == {"valid": True, "issues": []}
+    payload = json.loads(result.stdout)
+    assert payload["valid"] is True
+    assert {issue["code"] for issue in payload["issues"]} == (
+        SYNTHETIC_EXPECTED_ISSUE_CODES
+    )
     assert (tmp_path / "generated" / "d3dplot" / "cache" / "merge_plan.nc").is_file()
     validation_reports = tuple(
         (tmp_path / "generated" / "d3dplot" / "tables").glob("validation_*.json")
     )
     assert len(validation_reports) == 1
-    assert json.loads(validation_reports[0].read_text(encoding="utf-8")) == {
-        "valid": True,
-        "issues": [],
-    }
+    report_payload = json.loads(validation_reports[0].read_text(encoding="utf-8"))
+    assert report_payload["valid"] is True
+    assert {issue["code"] for issue in report_payload["issues"]} == (
+        SYNTHETIC_EXPECTED_ISSUE_CODES
+    )
     diagnostics = tuple(
         (tmp_path / "generated" / "d3dplot" / "logs").glob("d3dplot_*.dia")
     )
@@ -269,9 +281,9 @@ def test_inspect_builds_and_reuses_cache_for_selected_simulation(
         (output_root / "smt" / "d3dplot" / "tables").glob("inspection_*.txt")
     )
     assert len(inspection_reports) == 1
-    assert "Validation passed: no issues." in inspection_reports[0].read_text(
-        encoding="utf-8"
-    )
+    inspection_text = inspection_reports[0].read_text(encoding="utf-8")
+    assert "Validation completed with warnings: 0 error(s)" in inspection_text
+    assert "WARNING V-MDU-002" in inspection_text
     diagnostics = tuple(
         (output_root / "smt" / "d3dplot" / "logs").glob("d3dplot_*.dia")
     )
