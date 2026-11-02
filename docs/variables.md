@@ -9,7 +9,7 @@ Registered computation callbacks run through the shared quantity engine.
 
 | Canonical | Kind | Aliases | NetCDF candidates | Location | Extra dimensions | Units | Label key | Inputs | Optional inputs | Alternatives | Requirements | Selection | Version |
 |-----------|------|---------|-------------------|----------|------------------|-------|-----------|--------|----------------|-------------|--------------|-----------|---------|
-| `bed_level` | raw | `bl`, `DPS`, `etab` | `mesh2d_mor_bl`, `mesh2d_flowelem_bl` | face | - | `m` | `bed_elevation` | - | - | - | - | - | - |
+| `bed_level` | raw | `bl`, `DPS`, `etab` | `mesh2d_mor_bl`, `mesh2d_flowelem_bl`, `mesh1d_flowelem_bl` | face | - | `m` | `bed_elevation` | - | - | - | - | - | - |
 | `bed_load_transport_magnitude` | derived | `sb` | - | face | `nSedTot` | `m^2/s` | `bedload_sediment_transport` | `mesh2d_sbcx`, `mesh2d_sbcy` | - | - | - | output | 1 |
 | `bed_shear_stress` | raw | `taub` | `mesh2d_taus` | face | - | `Pa` | `bed_shear_stress` | - | - | - | - | - | - |
 | `cell_area` | raw | `ba` | `mesh2d_flowelem_ba` | face | - | `m^2` | `cell_area` | - | - | - | - | - | - |
@@ -44,10 +44,10 @@ Registered computation callbacks run through the shared quantity engine.
 | `total_sediment_thickness` | derived | `Ltot` | - | face | - | `m` | `sediment_thickness` | `layer_thickness` | - | - | - | inputs | 1 |
 | `transport_streamfunction` | derived | - | - | face | - | `m^3/s` | `transport_streamfunction` | `mesh2d_u1`, `mesh2d_hu` | - | - | `grid_geometry`, `sparse_laplacian_factorization` | inputs | 1 |
 | `velocity_direction` | derived | `udir` | - | face | - | `degree` | `direction` | `mesh2d_ucx`, `mesh2d_ucy` | - | - | - | inputs | 1 |
-| `velocity_magnitude` | raw | `umag`, `umag_layer` | `mesh2d_ucmaga`, `mesh2d_ucmag` | face | - | `m/s` | `velocity_magnitude` | - | - | - | - | - | - |
+| `velocity_magnitude` | raw | `umag`, `umag_layer` | `mesh2d_ucmaga`, `mesh2d_ucmag`, `mesh1d_ucmag` | face | - | `m/s` | `velocity_magnitude` | - | - | - | - | - | - |
 | `velocity_magnitude_layer_mean` | derived | - | - | face | - | `m/s` | `velocity_magnitude` | `velocity_magnitude` | - | - | - | inputs | 1 |
 | `velocity_vector` | derived | `uv` | - | face | `component` | `m/s` | `velocity_vector` | `mesh2d_ucx`, `mesh2d_ucy` | - | - | - | inputs | 1 |
 | `vorticity` | derived | - | - | face | - | `1/s` | `vorticity` | `mesh2d_u1` | - | - | `grid_geometry` | inputs | 1 |
-| `water_depth` | raw | `h`, `wd`, `waterdepth` | `mesh2d_waterdepth` | face | - | `m` | `depth` | - | - | - | - | - | - |
-| `water_level` | raw | `wl` | `mesh2d_s1` | face | - | `m` | `water_level` | - | - | - | - | - | - |
+| `water_depth` | raw | `h`, `wd`, `waterdepth` | `mesh2d_waterdepth`, `mesh1d_waterdepth` | face | - | `m` | `depth` | - | - | - | - | - | - |
+| `water_level` | raw | `wl` | `mesh2d_s1`, `mesh1d_s1` | face | - | `m` | `water_level` | - | - | - | - | - | - |
 | `water_level_rate` | derived | `dzetadt` | - | face | - | `m/s` | `dzetadt` | `water_level` | `mesh2d_s0` | - | `map_times` | inputs | 1 |

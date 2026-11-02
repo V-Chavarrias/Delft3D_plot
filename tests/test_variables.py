@@ -58,6 +58,7 @@ def test_raw_variable_preserves_netcdf_candidate_priority_and_dimensions() -> No
     assert bed_level.netcdf_candidates == (
         "mesh2d_mor_bl",
         "mesh2d_flowelem_bl",
+        "mesh1d_flowelem_bl",
     )
     assert layer_fraction.extra_dims == ("nBedLayers", "nSedTot")
 

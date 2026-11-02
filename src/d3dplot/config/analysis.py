@@ -28,6 +28,10 @@ def _default_comparisons() -> list[Comparison]:
 class AnalysisConfigBase(ConfigModel):
     """Fields shared by built-in analyses."""
 
+    analysis: str = Field(
+        min_length=1,
+        description="Analysis discriminator registered by d3dplot.",
+    )
     variables: list[str] = Field(
         min_length=1,
         description="Canonical, aliased, or raw NetCDF quantity names.",

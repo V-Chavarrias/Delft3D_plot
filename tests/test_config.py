@@ -6,15 +6,20 @@ from __future__ import annotations
 import os
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 import yaml
 from pydantic import ValidationError
 
+from d3dplot.analyses import AnalysisPlugin
 from d3dplot.analyses.m1d.config import M1DConfig
 from d3dplot.analyses.map2d.config import Map2DConfig
-from d3dplot.analyses.registry import builtin_analysis_names, is_builtin_analysis
+from d3dplot.analyses.registry import (
+    builtin_analysis_names,
+    clear_plugin_analysis_cache,
+    is_builtin_analysis,
+)
 from d3dplot.analyses.river_km_statistics.config import RiverKmStatisticsConfig
 from d3dplot.config import (
     ProjectConfig,
@@ -37,6 +42,10 @@ from d3dplot.config.selections import (
     LayersSelection,
     TimeRange,
     TimesConfig,
+)
+from d3dplot.execution.project import (
+    ProjectStageUnavailable,
+    ensure_executable_analyses,
 )
 
 
@@ -225,6 +234,49 @@ def test_builtin_analysis_registry_is_stable() -> None:
     )
     assert is_builtin_analysis("m1d")
     assert not is_builtin_analysis("unknown")
+
+
+@pytest.mark.unit
+def test_plugin_analysis_config_is_validated_and_exported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class PluginConfig(M1DConfig):
+        analysis: Literal["test_plugin"] = "test_plugin"
+        plugin_option: int = 3
+
+    class EntryPoint:
+        name = "test_plugin"
+
+        def load(self) -> AnalysisPlugin:
+            return AnalysisPlugin(config_model=PluginConfig)
+
+    from d3dplot.analyses import registry
+
+    monkeypatch.setattr(registry, "entry_points", lambda group: (EntryPoint(),))
+    clear_plugin_analysis_cache()
+    try:
+        config = ProjectConfig.model_validate(
+            {
+                "simulations": [{"path": "model", "label": "reference"}],
+                "analyses": [
+                    {
+                        "analysis": "test_plugin",
+                        "variables": ["bed_level"],
+                        "branches": [["A"]],
+                        "branch_names": ["branch"],
+                        "plugin_option": 7,
+                    }
+                ],
+            }
+        )
+        assert config.analyses[0].analysis == "test_plugin"
+        assert config.analyses[0].plugin_option == 7  # type: ignore[attr-defined]
+        schema = config_json_schema()
+        assert "PluginConfig" in schema["$defs"]
+        with pytest.raises(ProjectStageUnavailable, match="config-only"):
+            ensure_executable_analyses(config)
+    finally:
+        clear_plugin_analysis_cache()
 
 
 @pytest.mark.unit

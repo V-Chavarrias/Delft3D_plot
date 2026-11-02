@@ -118,7 +118,7 @@ def _prepared_project(
     *,
     source_offset: str = "+00:00",
 ) -> tuple[OutputLayout, Path]:
-    layout = OutputLayout(tmp_path / "generated" / "reference" / "d3dplot")
+    layout = OutputLayout(tmp_path / "generated" / "d3dplot")
     guard = initialize_output_root(
         layout,
         tool_version=__version__,

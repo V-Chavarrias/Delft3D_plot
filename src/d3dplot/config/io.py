@@ -8,10 +8,12 @@ from collections.abc import Callable, Sequence
 from datetime import date, datetime
 from os import name as os_name
 from pathlib import Path, PureWindowsPath
-from typing import Any, TypeAlias
+from typing import Annotated, Any, TypeAlias, cast
 
 import yaml
+from pydantic import Field, TypeAdapter
 
+from d3dplot.analyses.registry import registered_analysis_configs
 from d3dplot.config.project import ProjectConfig
 from d3dplot.paths import resolve_path_preserving_drive
 
@@ -84,7 +86,27 @@ def apply_overrides(
 
 def config_json_schema() -> dict[str, Any]:
     """Return the JSON Schema for the complete project configuration."""
-    return ProjectConfig.model_json_schema()
+    schema = ProjectConfig.model_json_schema()
+    config_models = tuple(registered_analysis_configs().values())
+    analysis_union: Any = config_models[0]
+    for config_model in config_models[1:]:
+        analysis_union = analysis_union | config_model
+    analysis_type = cast(
+        Any,
+        Annotated[analysis_union, Field(discriminator="analysis")],
+    )
+    analysis_schema = TypeAdapter(analysis_type).json_schema()
+
+    definitions = schema.setdefault("$defs", {})
+    for name, definition in analysis_schema.pop("$defs", {}).items():
+        existing = definitions.get(name)
+        if existing is not None and existing != definition:
+            raise ValueError(f"Conflicting JSON Schema definition: {name!r}.")
+        definitions[name] = definition
+
+    analyses_schema = schema["properties"]["analyses"]
+    analyses_schema["items"] = analysis_schema
+    return schema
 
 
 def dump_json_schema() -> str:

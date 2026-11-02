@@ -58,11 +58,13 @@ DiagnosticSink = Callable[[str], None]
 
 @dataclass(frozen=True, slots=True)
 class M1DStageResult:
-    """Figures written by the M1D stage."""
+    """Figures and processed quantity caches produced by the M1D stage."""
 
     output_paths: tuple[Path, ...]
     reused_paths: tuple[Path, ...]
     messages: tuple[str, ...]
+    cache_paths: tuple[Path, ...] = ()
+    reused_cache_paths: tuple[Path, ...] = ()
 
 
 def plot_m1d_stage(
@@ -73,9 +75,45 @@ def plot_m1d_stage(
     diagnostic: DiagnosticSink | None = None,
 ) -> M1DStageResult:
     """Render configured M1D views from one-dimensional map output."""
+    return _run_m1d_stage(
+        project,
+        analysis_name=analysis_name,
+        simulation_label=simulation_label,
+        diagnostic=diagnostic,
+        render_figures=True,
+    )
+
+
+def process_m1d_stage(
+    project: ProjectConfig,
+    *,
+    analysis_name: str | None = None,
+    simulation_label: str | None = None,
+    diagnostic: DiagnosticSink | None = None,
+) -> M1DStageResult:
+    """Build configured M1D quantity caches without rendering figures."""
+    return _run_m1d_stage(
+        project,
+        analysis_name=analysis_name,
+        simulation_label=simulation_label,
+        diagnostic=diagnostic,
+        render_figures=False,
+    )
+
+
+def _run_m1d_stage(
+    project: ProjectConfig,
+    *,
+    analysis_name: str | None,
+    simulation_label: str | None,
+    diagnostic: DiagnosticSink | None,
+    render_figures: bool,
+) -> M1DStageResult:
     outputs: list[Path] = []
     reused: list[Path] = []
     messages: list[str] = []
+    cache_paths: list[Path] = []
+    reused_cache_paths: list[Path] = []
     for analysis_index, configured in enumerate(project.analyses):
         if not isinstance(configured, M1DConfig):
             continue
@@ -90,11 +128,20 @@ def plot_m1d_stage(
                 configured,
                 analysis_index,
                 diagnostic=diagnostic,
+                render_figures=render_figures,
             )
             outputs.extend(result.output_paths)
             reused.extend(result.reused_paths)
             messages.extend(result.messages)
-    return M1DStageResult(tuple(outputs), tuple(reused), tuple(messages))
+            cache_paths.extend(result.cache_paths)
+            reused_cache_paths.extend(result.reused_cache_paths)
+    return M1DStageResult(
+        tuple(outputs),
+        tuple(reused),
+        tuple(messages),
+        tuple(cache_paths),
+        tuple(reused_cache_paths),
+    )
 
 
 def _plot_analysis(
@@ -104,6 +151,7 @@ def _plot_analysis(
     analysis_index: int,
     *,
     diagnostic: DiagnosticSink | None,
+    render_figures: bool,
 ) -> M1DStageResult:
     map_path, fallback_message = _map_path_for_simulation(simulation)
     grid = M1DGrid.from_map(map_path)
@@ -120,27 +168,34 @@ def _plot_analysis(
     hooks = project.effective_hooks(analysis)
     input_fingerprint = fingerprint_model_output(map_path)
     fingerprint = input_fingerprint
-    reference = _reference_simulation(project)
+    reference = _reference_simulation(project) if render_figures else simulation
     outputs: list[Path] = []
     reused: list[Path] = []
     messages: list[str] = []
+    cache_paths: list[Path] = []
+    reused_cache_paths: list[Path] = []
     if fallback_message is not None:
         messages.append(fallback_message)
     measurements: dict[str, ProfileMeasurement] = {}
-    for measurement_variable, settings in analysis.measurements.items():
-        loaded = load_profile_measurements(
-            settings.file,
-            [measurement_variable],
-            time_zone=(
-                settings.time_zone
-                or (str(project.time_zone) if project.time_zone is not None else None)
-            ),
-            layout=layout,
-            guard=guard,
-            diagnostic=messages.append,
-            skip_missing=analysis.on_missing_input == "skip",
-        )
-        measurements.update(loaded)
+    if render_figures:
+        for measurement_variable, settings in analysis.measurements.items():
+            loaded = load_profile_measurements(
+                settings.file,
+                [measurement_variable],
+                time_zone=(
+                    settings.time_zone
+                    or (
+                        str(project.time_zone)
+                        if project.time_zone is not None
+                        else None
+                    )
+                ),
+                layout=layout,
+                guard=guard,
+                diagnostic=messages.append,
+                skip_missing=analysis.on_missing_input == "skip",
+            )
+            measurements.update(loaded)
 
     for variable in analysis.variables:
         location = _location_for_variable(map_path, variable)
@@ -159,7 +214,7 @@ def _plot_analysis(
         ):
             x_values = None
             x_label = "Distance (m)"
-            if analysis.river_km is not None:
+            if analysis.river_km is not None and render_figures:
                 x_values = read_m1d_river_km_coordinates(
                     chain,
                     analysis.river_km.file,
@@ -175,10 +230,32 @@ def _plot_analysis(
                 indices,
                 selected_times,
                 input_fingerprint,
-                project.reprocess,
+                project.effective_reprocess(analysis),
             )
             if cache_message is not None:
                 messages.append(cache_message)
+            time_cache_paths = tuple(
+                m1d_cache_path(
+                    layout,
+                    variable=variable,
+                    chain_name=chain.name,
+                    time=time,
+                )
+                for time in selected_times
+            )
+            if cache_message is not None and cache_message.startswith(
+                "Reused M1D cache:"
+            ):
+                reused_cache_paths.extend(time_cache_paths)
+            else:
+                cache_paths.extend(time_cache_paths)
+            if not render_figures:
+                messages.append(
+                    f"M1D processed {simulation.label}/{chain_name}/{variable}."
+                )
+                if diagnostic is not None:
+                    diagnostic(messages[-1])
+                continue
             reference_values: np.ndarray | None = None
             if any(
                 comparison
@@ -296,7 +373,13 @@ def _plot_analysis(
             )
             if diagnostic is not None:
                 diagnostic(messages[-1])
-    return M1DStageResult(tuple(outputs), tuple(reused), tuple(messages))
+    return M1DStageResult(
+        tuple(outputs),
+        tuple(reused),
+        tuple(messages),
+        tuple(cache_paths),
+        tuple(reused_cache_paths),
+    )
 
 
 def _render_m1d_views(

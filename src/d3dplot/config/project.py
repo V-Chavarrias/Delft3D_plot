@@ -5,24 +5,27 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Mapping
 from pathlib import Path, PureWindowsPath
-from typing import Annotated, Literal, TypeAlias
+from typing import Literal, TypeAlias
 
-from pydantic import Field, PositiveInt, StrictInt, StrictStr, field_validator
+from pydantic import (
+    Field,
+    PositiveInt,
+    SerializeAsAny,
+    StrictInt,
+    StrictStr,
+    field_validator,
+)
 
-from d3dplot.analyses.m1d.config import M1DConfig
-from d3dplot.analyses.map2d.config import Map2DConfig
-from d3dplot.analyses.river_km_statistics.config import RiverKmStatisticsConfig
+from d3dplot.analyses.registry import analysis_config_model
 from d3dplot.config.analysis import AnalysisConfigBase, ProcessingPolicy
 from d3dplot.config.base import ConfigModel, FixedUTCOffset
 from d3dplot.config.figure import FigureConfig
 from d3dplot.config.status import StatusConfig
 from d3dplot.paths import resolve_path_preserving_drive
 
-AnalysisConfig: TypeAlias = Annotated[
-    M1DConfig | Map2DConfig | RiverKmStatisticsConfig,
-    Field(discriminator="analysis"),
-]
+AnalysisConfig: TypeAlias = SerializeAsAny[AnalysisConfigBase]
 
 
 class SimulationConfig(ConfigModel):
@@ -267,8 +270,34 @@ class ProjectConfig(ConfigModel):
     )
     analyses: list[AnalysisConfig] = Field(
         min_length=1,
-        description="Built-in analyses to run.",
+        description="Registered analysis configurations.",
     )
+
+    @field_validator("analyses", mode="before")
+    @classmethod
+    def parse_analysis_configs(cls, value: object) -> object:
+        """Validate each analysis with its registered config model."""
+        if not isinstance(value, (list, tuple)):
+            return value
+
+        parsed: list[object] = []
+        for item in value:
+            if isinstance(item, AnalysisConfigBase):
+                config_model = analysis_config_model(item.analysis)
+                if not isinstance(item, config_model):
+                    raise ValueError(
+                        f"Analysis {item.analysis!r} must use {config_model.__name__}."
+                    )
+                parsed.append(item)
+                continue
+            if isinstance(item, Mapping):
+                name = item.get("analysis")
+                if isinstance(name, str):
+                    config_model = analysis_config_model(name)
+                    parsed.append(config_model.model_validate(item))
+                    continue
+            parsed.append(item)
+        return parsed
 
     def effective_figure(self, analysis: AnalysisConfigBase) -> FigureConfig:
         """Merge an analysis's explicit figure fields over project defaults."""

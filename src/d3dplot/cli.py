@@ -43,9 +43,9 @@ from d3dplot.config.selections import TimesConfig
 from d3dplot.execution.diagnostics import DiagnosticLog
 from d3dplot.execution.project import (
     ProjectStageUnavailable,
+    ensure_executable_analyses,
     run_native_project,
 )
-from d3dplot.execution.project_runner import run_project
 from d3dplot.execution.slurm import render_slurm_script
 from d3dplot.paths import resolve_path_preserving_drive
 from d3dplot.plotting.stage import (
@@ -933,6 +933,7 @@ def plot(
     except (
         Map2DPlotError,
         RiverKmStatisticsPlotError,
+        ProjectStageUnavailable,
         OSError,
         OutputWriteError,
         ValueError,
@@ -973,49 +974,80 @@ def process(
         Literal["serial", "processes", "slurm"] | None,
         typer.Option("--executor", help="Override the configured executor."),
     ] = None,
+    workers: Annotated[
+        int | None,
+        typer.Option("--workers", min=1, help="Override the worker count."),
+    ] = None,
     shard: Annotated[
         str | None,
         typer.Option("--shard", help="Override deterministic shard selection i/N."),
     ] = None,
 ) -> None:
-    """Process configured quantities through the source-checkout stage bridge."""
-    project = load_config(configuration)
-    if project.analyses:
-        if executor == "slurm":
-            typer.echo(
-                "The native M1D processor does not submit SLURM jobs; "
-                "use executor=serial or processes.",
-                err=True,
-            )
-            raise typer.Exit(code=2)
-        overrides: list[str] = []
-        if reprocess is not None:
-            overrides.append(f"reprocess={reprocess}")
-        if executor is not None:
-            overrides.append(f"execution.executor={executor}")
-        if shard is not None:
-            overrides.append(f"execution.shard={shard}")
-        if overrides:
-            project = apply_overrides(project, overrides)
-        try:
-            native_result = run_native_project(project)
-        except ProjectStageUnavailable:
-            pass
-        else:
-            typer.echo(
-                f"Native processing finished: "
-                f"{len(native_result.output_paths)} figure(s) written, "
-                f"{len(native_result.reused_paths)} reused."
-            )
-            return
-    return_code = run_project(
-        configuration,
-        serial=serial,
-        reprocess=reprocess,
-        executor=executor,
-        shard=shard,
+    """Process configured quantities for every simulation in the project."""
+    try:
+        configuration_path, project = _load_process_project(
+            configuration,
+            serial=serial,
+            reprocess=reprocess,
+            executor=executor,
+            workers=workers,
+            shard=shard,
+        )
+        result = run_native_project(
+            project,
+            configuration_path=configuration_path,
+        )
+    except typer.Exit:
+        raise
+    except (
+        ProjectStageUnavailable,
+        OSError,
+        OutputWriteError,
+        ValueError,
+        yaml.YAMLError,
+    ) as error:
+        typer.echo(f"Processing failed: {_format_cli_error(error)}", err=True)
+        raise typer.Exit(code=1) from error
+
+    typer.echo(
+        f"Processing complete: {len(result.output_paths)} cache file(s) built, "
+        f"{len(result.reused_paths)} reused; "
+        f"{result.succeeded_tasks} task(s) succeeded, "
+        f"{result.failed_tasks} failed."
     )
-    raise typer.Exit(code=return_code)
+    if result.failed_simulations:
+        typer.echo(
+            "Simulation failures: " + ", ".join(result.failed_simulations),
+            err=True,
+        )
+    if result.exit_code:
+        raise typer.Exit(code=result.exit_code)
+
+
+def _load_process_project(
+    configuration: Path,
+    *,
+    serial: bool,
+    reprocess: Literal["if_changed", "never", "always"] | None,
+    executor: Literal["serial", "processes", "slurm"] | None,
+    workers: int | None,
+    shard: str | None,
+) -> tuple[Path, ProjectConfig]:
+    configuration_path = configuration.expanduser().resolve(strict=True)
+    project = load_config(configuration_path)
+    overrides: list[str] = []
+    effective_executor = "serial" if serial else executor
+    if reprocess is not None:
+        overrides.append(f"reprocess={reprocess}")
+    if effective_executor is not None:
+        overrides.append(f"execution.executor={effective_executor}")
+    if workers is not None:
+        overrides.append(f"execution.workers={workers}")
+    if shard is not None:
+        overrides.append(f"execution.shard={shard}")
+    if overrides:
+        project = apply_overrides(project, overrides)
+    return configuration_path, project
 
 
 @app.command()
@@ -1042,18 +1074,85 @@ def run(
         Literal["serial", "processes", "slurm"] | None,
         typer.Option("--executor", help="Override the configured executor."),
     ] = None,
+    workers: Annotated[
+        int | None,
+        typer.Option("--workers", min=1, help="Override the worker count."),
+    ] = None,
     shard: Annotated[
         str | None,
         typer.Option("--shard", help="Override deterministic shard selection i/N."),
     ] = None,
 ) -> None:
-    """Run the currently available end-to-end processing stage bridge."""
-    process(
-        configuration,
-        serial=serial,
-        reprocess=reprocess,
-        executor=executor,
-        shard=shard,
+    """Process configured quantities, then render figures when unsharded."""
+    try:
+        configuration_path, project = _load_process_project(
+            configuration,
+            serial=serial,
+            reprocess=reprocess,
+            executor=executor,
+            workers=workers,
+            shard=shard,
+        )
+        result = run_native_project(
+            project,
+            configuration_path=configuration_path,
+        )
+        typer.echo(
+            f"Processing complete: {len(result.output_paths)} cache file(s) built, "
+            f"{len(result.reused_paths)} reused; "
+            f"{result.succeeded_tasks} task(s) succeeded, "
+            f"{result.failed_tasks} failed."
+        )
+        if result.failed_simulations:
+            typer.echo(
+                "Simulation failures: " + ", ".join(result.failed_simulations),
+                err=True,
+            )
+        if result.exit_code:
+            raise typer.Exit(code=result.exit_code)
+        if project.execution.shard is not None:
+            typer.echo(
+                "Plotting skipped for sharded processing; run d3dplot plot after "
+                "all shards complete."
+            )
+            return
+
+        command_line_parts = ["d3dplot", "run", str(configuration_path)]
+        if serial:
+            command_line_parts.append("--serial")
+        if reprocess is not None:
+            command_line_parts.extend(("--reprocess", reprocess))
+        if executor is not None:
+            command_line_parts.extend(("--executor", executor))
+        if workers is not None:
+            command_line_parts.extend(("--workers", str(workers)))
+        diagnostics = _make_diagnostic_log(
+            project,
+            list(project.simulations),
+            configuration=configuration_path,
+            command_line=tuple(command_line_parts),
+            output_is_valid=True,
+        )
+        plot_result = _run_plot_stage(project, diagnostics=diagnostics)
+    except typer.Exit:
+        raise
+    except (
+        ProjectStageUnavailable,
+        Map2DPlotError,
+        RiverKmStatisticsPlotError,
+        OSError,
+        OutputWriteError,
+        ValueError,
+        yaml.YAMLError,
+    ) as error:
+        typer.echo(f"Run failed: {_format_cli_error(error)}", err=True)
+        raise typer.Exit(code=1) from error
+
+    typer.echo(
+        f"Plot complete: {len(plot_result.output_paths)} figure(s) written, "
+        f"{len(plot_result.reused_paths)} reused, "
+        f"{len(plot_result.movie_paths)} movie(s) written, "
+        f"{len(plot_result.reused_movie_paths)} reused."
     )
 
 
@@ -1168,6 +1267,18 @@ def _run_plot_stage(
 ) -> PlotStageResult:
     def execute(diagnostic_log: DiagnosticLog | None) -> PlotStageResult:
         try:
+            selected_analysis_name = analysis_name
+            if target is not None:
+                if target.analysis_index >= len(config.analyses):
+                    raise ValueError(
+                        "Figure metadata analysis is not present in the "
+                        "resolved config."
+                    )
+                selected_analysis_name = config.analyses[target.analysis_index].analysis
+            ensure_executable_analyses(
+                config,
+                analysis_name=selected_analysis_name,
+            )
             replayable_config = _canonical_resolved_config(config)
             provenance_path = _write_resolved_provenance(replayable_config)
             if diagnostic_log is not None:
@@ -1262,6 +1373,7 @@ def _run_plot_stage(
         except (
             Map2DPlotError,
             RiverKmStatisticsPlotError,
+            ProjectStageUnavailable,
             OSError,
             OutputWriteError,
             ValueError,
