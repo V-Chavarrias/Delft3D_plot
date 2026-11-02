@@ -1,0 +1,452 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Process and plot selected quantities from a single-simulation project YAML."""
+
+from __future__ import annotations
+
+import argparse
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+from d3dplot import __version__
+from d3dplot.analyses.m1d.config import M1DConfig
+from d3dplot.analyses.m1d.stage import plot_m1d_stage
+from d3dplot.analyses.map2d.config import Map2DConfig
+from d3dplot.analyses.map2d.process import (
+    Map2DProcessResult,
+    Map2DTaskProcessor,
+)
+from d3dplot.analyses.river_km_statistics.config import RiverKmStatisticsConfig
+from d3dplot.config.analysis import AnalysisConfigBase
+from d3dplot.config.io import apply_overrides, load_config
+from d3dplot.config.project import ProjectConfig, SimulationConfig
+from d3dplot.config.selections import LayersSelection
+from d3dplot.execution.diagnostics import DiagnosticLog
+from d3dplot.execution.orchestrator import run_process_stage
+from d3dplot.execution.tasks import AnalysisTimeSelection, plan_process_tasks
+from d3dplot.simulation.discover import Simulation, discover_simulation
+from d3dplot.simulation.inspection import (
+    InspectionResult,
+    inspect_simulation,
+)
+from d3dplot.simulation.time_axis import TimeAxis, TimeSelectionResult
+from d3dplot.store import OutputLayout, initialize_output_root
+from d3dplot.validate import (
+    ValidationReport,
+    write_validation_report,
+)
+from d3dplot.variables.context import QuantityRequest
+
+
+def _quantity_requests(
+    analysis: AnalysisConfigBase,
+) -> tuple[QuantityRequest, ...]:
+    vertical = analysis.vertical
+    if vertical == "all":
+        layers = None
+    elif isinstance(vertical, LayersSelection):
+        layers = tuple(vertical.layers)
+    else:
+        raise ValueError(
+            "This processing helper supports vertical: all or explicit layers."
+        )
+
+    fractions = None if analysis.fractions == "all" else tuple(analysis.fractions)
+    return tuple(
+        dict.fromkeys(
+            QuantityRequest(
+                requested_name=name,
+                fractions=fractions,
+                layers=layers,
+                sum_fractions=analysis.sum_fractions,
+                active_sediment_thickness_threshold_m=(
+                    analysis.active_sediment_thickness_threshold_m
+                ),
+            )
+            for name in analysis.variables
+        )
+    )
+
+
+def run_project(
+    configuration_path: Path,
+    *,
+    serial: bool,
+    reuse_inspection_cache: bool = False,
+    reprocess: str | None = None,
+    executor: str | None = None,
+    shard: str | None = None,
+) -> int:
+    project = load_config(configuration_path)
+    if reprocess is not None:
+        overrides = [f"reprocess={reprocess}"]
+        if executor is not None:
+            overrides.append(f"execution.executor={executor}")
+        if shard is not None:
+            overrides.append(f"execution.shard={shard}")
+        project = apply_overrides(project, overrides)
+    elif executor is not None or shard is not None:
+        overrides = []
+        if executor is not None:
+            overrides.append(f"execution.executor={executor}")
+        if shard is not None:
+            overrides.append(f"execution.shard={shard}")
+        project = apply_overrides(project, overrides)
+    if len(project.simulations) != 1:
+        raise ValueError(
+            "This local processing helper currently requires exactly one "
+            "configured simulation."
+        )
+
+    simulation_config = project.simulations[0]
+    layout = OutputLayout.for_simulation(simulation_config, project.output)
+    if project.analyses and all(
+        isinstance(analysis, M1DConfig) for analysis in project.analyses
+    ):
+        return _process_m1d_project(
+            project,
+            configuration_path,
+            simulation_config,
+            layout,
+        )
+    validation_report_path: Path | None = None
+    with DiagnosticLog.for_project(
+        (layout,),
+        tool_version=__version__,
+        command_line=tuple(sys.argv),
+        forbidden_roots=project.output.forbidden_roots,
+        configuration_path=configuration_path,
+    ) as diagnostics:
+        diagnostics.info(f"Starting simulation discovery: {simulation_config.path}.")
+        simulation, discovery_report = discover_simulation(
+            simulation_config.path,
+            check_map_headers=project.check_map_headers,
+        )
+        diagnostics.info(
+            "Simulation discovery finished: "
+            f"found={simulation is not None}; "
+            f"issues={len(discovery_report.issues)}."
+        )
+        diagnostics.record_validation_issues(discovery_report.issues)
+        if simulation is None:
+            report_guard = initialize_output_root(
+                layout,
+                tool_version=__version__,
+                forbidden_roots=project.output.forbidden_roots,
+            )
+            validation_report_path = write_validation_report(
+                discovery_report,
+                layout,
+                report_guard,
+            )
+            diagnostics.info(f"Validation report written: {validation_report_path}.")
+            raise ValueError(discovery_report.to_text())
+
+        inspection: InspectionResult | None
+        inspection_report: ValidationReport
+        if reuse_inspection_cache:
+            diagnostics.warning(
+                "Reusing the existing inspection cache without revalidating "
+                "current model-output metadata."
+            )
+            inspection, inspection_report = _reuse_inspection_cache(
+                simulation,
+                layout,
+            )
+        else:
+            diagnostics.info(
+                f"Starting output inspection: simulation={simulation_config.label}."
+            )
+            inspection, inspection_report = inspect_simulation(
+                simulation,
+                layout,
+                crs=project.crs,
+                time_zone=(
+                    str(project.time_zone) if project.time_zone is not None else None
+                ),
+                check_boundary_duplicates=project.check_boundary_duplicates,
+                forbidden_roots=project.output.forbidden_roots,
+            )
+        diagnostics.info(
+            "Output inspection finished: "
+            f"valid={inspection_report.is_valid}; "
+            f"issues={len(inspection_report.issues)}."
+        )
+        diagnostics.record_validation_issues(inspection_report.issues)
+        validation_report = ValidationReport(
+            discovery_report.issues + inspection_report.issues
+        )
+        report_guard = initialize_output_root(
+            layout,
+            tool_version=__version__,
+            forbidden_roots=project.output.forbidden_roots,
+        )
+        validation_report_path = write_validation_report(
+            validation_report,
+            layout,
+            report_guard,
+        )
+        diagnostics.info(f"Validation report written: {validation_report_path}.")
+        if inspection is None or not inspection_report.is_valid:
+            raise ValueError(validation_report.to_text())
+
+        diagnostics.info("Starting cached time-axis read.")
+        time_axis = TimeAxis.from_cache(inspection.times_path)
+        diagnostics.info(f"Cached time axis loaded: entries={len(time_axis.entries)}.")
+        time_zone = str(project.time_zone) if project.time_zone is not None else None
+        selections: list[AnalysisTimeSelection] = []
+        selection_records: list[
+            tuple[str, AnalysisConfigBase, TimeSelectionResult]
+        ] = []
+        map2d_keys: list[str] = []
+        river_km_analyses: dict[str, RiverKmStatisticsConfig] = {}
+
+        for index, analysis in enumerate(project.analyses):
+            analysis_key = f"analysis-{index}-{analysis.analysis}"
+            diagnostics.info(f"Starting time selection: analysis={analysis_key}.")
+            selection = time_axis.select(
+                analysis.times,
+                naive_time_zone=time_zone,
+                duplicate_morphological_times=(analysis.duplicate_morphological_times),
+                on_corrupt_output=project.on_corrupt_output,
+            )
+            diagnostics.info(
+                f"Time selection finished: analysis={analysis_key}; "
+                f"selected={len(selection.entries)}; "
+                f"issues={len(selection.issues)}."
+            )
+            selections.append(
+                AnalysisTimeSelection(
+                    analysis_key=analysis_key,
+                    quantities=_quantity_requests(analysis),
+                    selection=selection,
+                )
+            )
+            selection_records.append((analysis_key, analysis, selection))
+
+            if isinstance(analysis, Map2DConfig):
+                map2d_keys.append(analysis_key)
+            elif isinstance(analysis, RiverKmStatisticsConfig):
+                river_km_analyses[analysis_key] = analysis
+            else:
+                raise TypeError(
+                    f"Unsupported analysis type: {type(analysis).__name__}."
+                )
+
+        executor = "serial" if serial else project.execution.executor
+        if executor == "slurm":
+            raise ValueError(
+                "SLURM submission is not supported by this local processing helper."
+            )
+        workers = (
+            1
+            if executor == "serial"
+            else project.execution.workers or os.cpu_count() or 1
+        )
+
+        guard = initialize_output_root(
+            layout,
+            tool_version=__version__,
+            forbidden_roots=project.output.forbidden_roots,
+        )
+        processor = Map2DTaskProcessor(
+            simulation,
+            simulation_config.label,
+            inspection,
+            layout,
+            guard,
+            analysis_keys=tuple(map2d_keys),
+            river_km_analyses=river_km_analyses,
+            model_crs=project.crs,
+            dtype=project.output.dtype,
+            on_corrupt_output=project.on_corrupt_output,
+        )
+
+        for analysis_key, selected_analysis, selection in selection_records:
+            diagnostics.record_time_selection(
+                analysis_key=analysis_key,
+                simulation_label=simulation_config.label,
+                requested=selected_analysis.times.model_dump_json(),
+                result=selection,
+            )
+            if not selection.is_valid:
+                raise ValueError(
+                    f"Invalid time selection for {analysis_key}: "
+                    + "; ".join(issue.message for issue in selection.issues)
+                )
+        diagnostics.info(
+            f"Planning process tasks: executor={executor}; workers={workers}."
+        )
+        tasks = plan_process_tasks(
+            simulation_config.label,
+            selections,
+            workers=workers,
+            max_block_times=project.execution.process_block_times,
+            shard=project.execution.shard,
+        )
+        if not tasks:
+            raise ValueError("The configured selections produced no process tasks.")
+        diagnostics.info(f"Process task plan ready: tasks={len(tasks)}.")
+        diagnostics.warning(
+            "This test helper rebuilds all selected quantity caches; it does not "
+            "apply the project's reprocess cache policy."
+        )
+        summary = run_process_stage(
+            tasks,
+            processor,
+            executor=executor,
+            workers=project.execution.workers,
+            diagnostics=diagnostics,
+            summary_path=layout.tables / "run-summary.csv",
+            guard=guard,
+        )
+        diagnostics.info(
+            "Quantity-cache processing finished: "
+            f"succeeded={summary.succeeded_count}; "
+            f"failed={summary.failed_count}."
+        )
+
+    output_count = sum(
+        len(result.value.output_paths)
+        for result in summary.outcomes
+        if isinstance(result.value, Map2DProcessResult)
+    )
+    print(
+        f"Processing finished: {summary.succeeded_count} task(s) succeeded, "
+        f"{summary.failed_count} failed; {output_count} cache file(s) written."
+    )
+    print(f"Output root: {layout.root}")
+    if validation_report_path is not None:
+        print(f"Validation report: {validation_report_path}")
+    print(f"Run summary: {layout.tables / 'run-summary.csv'}")
+    print(f"Diagnostics: {layout.logs}")
+    if summary.exit_code:
+        return summary.exit_code
+
+    plot_command = [
+        sys.executable,
+        "-m",
+        "d3dplot",
+        "plot",
+        str(configuration_path),
+    ]
+    return subprocess.run(plot_command, check=False).returncode
+
+
+def _process_m1d_project(
+    project: ProjectConfig,
+    configuration_path: Path,
+    simulation_config: SimulationConfig,
+    layout: OutputLayout,
+) -> int:
+    """Run the M1D cache-and-plot path for a one-dimensional-only project."""
+    with DiagnosticLog.for_project(
+        (layout,),
+        tool_version=__version__,
+        command_line=tuple(sys.argv),
+        forbidden_roots=project.output.forbidden_roots,
+        configuration_path=configuration_path,
+    ) as diagnostics:
+        diagnostics.info(
+            f"Starting M1D cache-and-plot processing: "
+            f"simulation={simulation_config.label}."
+        )
+        result = plot_m1d_stage(
+            project,
+            simulation_label=simulation_config.label,
+            diagnostic=diagnostics.info,
+        )
+        diagnostics.info(
+            f"Finished M1D cache-and-plot processing: "
+            f"written={len(result.output_paths)}; "
+            f"reused={len(result.reused_paths)}."
+        )
+    print(f"M1D processing finished: {len(result.output_paths)} figure(s) written.")
+    print(f"Output root: {layout.root}")
+    print(f"Diagnostics: {layout.logs}")
+    return 0
+
+
+def _reuse_inspection_cache(
+    simulation: Simulation,
+    layout: OutputLayout,
+) -> tuple[InspectionResult, ValidationReport]:
+    """Return existing inspection paths without reading model-output metadata."""
+    cache_paths = (
+        layout.cache / "merge_plan.nc",
+        layout.cache / "times.nc",
+        layout.cache / "grid.nc",
+    )
+    missing = tuple(path for path in cache_paths if not path.is_file())
+    if missing:
+        missing_text = ", ".join(str(path) for path in missing)
+        raise ValueError(
+            "Cannot reuse the inspection cache; missing file(s): " + missing_text
+        )
+    return (
+        InspectionResult(
+            merge_plan_path=cache_paths[0],
+            times_path=cache_paths[1],
+            grid_paths=(cache_paths[2],),
+            reference_subrun=simulation.subruns[0].index,
+            cache_reused=True,
+            duration_seconds=0.0,
+        ),
+        ValidationReport(),
+    )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Process configured quantities and create figures for one simulation. "
+            "All selected quantity caches are rebuilt."
+        )
+    )
+    parser.add_argument(
+        "configuration",
+        type=Path,
+        help="YAML or JSON project configuration.",
+    )
+    parser.add_argument(
+        "--serial",
+        action="store_true",
+        help="Run tasks serially instead of using the configured executor.",
+    )
+    parser.add_argument(
+        "--reuse-inspection-cache",
+        action="store_true",
+        help=(
+            "Reuse existing grid, merge-plan, and time caches without "
+            "rescanning model output."
+        ),
+    )
+    parser.add_argument(
+        "--reprocess",
+        choices=("if_changed", "never", "always"),
+        help="Override the configured cache reprocessing policy.",
+    )
+    parser.add_argument(
+        "--executor",
+        choices=("serial", "processes", "slurm"),
+        help="Override the configured executor.",
+    )
+    parser.add_argument(
+        "--shard",
+        help="Override deterministic shard selection in the form i/N.",
+    )
+    arguments = parser.parse_args()
+    configuration_path = arguments.configuration.expanduser().resolve(strict=True)
+    return run_project(
+        configuration_path,
+        serial=arguments.serial,
+        reuse_inspection_cache=arguments.reuse_inspection_cache,
+        reprocess=arguments.reprocess,
+        executor=arguments.executor,
+        shard=arguments.shard,
+    )
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

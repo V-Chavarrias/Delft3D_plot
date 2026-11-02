@@ -43,7 +43,7 @@ Document map:
 | Item | Location | State |
 |------|----------|-------|
 | Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `main` includes the pushed `feat/acceptance-r209` merge (`4b88447`); WP 5.1 acceptance remains incomplete (§13.4); the local topic branch remains; WP 5.5 release automation is on `feat/pypi-release` |
-| Plan (this file) | `docs/architecture.md` | v7.19 (native M1D project runner extracted into `execution/`; map2d/river-km projects still use the temporary bridge while shared orchestration is extracted) |
+| Plan (this file) | `docs/architecture.md` | v7.20 (project processing implementation moved into `execution/project_runner.py`; `tools/process_project.py` is now a compatibility wrapper, with multi-simulation orchestration still remaining) |
 | Licence | `LICENSE` | GPL-3.0 |
 | Synthetic SMT and plain FM test case generator | `tools/synthetic_smt/` | Implemented and verified locally (§13.3) |
 | Land-boundary converter (`.mat` cache → `.ldb`) | `tools/mat_to_ldb.py` | Implemented. Used to recreate the Maas land boundary (D45) |
@@ -2671,6 +2671,7 @@ The complete model-quantity catalog (all v1 raw and derived registry entries, al
 
 | Version | Content |
 |---------|---------|
+| v7.20 | Move the project processing implementation into `execution/project_runner.py`, make the CLI call it directly, and retain `tools/process_project.py` only as a compatibility wrapper |
 | v7.19 | Extract native M1D project dispatch into `execution/project.py`; CLI `process`/`run` use it and fall back to the helper only for unsupported analyses |
 | v7.18 | Route M1D-only `process` and `run` projects through the native M1D stage; retain the guarded helper bridge for map2d/river-km processing until shared orchestration is extracted |
 | v7.17 | Add executor and deterministic shard overrides to the source-checkout `process`/`run` stage bridges |

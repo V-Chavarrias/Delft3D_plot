@@ -140,9 +140,8 @@ default report format, and the report is written to
 
 ## Process quantities from Python
 
-The source checkout provides `d3dplot process` and `d3dplot run` as stage
-bridges. They invoke the guarded processing helper below until the internal
-WP 2.4 orchestrator replaces it:
+The source checkout provides `d3dplot process` and `d3dplot run` through the
+internal project runner. The old helper remains as a compatibility wrapper:
 
 ```powershell
 .\.venv\Scripts\python.exe -m d3dplot prepare project.yaml

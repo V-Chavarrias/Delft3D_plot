@@ -6,8 +6,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import subprocess
-import sys
 from collections.abc import Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
@@ -47,6 +45,7 @@ from d3dplot.execution.project import (
     ProjectStageUnavailable,
     run_native_project,
 )
+from d3dplot.execution.project_runner import run_project
 from d3dplot.execution.slurm import render_slurm_script
 from d3dplot.paths import resolve_path_preserving_drive
 from d3dplot.plotting.stage import (
@@ -1009,25 +1008,14 @@ def process(
                 f"{len(native_result.reused_paths)} reused."
             )
             return
-    helper = Path(__file__).resolve().parents[2] / "tools" / "process_project.py"
-    if not helper.is_file():
-        typer.echo(
-            "The process stage bridge is unavailable in this installation; "
-            "use the installed stage runner when WP 2.4 is packaged.",
-            err=True,
-        )
-        raise typer.Exit(code=2)
-    command = [sys.executable, str(helper), str(configuration)]
-    if serial:
-        command.append("--serial")
-    if reprocess is not None:
-        command.extend(("--reprocess", reprocess))
-    if executor is not None:
-        command.extend(("--executor", executor))
-    if shard is not None:
-        command.extend(("--shard", shard))
-    result = subprocess.run(command, check=False)
-    raise typer.Exit(code=result.returncode)
+    return_code = run_project(
+        configuration,
+        serial=serial,
+        reprocess=reprocess,
+        executor=executor,
+        shard=shard,
+    )
+    raise typer.Exit(code=return_code)
 
 
 @app.command()
