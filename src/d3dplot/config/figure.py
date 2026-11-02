@@ -47,7 +47,7 @@ class RiverKmLabelsConfig(ConfigModel):
     """Draw river-km labels from a river-km file."""
 
     file: Path = Field(description="River-km file containing label locations.")
-    color: str = Field(default="black", description="Text color for river-km labels.")
+    color: str = Field(default="cyan", description="Text color for river-km labels.")
 
 
 class BackgroundTilesConfig(ConfigModel):

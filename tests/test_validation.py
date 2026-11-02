@@ -119,7 +119,7 @@ def test_v_cfg_003_rejects_duplicate_labels_and_output_roots() -> None:
 
 
 @pytest.mark.unit
-def test_v_cfg_003_uses_the_project_output_root_and_simulation_label() -> None:
+def test_v_cfg_003_rejects_shared_output_root_for_multiple_simulations() -> None:
     data = _minimal_data()
     data["simulations"] = [
         {"path": "model-a", "label": "a"},
@@ -130,7 +130,8 @@ def test_v_cfg_003_uses_the_project_output_root_and_simulation_label() -> None:
     config, report = validate_config(data)
 
     assert config is not None
-    assert report.is_valid
+    assert [issue.code for issue in report.issues] == ["V-CFG-003"]
+    assert report.issues[0].location == "simulations[1]"
 
 
 @pytest.mark.unit

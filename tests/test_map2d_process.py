@@ -6,6 +6,7 @@ from __future__ import annotations
 import csv
 import json
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -21,6 +22,7 @@ from d3dplot.analyses.map2d.process import (
     Map2DProcessError,
     Map2DProcessResult,
     Map2DTaskProcessor,
+    map2d_output_path,
 )
 from d3dplot.analyses.river_km_statistics.config import (
     RegionDifferenceConfig,
@@ -40,7 +42,7 @@ from d3dplot.execution.orchestrator import run_process_stage
 from d3dplot.execution.tasks import AnalysisTimeSelection, plan_process_tasks
 from d3dplot.simulation import discover_simulation, inspect_simulation
 from d3dplot.simulation.map_reader import MapReader, MapReaderSession
-from d3dplot.simulation.time_axis import TimeAxis, TimeSelectionResult
+from d3dplot.simulation.time_axis import TimeAxis, TimeEntry, TimeSelectionResult
 from d3dplot.store import OutputLayout, initialize_output_root
 from d3dplot.variables.context import QuantityRequest
 from d3dplot.variables.grouping import group_sediment_fraction_components
@@ -80,6 +82,31 @@ def _write_region_difference_measurement(
         },
     )
     return output
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("variable", "canonical_name"),
+    (("h", "water_depth"), ("bed_level", "bed_level")),
+)
+def test_map2d_cache_paths_use_canonical_variable_names(
+    tmp_path: Path,
+    variable: str,
+    canonical_name: str,
+) -> None:
+    layout = OutputLayout(tmp_path / "output")
+    entry = TimeEntry(
+        time_index=0,
+        subrun=0,
+        local_index=0,
+        time=datetime(2021, 1, 1, tzinfo=UTC),
+        morph_time=None,
+        corrupt_partitions=(),
+    )
+
+    path = map2d_output_path(layout, QuantityRequest(variable), entry)
+
+    assert path.parents[1].name == canonical_name
 
 
 @pytest.mark.integration
@@ -186,7 +213,7 @@ def test_map2d_processor_writes_analytic_and_selected_quantities(
             Path(dataset.getncattr("grid_file")).name == inspection.grid_paths[0].name
         )
 
-    with netCDF4.Dataset(paths_by_variable["fr"], mode="r") as dataset:
+    with netCDF4.Dataset(paths_by_variable["froude_number"], mode="r") as dataset:
         np.testing.assert_allclose(
             dataset.variables["values"][face],
             expected["froude_number"],
@@ -198,14 +225,16 @@ def test_map2d_processor_writes_analytic_and_selected_quantities(
             expected["vorticity_s_1"],
             rtol=1e-6,
         )
-    with netCDF4.Dataset(paths_by_variable["d50"], mode="r") as dataset:
+    with netCDF4.Dataset(
+        paths_by_variable["grain_size_percentile"], mode="r"
+    ) as dataset:
         np.testing.assert_allclose(
             dataset.variables["values"][face],
             expected["d50"],
             rtol=1e-6,
         )
         assert dataset.getncattr("selection") == "fraction-1-layer-1-d50"
-    with netCDF4.Dataset(paths_by_variable["dzetadt"], mode="r") as dataset:
+    with netCDF4.Dataset(paths_by_variable["water_level_rate"], mode="r") as dataset:
         np.testing.assert_allclose(
             dataset.variables["values"][face],
             expected["water_level_rate_m_s"],

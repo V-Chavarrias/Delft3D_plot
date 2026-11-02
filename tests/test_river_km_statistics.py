@@ -20,6 +20,7 @@ from d3dplot.analyses.river_km_statistics.plot import (
     RiverKmStatisticsPlotError,
     StatisticCacheFrame,
     _comparison_values,
+    _line_path,
     _plot_axis_times,
     _source_statistic_values,
     statistic_values,
@@ -36,6 +37,7 @@ from d3dplot.analyses.river_km_statistics.process import (
     difference_simulation_relative,
     multiply_by_width,
     prepare_region_segments,
+    river_km_statistics_output_path,
     select_time_average_outputs,
 )
 from d3dplot.config.project import ProjectConfig
@@ -93,6 +95,78 @@ def _mean_frame(
         values=np.asarray([[value]], dtype=np.float64),
         segment_width_m=None,
     )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("variable", "canonical_name"),
+    (("h", "water_depth"), ("bed_level", "bed_level")),
+)
+def test_river_km_output_paths_use_canonical_variable_names(
+    tmp_path: Path,
+    variable: str,
+    canonical_name: str,
+) -> None:
+    layout = OutputLayout(tmp_path / "output")
+    entry = TimeEntry(
+        time_index=0,
+        subrun=0,
+        local_index=0,
+        time=datetime(2021, 1, 1, tzinfo=UTC),
+        morph_time=None,
+        corrupt_partitions=(),
+    )
+    cache_path = river_km_statistics_output_path(
+        layout,
+        "region",
+        "250m",
+        variable,
+        QuantityRequest(variable),
+        entry,
+    )
+    figure_path = _line_path(
+        layout,
+        "series",
+        "simulation",
+        "region",
+        "250m",
+        variable,
+        "profile",
+        "mean",
+        "value",
+        None,
+        0,
+    )
+
+    assert cache_path.parents[1].name == canonical_name
+    assert figure_path.parents[1].name == canonical_name
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("limit_index", "expected_suffix"),
+    ((0, "_l01.png"), (9, "_l10.png")),
+)
+def test_line_path_zero_pads_limit_index(
+    tmp_path: Path,
+    limit_index: int,
+    expected_suffix: str,
+) -> None:
+    path = _line_path(
+        OutputLayout(tmp_path),
+        "simulation",
+        "simulation",
+        "region",
+        "250m",
+        "bed_level",
+        "profile",
+        "mean",
+        "simulation",
+        None,
+        limit_index,
+    )
+
+    assert path.name.endswith(expected_suffix)
 
 
 @pytest.mark.unit

@@ -122,6 +122,8 @@ def dump_resolved_config(
         )
         analyses_data[index]["reprocess"] = config.effective_reprocess(analysis)
         analyses_data[index]["replot"] = config.effective_replot(analysis)
+        if hasattr(analysis, "map") and "colormap" not in analysis.map.model_fields_set:
+            analyses_data[index]["map"].pop("colormap", None)
 
     yaml_text = yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
     return f"# d3dplot_version: {tool_version}\n{yaml_text}"

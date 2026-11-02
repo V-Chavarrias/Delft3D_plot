@@ -140,10 +140,14 @@ default report format, and the report is written to
 
 ## Process quantities from Python
 
-The project-level `d3dplot run` command is not integrated yet. For a local
-single-simulation processing test, use the temporary helper:
+The source checkout provides `d3dplot process` and `d3dplot run` as stage
+bridges. They invoke the guarded processing helper below until the internal
+WP 2.4 orchestrator replaces it:
 
 ```powershell
+.\.venv\Scripts\python.exe -m d3dplot prepare project.yaml
+.\.venv\Scripts\python.exe -m d3dplot process data_local\maas_sk_initial_final_bed_level.yml
+# equivalent source-checkout helper:
 .\.venv\Scripts\python.exe tools\process_project.py data_local\maas_sk_initial_final_bed_level.yml
 ```
 
@@ -156,7 +160,7 @@ regardless of the configured reprocess policy. Use
 existing grid, merge-plan, and time caches without rechecking model output. It
 opens guarded `.dia` and
 debug `.log` files before simulation discovery and inspection, so preflight
-failures are recorded under `output.root/<label>/d3dplot/logs`. Add `--serial`
+failures are recorded under `output.root/d3dplot/logs`. Add `--serial`
 to run sequentially for debugging. It does not modify model or measurement
 inputs. The `.dia` records user-facing phase starts and choices; the `.log`
 records task and per-analysis progress: map2d and river-km starts/completions,

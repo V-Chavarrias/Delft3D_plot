@@ -1,6 +1,6 @@
 # Delft3D_plot (Python): Architecture and Implementation Plan
 
-Status: **v6.99. A full review of the plan and the implementation (2026-10-31) is in §3.1. Read it before continuing: the committed `main` baseline has one failing test, WP 2.2b is not implemented, and stage commands (`run`) have no work package. Local review fixes and their validation are recorded in §0.4.** Previous status (v6.82): **WP 1.10–1.11, WP 2.1–2.3, WP 3.1–3.5, WP 4.1–4.5, and WP 5.2–5.5 are implemented locally.** Public vertical-layer selections now use Matlab's one-based convention (D86). Shared sediment-class grouping for SMB is implemented locally as WP 4.6 (D87); its tests run under pytest, although VS Code test discovery returns no matching items. Windows mapped-drive path preservation is implemented locally (D88); 84 focused discovery, status, configuration, and CLI tests pass. The corrected Maas input path is accessible. Its `morft` values are elapsed seconds; inspection and status inherit their origin from the map's CF `time` units (D89). Synthetic regression tests cover inspection and status. The latest Maas run ended during inspection with 1,754 V-OUT-002 missing-map reports; no process tasks or plotting ran. Two representative files were later readable, so the logs do not establish whether the inspection failures were transient P-drive access or another scan-time issue. Progress records are written at phase, task, and input-read boundaries (D90), now extended to per-analysis, quantity, and cache-write boundaries (D91). The helper is analysis-independent for reuse by a future HIS analysis. The `feat/acceptance-r209` branch was merged into and pushed to `main` at `4b88447`; WP 5.1 r209 acceptance remains incomplete. WP 5.5 release automation is committed on `feat/pypi-release` (`7775b0b`, `2647a03`) with publication gated until WP 0.2 is released. WP 4.5 profile measurements is committed as `73e16c5` on `feat/river-km-measurements`; WP 5.2 synthetic Matlab comparisons are committed as `cd54430` on `feat/matlab-comparison`; WP 5.3's non-submitting SLURM array-template generator is committed as `6b028ad` on `feat/slurm-stub`. WP 2.3 and WP 3.1 were committed on `feat/execution` (`735fb38`); WP 3.2 on `feat/map2d-plotting` (`d508cf7`); WP 3.3 on `feat/map2d-overlays` (`53d1bb7`); WP 3.4 on `feat/map2d-measurements` (`6da45e8`); WP 3.5 on `feat/map2d-provenance` (`38a84a4`, `c86f3a3`); WP 4.4 on `feat/river-km-plotting` (`a52d8f6`). WP 4.2's 6,406-face/40-segment synthetic preparation took 0.388 s; WP 3.5's two-frame synthetic-cache timings were 0.910 s fresh, 0.517 s reused, and 0.757 s for single-figure replay. Both WP 5.2 local comparison tests pass for r001 and r002 in 63.27 s including fixture generation. The 332-test CI-eligible suite passed locally after the RV-18 matching fix; the 24-test simulation discovery suite passed after the RV-19 fix. Ruff check/format across `src tests tools`, strict mypy, and strict MkDocs also pass. The river-km implementation includes provider and region geometry, guarded caches, shared-quantity statistics processing, all five shared plot views, diagnostics, groupings, comparisons, and profile-measurement conversion, matching, and overlays. The CLI provides read-only `info`/`variables`, schema output, validation and inspection, cache-backed `plot`, provenance-backed `replot`, `measurements convert`, and guarded `slurm write`; complete CLI `run` integration remains, so the generated SLURM template exits explicitly until that command is available. P-drive r209/Rijn acceptance is deferred per D65; this WP 5.1 work only read model files and wrote no data to P-drive. D69–D91 record the time, quantity, plotting, provider, UGRID, measurement-conversion, Matlab-comparison, SLURM-template, release-workflow, bounded-inspection, layer-indexing, sediment-grouping, mapped-drive path, elapsed morphological-time origin, and live processing-progress decisions. See [the synthetic case generator](https://github.com/V-Chavarrias/Delft3D_plot/blob/main/tools/synthetic_smt/README.md). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
+Status: **v7.09. A full review of the plan and the implementation (2026-10-31) is in §3.1. Read it before continuing: the committed `main` baseline has one failing test, WP 2.2b is not implemented, and stage commands (`run`) have no work package. Local review fixes and their validation are recorded in §0.4. The D100 map2d appearance/cache regression is also fixed locally.** Previous status (v6.82): **WP 1.10–1.11, WP 2.1–2.3, WP 3.1–3.5, WP 4.1–4.5, and WP 5.2–5.5 are implemented locally.** Public vertical-layer selections now use Matlab's one-based convention (D86). Shared sediment-class grouping for SMB is implemented locally as WP 4.6 (D87); its tests run under pytest, although VS Code test discovery returns no matching items. Windows mapped-drive path preservation is implemented locally (D88); 84 focused discovery, status, configuration, and CLI tests pass. The corrected Maas input path is accessible. Its `morft` values are elapsed seconds; inspection and status inherit their origin from the map's CF `time` units (D89). Synthetic regression tests cover inspection and status. The latest Maas run ended during inspection with 1,754 V-OUT-002 missing-map reports; no process tasks or plotting ran. Two representative files were later readable, so the logs do not establish whether the inspection failures were transient P-drive access or another scan-time issue. Progress records are written at phase, task, and input-read boundaries (D90), now extended to per-analysis, quantity, and cache-write boundaries (D91). The helper is analysis-independent for reuse by a future HIS analysis. The `feat/acceptance-r209` branch was merged into and pushed to `main` at `4b88447`; WP 5.1 r209 acceptance remains incomplete. WP 5.5 release automation is committed on `feat/pypi-release` (`7775b0b`, `2647a03`) with publication gated until WP 0.2 is released. WP 4.5 profile measurements is committed as `73e16c5` on `feat/river-km-measurements`; WP 5.2 synthetic Matlab comparisons are committed as `cd54430` on `feat/matlab-comparison`; WP 5.3's non-submitting SLURM array-template generator is committed as `6b028ad` on `feat/slurm-stub`. WP 2.3 and WP 3.1 were committed on `feat/execution` (`735fb38`); WP 3.2 on `feat/map2d-plotting` (`d508cf7`); WP 3.3 on `feat/map2d-overlays` (`53d1bb7`); WP 3.4 on `feat/map2d-measurements` (`6da45e8`); WP 3.5 on `feat/map2d-provenance` (`38a84a4`, `c86f3a3`); WP 4.4 on `feat/river-km-plotting` (`a52d8f6`). WP 4.2's 6,406-face/40-segment synthetic preparation took 0.388 s; WP 3.5's two-frame synthetic-cache timings were 0.910 s fresh, 0.517 s reused, and 0.757 s for single-figure replay. Both WP 5.2 local comparison tests pass for r001 and r002 in 63.27 s including fixture generation. The 332-test CI-eligible suite passed locally after the RV-18 matching fix; the 24-test simulation discovery suite passed after the RV-19 fix. Ruff check/format across `src tests tools`, strict mypy, and strict MkDocs also pass. The river-km implementation includes provider and region geometry, guarded caches, shared-quantity statistics processing, all five shared plot views, diagnostics, groupings, comparisons, and profile-measurement conversion, matching and overlays. The CLI provides read-only `info`/`variables`, schema output, validation and inspection, cache-backed `plot`, provenance-backed `replot`, `measurements convert`, and guarded `slurm write`; complete CLI `run` integration remains, so the generated SLURM template exits explicitly until that command is available. P-drive r209/Rijn acceptance is deferred per D65; this WP 5.1 work only read model files and wrote no data to P-drive. D69–D91 and D108–D110 record the time, quantity, plotting, provider, UGRID, measurement-conversion, Matlab-comparison, SLURM-template, release-workflow, bounded-inspection, layer-indexing, sediment-grouping, mapped-drive path, elapsed morphological-time origin, live processing progress, direct `output.root` behavior, canonical M1D variable paths, and shared cross-analysis quantity paths. See [the synthetic case generator](https://github.com/V-Chavarrias/Delft3D_plot/blob/main/tools/synthetic_smt/README.md). This document is self-contained: a new working session (human or AI agent) should be able to continue the project from it alone. Read §0 first.
 
 Current local processing: After the first run failed because the configured end at 250 requested km 230.25 outside track `MA`'s [3, 230] range, the local configuration was capped at 230. The follow-up ended during inspection after 2,344 s with 1,754 V-OUT-002 errors reporting missing map files; no process tasks or plotting ran, so the 230-km limit has not yet been validated. Two representative files are now present and readable, with August 2026 timestamps. The logs do not establish whether the inspection failures were caused by transient P-drive access or another scan-time issue.
 
@@ -43,7 +43,7 @@ Document map:
 | Item | Location | State |
 |------|----------|-------|
 | Repository | GitHub [V-Chavarrias/Delft3D_plot](https://github.com/V-Chavarrias/Delft3D_plot), local `c:\checkouts\Delft3D_plot` | `main` includes the pushed `feat/acceptance-r209` merge (`4b88447`); WP 5.1 acceptance remains incomplete (§13.4); the local topic branch remains; WP 5.5 release automation is on `feat/pypi-release` |
-| Plan (this file) | `docs/architecture.md` | v6.99 (review findings in §3.1) |
+| Plan (this file) | `docs/architecture.md` | v7.18 (M1D-only `process`/`run` now execute natively; map2d/river-km projects still use the temporary bridge while the shared WP 2.4 processor is extracted) |
 | Licence | `LICENSE` | GPL-3.0 |
 | Synthetic SMT and plain FM test case generator | `tools/synthetic_smt/` | Implemented and verified locally (§13.3) |
 | Land-boundary converter (`.mat` cache → `.ldb`) | `tools/mat_to_ldb.py` | Implemented. Used to recreate the Maas land boundary (D45) |
@@ -51,7 +51,8 @@ Document map:
 | Recreated Maas land boundary | `data_local/maas/j21_ldb.ldb` (55.7 MB) | Git-ignored. 174 220 polylines, 2 343 057 points; read by HYDROLIB-core in 22 s, identical to the `.mat` |
 | HYDROLIB-core modifications | §14.1–§14.3 | WP 0.1 and both DIMR fixes are included in open PR [Deltares/HYDROLIB-core#1278](https://github.com/Deltares/HYDROLIB-core/pull/1278); local SonarCloud follow-up `69096c17` is not pushed |
 | Python environment | `.venv/` (uv, Python 3.12) | Git-ignored. dfm_tools and HYDROLIB-core are installed editable from the local checkouts; HYDROLIB-core is currently on `feat/mdu_morphology_keywords` with WP 0.1 and the DIMR fix |
-| Package `d3dplot` | `pyproject.toml`, `src/d3dplot/` | WP 1.1–1.11 foundations, WP 2.1–2.3 execution, WP 3.1–3.5 map2d, and WP 4.1–4.5 river-km geometry, processing, plotting, and profile measurements implemented and locally validated; WP 4.6 sediment grouping implemented locally, runtime tests pending |
+| Package `d3dplot` | `pyproject.toml`, `src/d3dplot/` | WP 1.1–1.11 foundations, WP 2.1–2.3 execution, WP 3.1–3.5 map2d, and WP 4.1–4.5 river-km geometry, processing, plotting, and profile measurements implemented and locally validated; WP 4.6 sediment grouping implemented locally, runtime tests pending; map2d D100 labels use registry keys and figure fingerprints include effective appearance settings |
+| M1D analysis | `src/d3dplot/analyses/m1d/` | WP 6.1 implemented locally: configuration, branch-chain geometry, quantity-engine-backed 1D reads, guarded per-time caches, shared profile/all-times/space-time views, comparisons, optional river-km coordinates, measurement overlays, multiple axis-limit sets, processing-helper routing, and the full supplied YAML acceptance |
 | Configuration design | §2 decisions D57–D59, D69–D70, D86–D89 | Nested `times` object, Matlab-compatible one-based time and bed-layer indices, configurable active-sediment threshold, shared `map.render`, SMB sediment-class grouping, Windows mapped-drive path preservation, and elapsed morphological-time origin handling; WP 1.3 complete locally; plugin config integration deferred to the analysis registry |
 | Validation framework | `src/d3dplot/validate/` | WP 1.4 complete locally: report serialization and static V-CFG-001..004 checks |
 | Model-input adapters | `src/d3dplot/model_input/` | WP 1.5 implemented locally; MDU, `.mor`, `.sed`, DIMR, V-MDU-001, and real r209 read-only validation complete |
@@ -123,9 +124,9 @@ APIs the design relies on (check them first when upgrading):
 
 ### 0.4 Where to continue
 
-Review-fix continuation (uncommitted): RV-01/RV-02 and RV-12–RV-21 are resolved locally; D103–D106 record the Matlab-compatible vorticity, one-face NaN standard deviation, area-weighted width product, and bounded inspection decisions. The CI-eligible suite passed after RV-18 (332 passed, 2 deselected); the simulation discovery suite passed after RV-19 (24 passed), the MDU cache-reuse/invalidation tests passed after RV-21, and the SMT status-count regression passes after RV-20. Ruff check/format across `src tests tools`, strict mypy, and strict MkDocs pass. Other review items remain open. The synthetic r001 inspection measured 9.524 s / 9 non-reference partition reads for the full scan and 5.866 s / 7 reads for `last`, with reference-sub-run work unchanged; these are single measurements. The r209 case remains unmeasured.
+Review-fix continuation (uncommitted): RV-01/RV-02 and RV-12–RV-21 are resolved locally; D103–D106 record the Matlab-compatible vorticity, one-face NaN standard deviation, area-weighted width product, and bounded inspection decisions. The D100 map2d appearance/cache regression is resolved locally: figures use the registry label key, fingerprint the resolved colormap and colorbar label, and invalidate older cached images. The CI-eligible suite passed after RV-18 (332 passed, 2 deselected); the simulation discovery suite passed after RV-19 (24 passed), the MDU cache-reuse/invalidation tests passed after RV-21, and the SMT status-count regression passes after RV-20. Ruff check/format across `src tests tools`, strict mypy, and strict MkDocs pass. Other review items remain open. The synthetic r001 inspection measured 9.524 s / 9 non-reference partition reads for the full scan and 5.866 s / 7 reads for `last`, with reference-sub-run work unchanged; these are single measurements. The r209 case remains unmeasured.
 
-0. **Start with the review in §3.1** and follow its recommended order (§3.1.7). User decisions D103–D106 resolve RV-11, RV-38/RV-39, and RV-40 option (c). Local fixes address RV-01, RV-02, and RV-12–RV-21; the 332-test CI-eligible suite passed after RV-18, the 24-test simulation discovery suite passed after RV-19, the MDU cache-reuse/invalidation tests pass after RV-21, and the SMT status-count regression passes after RV-20. Configured lint/type/docs checks pass. RV-03 remains a pre-push blocker; do not rewrite the unpushed history without explicit approval. D74–D85 remain proposed unless explicitly confirmed. The items below are the earlier per-WP history; where they conflict with §3.1, §3.1 is more recent.
+0. **Start with the review in §3.1** and follow its recommended order (§3.1.7). User decisions D103–D106 resolve RV-11, RV-38/RV-39, and RV-40 option (c). Local fixes address RV-01, RV-02, RV-12–RV-21, and the D100 map2d appearance/cache regression; the 332-test CI-eligible suite passed after RV-18, the 24-test simulation discovery suite passed after RV-19, the MDU cache-reuse/invalidation tests pass after RV-21, and the SMT status-count regression passes after RV-20. Configured lint/type/docs checks pass. RV-03 remains a pre-push blocker; do not rewrite the unpushed history without explicit approval. D74–D85 remain proposed unless explicitly confirmed. The items below are the earlier per-WP history; where they conflict with §3.1, §3.1 is more recent.
 1. **WP 0.1** (§15.1a, §14.1) is complete on HYDROLIB-core branch `feat/mdu_morphology_keywords`. PR [Deltares/HYDROLIB-core#1278](https://github.com/Deltares/HYDROLIB-core/pull/1278) is open; local follow-up `69096c17` is not pushed, and no upstream release exists. The local full suite passes. See [upstream.md](./upstream.md).
 2. **WP 1.1** (§15.2) is complete locally on branch `feat/repository-skeleton`, commit `29b08d3`. Editable installation, smoke test, Ruff, mypy, pre-commit config validation, and strict docs build pass on Windows/Python 3.12; the Windows/Linux GitHub Actions matrix is configured but has not run remotely.
 3. **WP 1.2** is complete locally on branch `feat/synthetic-case-fixture`: `synthetic_case` generates and verifies once per test session in `tmp_path_factory`; its integration test confirms model and expected-result files. The CI-eligible suite passed (2 tests, 18.85 s).
@@ -292,13 +293,17 @@ Status: **A** = agreed with the user; **P** = proposed in this plan and awaiting
 | D97 | Rijntakken track selection follows Matlab `branch_rijntakken.m` defaults: Waal-family tracks (`WA`, `WL`, `BO`, `NI`) use `WA` above km 867 and do not switch to `BO`/`NI` unless a future explicit option enables Matlab's `NI_BO` argument | Preserve the default Matlab call used by `gdm_load_rkm_polygons.m`; do not infer optional branches from file tags | A |
 | D98 | River-km geometry construction enables Matlab-style linear endpoint extrapolation when a selected branch's requested km lies just outside its available point range; direct provider calls remain strict, and each extrapolation is logged | Matlab `convert2rkm` extrapolates from the first/last branch segment; this is needed for the Maas MA/BM boundary gap | A |
 | D99 | Reuse parsed first-sub-run sediment metadata for all SMT sub-runs; when `.sed` provides `SedMinDia`/`SedMaxDia`, use their geometric mean as the effective diameter, matching Matlab `D3D_read_sed` | The referenced sediment file contains diameter ranges rather than `SedDia`; rereading later sub-runs is unnecessary and left derived quantities without diameters | A |
-| D100 | Map2d titles show only the formatted model time; default `figure.time_format` is `yyyy-mm-dd HH:MM`, map axes show localized x/y coordinate labels, colorbars show quantity and unit, and time-difference maps default to `RdYlBu` unless a colormap is explicitly configured | Make map figures self-explanatory while preserving explicit user colormap overrides | A |
+| D100 | Map2d titles show only the formatted model time; default `figure.time_format` is `yyyy-mm-dd HH:MM`, map axes show localized x/y coordinate labels, colorbars show quantity and unit, and time-difference maps default to `RdYlBu` unless a colormap is explicitly configured. Resolved configurations preserve whether `map.colormap` was explicit | Make map figures self-explanatory while preserving explicit user colormap overrides through CLI resolution and replay | A |
 | D101 | Duplicate profile measurement river-km coordinates keep the last source row; the choice is logged and measurement caches use a bumped algorithm version | Match the requested last-value behavior while preserving deterministic cached measurements | A |
 | D102 | River-km plotting skips measurement variables absent from a configured measurement source and logs each skip; strict measurement conversion/API loading remains unchanged | Model profiles should still be plotted when an optional measurement file covers only some requested variables | A |
 | D103 | Preserve Matlab's current edge-based vorticity result, even though its use of edge-normal velocity is mathematically divergence-like; do not silently change numerical behavior in the Python port | User selected Matlab parity over changing the established result | A |
 | D104 | Keep standard deviation as NaN when a segment contains one face; do not change it to Matlab's single-value result of zero | User selected NaN for the one-face case | A |
 | D105 | The SMB `values × width` post-processing uses `mean_area_weighted × width` | User selected the area-weighted mean | A |
 | D106 | For faster inspection, first scan one reference partition per sub-run to construct the candidate time axis; then scan all partitions only for sub-runs implicated by the requested selection, and derive majority/corruption metadata before processing selected values. Selection must be confirmed against the majority axis before any values are processed | User approved faster inspection while retaining D23's majority rule and corrupt-partition handling for outputs actually used | A |
+| D107 | Add M1D as a planned analysis. Its YAML configuration uses explicit branch chains and names (`branches`, `branch_names`, `branch_titles`), shared `variables` and `times`, views (`profile`, `space_time`, `all_times`), `comparisons`, `x_limits`, `y_limits`, optional `river_km` coordinates, and optional measurements. The first acceptance testcase is `c:\projects\00_codes\VI-184_sre_convert\main_plot_01.m`, using the read-only simulation `p:\11212812-008-riverlab-2026\06_simulations\03\r003\`; no P-drive output is permitted. | User requested M1D plotting availability and supplied the testcase; descriptive YAML replaces Matlab `do_*` flags | P |
+| D108 | Use `output.root` directly as the base for the output store (`<output.root>/d3dplot/`), without appending the simulation label. `simulations[k].output_dir` still takes precedence; multiple simulations must resolve to distinct output roots and therefore need distinct `output_dir` values or no shared `output.root` | User selected direct-root behavior after observing the unwanted `RTC` label directory | A |
+| D109 | Use canonical registry names for M1D variable-specific figure and cache directories and cache fingerprints, while accepting configured aliases for processing; for example, `h` maps to `water_depth` | User requested consistent variable folder names and clarified that `h` means water depth | A |
+| D110 | Resolve quantity aliases and construct variable-specific cache and figure paths through shared store path helpers for M1D, map2d, and river-km statistics; analysis modules provide only their analysis-specific path components | User requires consistent names and centralized path construction across analyses | A |
 
 ## 3. Review of the plan (v6)
 
@@ -447,7 +452,7 @@ Add a synthetic test that injects intermittent `OSError`s.
 #### 3.1.7 Recommended order
 
 1. **Green build:** RV-01 and RV-02 are resolved locally and the CI-eligible suite passes; RV-03 remains a pre-push blocker. Do not rewrite history without explicit approval.
-2. **Wrong-result bugs:** RV-11 is resolved by D103 as a deliberate compatibility limitation; RV-12–RV-21 are fixed locally.
+2. **Wrong-result bugs:** RV-11 is resolved by D103 as a deliberate compatibility limitation; RV-12–RV-21 and the D100 map2d appearance/cache regression are fixed locally.
 3. **r209 robustness and inspection speed:** §3.1.5 and RV-49. D106 is approved and the safe `times.at: last` scan path is implemented locally; measure it on r209 only when that local-data validation is authorized.
 4. **WP 2.4 stage commands and analysis registry (RV-07):** this unblocks parallel plotting (RV-41), `reprocess`, SLURM and WP 5.1.
 5. **Plan alignment:** RV-05, RV-06, RV-10, RV-31, D74–D85 confirmation.
@@ -1179,10 +1184,10 @@ Matlab `D3D_plot` has the plot type **PRF**: quantities read along a line (a `.p
 
 **Output root of a simulation** (precise rule):
 1. `simulations[k].output_dir`, if set → `<output_dir>/d3dplot/`;
-2. else, if `output.root` is set → `<output.root>/<label>/d3dplot/`;
+2. else, if `output.root` is set → `<output.root>/d3dplot/`;
 3. else → `<simulation folder>/d3dplot/`.
 
-Two simulations may never resolve to the same root (V-CFG-003). Files that combine simulations, and project-level files (logs, resolved configuration, run summary, measurement cache), live under the **reference simulation's** root.
+Two simulations may never resolve to the same root (V-CFG-003). Because `output.root` is used directly, multi-simulation projects must assign a distinct `simulations[k].output_dir` to each simulation or omit `output.root`. Files that combine simulations, and project-level files (logs, resolved configuration, run summary, measurement cache), live under the **reference simulation's** root.
 
 **Layout** of one root (D10):
 
@@ -1663,6 +1668,37 @@ Each definition gets a small numeric unit test with hand-computed values.
 
 ---
 
+### 8.3 `m1d` (in progress; Matlab M1D)
+
+M1D extracts one-dimensional values along explicit branch chains from the model grid and plots them with the shared `LineView`/`SpaceTimeView` building blocks. It is not part of the current built-in analysis registry; this section defines the target contract for WP 6.1.
+
+**Configuration**:
+
+```yaml
+simulations:
+  - {path: 'p:\11212812-008-riverlab-2026\06_simulations\03\r003', label: RTC}
+reference_simulation: RTC
+language: en
+series: "01"
+output: {root: 'c:\temp\d3dplot_m1d'}
+analyses:
+  - analysis: m1d
+    variables: [water_depth]
+    branches:
+      - [NRHBR, NRHBR2, WL, WLds]
+      - [NRHBR, NRHBR2, PKan2, IJ]
+      - [NRHBR, NRHBR2, PKan2, Ned]
+    branch_names: [w, k, n]
+    branch_titles: [Rhine-Waal, Rhine-IJssel, Rhine-Nederrijn]
+    times: {at: all, axis: hydrodynamic}
+    views: [profile, space_time]
+    comparisons: [value]
+```
+
+`branches` is an ordered chain of model branch identifiers. `branch_names` are stable output identifiers and `branch_titles` are display labels. `river_km.file` is optional; when present, the x-axis uses river-km coordinates, otherwise it uses distance along the extracted chain. `variables`, `times`, `comparisons`, `x_limits`, `y_limits`, `figure`, `hooks`, `reprocess`, and `replot` retain the shared names and semantics. Matlab flags map as follows: `do_p_single` → `value`, `do_diff_t` → `difference_time`, `do_diff_s` → `difference_simulation`, `do_all_s` → `grouping: all_simulations`, `do_xtv` → `space_time`, and `do_xvallt` → `all_times`. Optional measurement overlays use the existing measurement catalogue contract.
+
+**Process and plot**: resolve each branch chain to ordered edge/node coordinates once, sample every requested quantity through the quantity engine, and cache one-dimensional values by simulation, branch, variable, selection, and time. Canonical quantities include water depth, bed level, water level, and velocity; raw `mesh1d_*` fields are also accepted, with edge chains selected for edge-centred fields. Build one line or space-time template per figure group and update artists per frame; all figures go through `finalize_figure`. Differences use the shared time matching rules and are logged in `.dia`. The first acceptance testcase is the read-only `main_plot_01.m` input, whose active M1D settings are `h`, three branch chains, all times, single-result and space-time views, and `RTC` as the sole simulation. Bed-level and other-variable time plots are covered by the same contract; the commented `M1D` settings remain regression coverage for option parsing but do not require output.
+
 ## 9. File formats
 
 ### 9.1 River-km file (input; fixed)
@@ -1786,7 +1822,7 @@ MapViewConfig (shared by map2d and the SMB diagnostic maps, §7.14b)
 ├─ color_limits, colormap, render, aspect
 ├─ extents: [[xmin, xmax, ymin, ymax], …]       (null = full model)
 ├─ extents_along_river_km: {file, window_x_m, window_y_m}   (Matlab fpath_rkm_plot_along, rkm_tol_x/y)
-├─ river_km_labels: {file, color}                (Matlab fpath_rkm_disp; may differ from the file above)
+├─ river_km_labels: {file, color: cyan}          (Matlab fpath_rkm_disp; may differ from the file above)
 ├─ land_boundaries: [*.ldb]
 └─ background_tiles: {provider, …} | false
 ```
@@ -2082,7 +2118,7 @@ The local-only comparison test processes the generated synthetic case into a pyt
 
 ### 13.4 Acceptance case 1: Maas Lixhe–Roermond (`r209`)
 
-* Input: the equivalent of `main_plot_01.m` (§10.2).
+* Input: `data_local\maas_sk_initial_final_bed_level.yml` (the committed/local YAML testcase; it replaces direct validation of the equivalent `main_plot_01.m` input).
 * **Rules**:
   * read-only on `p:\`;
   * `output.root` in a local temporary folder;
@@ -2382,7 +2418,11 @@ Per D65, use generated local cases for development, automated tests, and perform
 
 ### 15.7 Later
 
-**PRF** (reading along a line, D55: `LineSampling`, section quantities, `profile` analysis, `SectionView`, §7.9b); HIS, M1D, HFM and GRD analyses; 3D-specific views (vertical profiles, vertical sections); `morphodynamic_celerity` with a port of ECT (D54); Delft3D4; more figure formats; full SLURM support; MAT v7.3 measurements; model − measurement maps.
+| WP | Content | Done when |
+|----|---------|-----------|
+| 6.1 | **M1D analysis** (§8.3): branch-chain extraction, distance and optional river-km coordinates, quantity-engine sampling, cached one-dimensional values, profile/space-time/all-times views, shared comparisons and measurements, `LineView`/`SpaceTimeView` draw-once templates, finalisation, diagnostics, and YAML schema/configuration support. Use `c:\projects\00_codes\VI-184_sre_convert\main_plot_01.m` as the first testcase with read-only simulation `p:\11212812-008-riverlab-2026\06_simulations\03\r003`; all generated output goes to a local `output.root`. | Synthetic branch-chain fixtures reproduce hand-computed coordinates and values; unit/integration tests cover all active Matlab M1D settings, comparisons, missing branches, time matching, cache reuse, fresh-figure identity, hooks, and `.dia` choices; the supplied testcase validates read-only on the P-drive and writes only locally |
+
+**Other later analyses**: **PRF** (reading along a line, D55: `LineSampling`, section quantities, `profile` analysis, `SectionView`, §7.9b); HIS, HFM and GRD analyses; 3D-specific views (vertical profiles, vertical sections); `morphodynamic_celerity` with a port of ECT (D54); Delft3D4; more figure formats; full SLURM support; MAT v7.3 measurements; model − measurement maps.
 
 ### 15.8 Working conventions for implementation sessions
 
@@ -2558,7 +2598,27 @@ Principles:
 | — | `measurements.<variable>.time_zone` (fixed offset for naive catalogue times) |
 | — | `measurements.<variable>.layout`, `mosaic`; `map.render` |
 
-### A.4 `river_km_statistics`
+### A.4 `m1d` (planned)
+
+| Matlab | Python |
+|--------|--------|
+| `branch` | `branches` |
+| `branch_name` | `branch_names` |
+| `branch_title` | `branch_titles` |
+| `do_p_single` | `comparisons: [value]` |
+| `do_diff_t` | `comparisons: [difference_time]` |
+| `do_diff_s` | `comparisons: [difference_simulation]` |
+| `do_all_s` / `do_all_sim` | `grouping: all_simulations` |
+| `do_xtv` | `views: [space_time]` |
+| `do_xvallt` | `views: [all_times]` |
+| `fpath_rkm` | `river_km.file` |
+| `xlims_var` / `xlims` | `x_limits` |
+| `ylims_var` / `ylims` | `y_limits` |
+| `plot_val0` | `show_initial` |
+| `str_time` | `figure.time_format` |
+| `leg_str` | `legend_labels` |
+
+### A.5 `river_km_statistics`
 
 | Matlab | Python |
 |--------|--------|
@@ -2589,7 +2649,7 @@ Principles:
 | `skip_if_not_found` | `on_missing_input: error \| skip` |
 | `legend_file` | `legend_labels` |
 
-### A.5 Variables (v1)
+### A.6 Variables (v1)
 
 The complete model-quantity catalog (all v1 raw and derived registry entries, aliases, NetCDF candidates, dimensions, units, and label keys) is generated in [the variable catalogue](./variables.md). The compact table below lists the primary analysis variables; `bed_slope_streamwise` is an SMB analysis-level statistic rather than a model quantity.
 
@@ -2611,6 +2671,25 @@ The complete model-quantity catalog (all v1 raw and derived registry entries, al
 
 | Version | Content |
 |---------|---------|
+| v7.18 | Route M1D-only `process` and `run` projects through the native M1D stage; retain the guarded helper bridge for map2d/river-km processing until shared orchestration is extracted |
+| v7.17 | Add executor and deterministic shard overrides to the source-checkout `process`/`run` stage bridges |
+| v7.16 | Add `--reprocess if_changed|never|always` to the source-checkout `process` and `run` bridges and apply it to project cache processing |
+| v7.15 | Make M1D cache processing honor `reprocess: if_changed|never|always`, including explicit failure when required caches are absent under `never` |
+| v7.14 | Add the central built-in analysis registry used by CLI discovery and starter validation; retain the guarded stage commands and temporary process bridge |
+| v7.13 | Add native guarded `clean` for figures and caches, retaining the output-root marker and forbidden-root protections |
+| v7.12 | Add native project `status` reporting alongside the guarded `prepare` stage; retain the source-checkout process bridge while internal processing orchestration is extracted |
+| v7.11 | Add native `d3dplot prepare` as the guarded inspection/geometry preparation stage; retain the source-checkout process bridge until the internal WP 2.4 processor is extracted |
+| v7.10 | Add source-checkout `d3dplot process` and `d3dplot run` bridges that invoke the guarded processing helper while the internal WP 2.4 orchestrator and analysis registry are completed |
+| v7.09 | Centralize quantity-name resolution and variable-specific analysis output paths across M1D, map2d, and river-km statistics (D110) |
+| v7.08 | Use canonical registry names for M1D variable paths and cache fingerprints (D109) |
+| v7.07 | Make `output.root` the direct base for `d3dplot/`; preserve per-simulation overrides, reject shared output roots, and document the new behavior (D108) |
+| v7.06 | Complete M1D option coverage with existing profile measurement matching, pairwise x/y limit-set figures, measurement overlays, and reuse-aware output naming; focused tests and limit-set smoke test pass |
+| v7.05 | Complete the supplied M1D YAML acceptance run: all configured times, `h` and `bed_level`, three branch chains, value/time-difference space-time figures, and local guarded caches produce 12 figures successfully |
+| v7.04 | Add the runnable M1D YAML testcase, route M1D-only projects through the processing helper, implement simulation/time/relative comparisons, optional river-km coordinates, time/axis/reuse options, and expanded canonical/raw-variable tests |
+| v7.03 | Implement the first M1D slice: configuration/schema, 1D branch-chain reader, quantity-engine integration, guarded per-time caches, shared views, CLI plot-stage wiring, and a read-only smoke test on the supplied 1D model |
+| v7.02 | Change the r209 acceptance input from direct Matlab-script validation to the YAML testcase `data_local\maas_sk_initial_final_bed_level.yml`; validation remains optional rather than a required pre-processing step |
+| v7.01 | Add proposed decision D107, the planned M1D analysis contract and Matlab-to-YAML mapping, and WP 6.1 with the supplied `main_plot_01.m` acceptance testcase |
+| v7.00 | Fix the D100 map2d appearance/cache regression: use the quantity registry's label key and fingerprint the effective colormap and colorbar label so incorrect cached figures are rebuilt; add a regression for the RdYlBu default and explicit colormap overrides |
 | v6.99 | Resolve RV-20 locally: use the count of SMT sub-run folders when map discovery has only missing-map errors; add regression coverage for one missing-map sub-run and verify serialized `n_subruns` |
 | v6.98 | Resolve RV-21 locally: include the reference MDU content hash in inspection-cache inputs, report an unreadable MDU explicitly, and verify an MDU `Tzone` edit rebuilds `times.nc` and reports V-TIME-002 |
 | v6.97 | Resolve RV-19 locally: reject SMT map-output paths that cannot be rebased to a distinct sub-run, report V-SIM-012, and cover absolute shared `OutputDir` with a discovery regression test; the focused simulation-discovery suite passes (24 tests) |

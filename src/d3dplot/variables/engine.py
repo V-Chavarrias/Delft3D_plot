@@ -7,9 +7,9 @@ import logging
 from collections.abc import Iterable, Sequence
 from importlib import import_module
 from importlib.metadata import entry_points
-from typing import Any, NoReturn
+from typing import Any, NoReturn, Protocol
 
-from d3dplot.simulation.map_reader import MapReaderError, MapReaderSession
+from d3dplot.simulation.map_reader import MapReaderError
 from d3dplot.simulation.time_axis import TimeEntry
 from d3dplot.validate.report import ValidationIssue
 from d3dplot.variables.context import (
@@ -32,6 +32,23 @@ from d3dplot.variables.registry import (
 _Array = Any
 np: Any = import_module("numpy")
 _logger = logging.getLogger(__name__)
+
+
+class QuantityReaderSession(Protocol):
+    """Reader protocol shared by grid and one-dimensional quantity sources."""
+
+    @property
+    def subrun_index(self) -> int: ...
+
+    def has_variable(self, spec: VariableSpec) -> bool: ...
+
+    def read(
+        self,
+        spec: VariableSpec,
+        *,
+        local_index: int,
+        corrupt_partitions: Sequence[int],
+    ) -> Any: ...
 
 
 class QuantityEngineError(RuntimeError):
@@ -58,7 +75,7 @@ class QuantityEngine:
 
     def at_time(
         self,
-        map_session: MapReaderSession,
+        map_session: QuantityReaderSession,
         entry: TimeEntry,
         context: QuantityContext,
     ) -> QuantityTimeSession:
@@ -80,7 +97,7 @@ class QuantityTimeSession:
     def __init__(
         self,
         engine: QuantityEngine,
-        map_session: MapReaderSession,
+        map_session: QuantityReaderSession,
         entry: TimeEntry,
         context: QuantityContext,
     ) -> None:

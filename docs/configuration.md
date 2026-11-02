@@ -217,10 +217,35 @@ selected fractions are omitted. Grouping requires finite positive grain
 diameters in the model's `.sed` input and cannot be combined with
 `sum_fractions`.
 
-The current schema recognizes the built-in `map2d` and `river_km_statistics`
-analyses. Plugin configuration models will be discovered and included in
-validation and JSON Schema when the planned `d3dplot.analyses` registry is
-implemented.
+The current schema recognizes the built-in `m1d`, `map2d`, and
+`river_km_statistics` analyses. An M1D analysis uses explicit one-dimensional
+branch chains:
+
+```yaml
+  - analysis: m1d
+    variables: [h]
+    branches:
+      - [NRHBR, NRHBR2, WL, WLds]
+      - [NRHBR, NRHBR2, PKan2, IJ]
+      - [NRHBR, NRHBR2, PKan2, Ned]
+    branch_names: [w, k, n]
+    branch_titles: [Rhine-Waal, Rhine-IJssel, Rhine-Nederrijn]
+    times: {at: all, axis: hydrodynamic}
+    views: [space_time]
+```
+
+M1D currently reads a single unpartitioned 1D map file and writes figures only
+under the configured local `output.root`. The branch-chain reader uses the
+quantity registry and removes duplicate coordinates at connected branch
+junctions. `variables` accepts canonical registered quantities such as
+`water_depth`, `bed_level`, `water_level`, and `velocity_magnitude`, their
+aliases, and raw `mesh1d_*` NetCDF names such as `mesh1d_q1`.
+M1D, map2d, and river-km cache and figure paths use the same canonical registry
+names: `h` is stored as `water_depth`, while `bed_level` keeps its canonical
+name. Shared store helpers resolve aliases and assemble these variable-specific
+paths consistently across analyses.
+The complete read-only RiverLab testcase is provided as
+`examples/m1d_riverlab_r003.yml` in the repository.
 
 ## Static validation
 
@@ -240,8 +265,12 @@ Each simulation writes beneath its own `d3dplot/` folder. The base directory is
 chosen in this order:
 
 1. `simulations[*].output_dir`, when set;
-2. `output.root/<simulation label>`, when `output.root` is set;
+2. `output.root`, when `output.root` is set;
 3. the simulation folder.
+
+The selected base always contains `d3dplot/`. Since `output.root` is used
+directly, multiple simulations cannot share it; assign distinct
+`simulations[*].output_dir` values or omit `output.root` for those simulations.
 
 `output.forbidden_roots` lists directories that must not contain generated
 output. Validation reports `V-OUT-041` when a resolved output root is inside

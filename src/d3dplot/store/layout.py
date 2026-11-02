@@ -26,7 +26,7 @@ def resolve_output_root(
         label_root = (project_root / label).resolve(strict=False)
         if label_root == project_root or not is_path_within(label_root, project_root):
             raise ValueError("simulation label must stay inside output.root")
-        base = label_root
+        base = project_root
     else:
         base = Path(simulation_path)
     return (base.expanduser() / "d3dplot").resolve(strict=False)

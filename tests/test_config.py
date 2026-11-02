@@ -12,7 +12,9 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
+from d3dplot.analyses.m1d.config import M1DConfig
 from d3dplot.analyses.map2d.config import Map2DConfig
+from d3dplot.analyses.registry import builtin_analysis_names, is_builtin_analysis
 from d3dplot.analyses.river_km_statistics.config import RiverKmStatisticsConfig
 from d3dplot.config import (
     ProjectConfig,
@@ -27,6 +29,7 @@ from d3dplot.config import (
     load_config_data,
     write_resolved_config,
 )
+from d3dplot.config.figure import MapViewConfig
 from d3dplot.config.measurements import MapMeasurementsConfig
 from d3dplot.config.project import PathsConfig
 from d3dplot.config.selections import (
@@ -117,6 +120,18 @@ def test_defaults_and_global_figure_inheritance() -> None:
     assert default_analysis.map.colormap == "viridis"
     assert default_analysis.map.render == "auto"
     assert default_analysis.map.aspect == "auto"
+    assert (
+        MapViewConfig.model_validate(
+            {"river_km_labels": {"file": "labels.csv"}}
+        ).river_km_labels.color
+        == "cyan"
+    )
+    assert (
+        MapViewConfig.model_validate(
+            {"river_km_labels": {"file": "labels.csv", "color": "magenta"}}
+        ).river_km_labels.color
+        == "magenta"
+    )
 
     statistics_config = RiverKmStatisticsConfig.model_validate(
         {
@@ -170,6 +185,46 @@ def test_defaults_and_global_figure_inheritance() -> None:
     saved = ProjectConfig.model_validate(yaml.safe_load(dump_config(config)))
     saved_analysis = saved.analyses[0]
     assert saved.effective_figure(saved_analysis) == config.effective_figure(analysis)
+
+
+@pytest.mark.unit
+def test_m1d_configuration_validates_branch_metadata() -> None:
+    config = M1DConfig.model_validate(
+        {
+            "variables": ["h"],
+            "branches": [
+                ["NRHBR", "NRHBR2", "WL", "WLds"],
+                ["NRHBR", "NRHBR2", "PKan2", "IJ"],
+            ],
+            "branch_names": ["w", "k"],
+            "branch_titles": ["Rhine-Waal", "Rhine-IJssel"],
+            "views": ["profile", "space_time", "all_times"],
+            "comparisons": ["value", "difference_time"],
+        }
+    )
+    assert config.analysis == "m1d"
+    assert config.variables == ["h"]
+    assert config.branch_names == ["w", "k"]
+
+    with pytest.raises(ValueError, match="equal lengths"):
+        M1DConfig.model_validate(
+            {
+                "variables": ["h"],
+                "branches": [["A"], ["B"]],
+                "branch_names": ["only-one"],
+            }
+        )
+
+
+@pytest.mark.unit
+def test_builtin_analysis_registry_is_stable() -> None:
+    assert builtin_analysis_names() == (
+        "m1d",
+        "map2d",
+        "river_km_statistics",
+    )
+    assert is_builtin_analysis("m1d")
+    assert not is_builtin_analysis("unknown")
 
 
 @pytest.mark.unit
@@ -360,6 +415,22 @@ def test_resolved_config_makes_relative_paths_replayable(tmp_path: Path) -> None
     resolved = yaml.safe_load(text)
 
     assert Path(resolved["simulations"][0]["path"]) == (tmp_path / "model").resolve()
+    assert "colormap" not in resolved["analyses"][0]["map"]
+
+    explicit = ProjectConfig.model_validate(
+        {
+            **_minimal_data(),
+            "analyses": [
+                {
+                    "analysis": "map2d",
+                    "variables": ["bed_level"],
+                    "map": {"colormap": "viridis"},
+                }
+            ],
+        }
+    )
+    explicit_resolved = yaml.safe_load(dump_resolved_config(explicit, "0.1.0"))
+    assert explicit_resolved["analyses"][0]["map"]["colormap"] == "viridis"
 
 
 @pytest.mark.unit

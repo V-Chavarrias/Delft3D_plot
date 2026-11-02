@@ -69,7 +69,12 @@ from d3dplot.store import (
     fingerprint_artifact,
     fingerprint_small_input,
 )
-from d3dplot.variables.registry import get_variable_spec
+from d3dplot.store.paths import (
+    OutputArea,
+    build_output_path,
+    build_quantity_output_path,
+)
+from d3dplot.variables.registry import canonical_variable_name, get_variable_spec
 
 _Array = Any
 np: Any = import_module("numpy")
@@ -287,6 +292,7 @@ def plot_map2d_group(
                 f"{source.label!r} and {target_source.label!r}.",
             )
         color_limits = _color_limit_sets(analysis, variable, comparison)
+        colormap = _colormap_for(analysis, variable, comparison)
         style_hash = _config_fingerprint(project, analysis)
         measurement_catalogue: MapMeasurementCatalogue | None = None
         if show_measurements and measurement_settings is not None:
@@ -414,14 +420,14 @@ def plot_map2d_group(
                 else ("difference" if comparison != "value" else "value")
             )
             quantity_label = label(
-                variable,
+                spec.label_key,
                 project.language,
                 "quantity",
                 datum=project.labels.vertical_datum,
                 extra_dictionaries=project.labels.extra_dictionaries,
             )
             value_label = label(
-                variable,
+                spec.label_key,
                 project.language,
                 label_kind,
                 datum=project.labels.vertical_datum,
@@ -555,10 +561,12 @@ def plot_map2d_group(
                         kind="figure",
                         schema_version=CACHE_SCHEMA_VERSION,
                         tool_version=__version__,
-                        algorithm_version="map2d-plot-2",
+                        algorithm_version="map2d-plot-3",
                         parameters={
                             "analysis": analysis.model_dump(mode="json"),
                             "comparison": comparison,
+                            "colorbar_label": colorbar_label,
+                            "colormap": colormap,
                             "extent": list(window.bounds),
                             "extent_fingerprint": window.fingerprint,
                             "figure": figure_config.model_dump(mode="json"),
@@ -612,7 +620,7 @@ def plot_map2d_group(
                             map_values,
                             map_config=analysis.map,
                             figure_config=figure_config,
-                            colormap=_colormap_for(analysis, variable, comparison),
+                            colormap=colormap,
                             colorbar_label=colorbar_label,
                             x_label=x_axis_label,
                             y_label=y_axis_label,
@@ -1199,7 +1207,7 @@ def _figure_path(
     color_index: int,
     extent_index: int,
 ) -> Path:
-    safe_variable = quote(variable.casefold(), safe="-_.")
+    safe_variable = quote(canonical_variable_name(variable), safe="-_.")
     timestamp = time.strftime("%Y%m%dT%H%M%S")
     if time.microsecond:
         timestamp += f".{time.microsecond:06d}"
@@ -1207,10 +1215,16 @@ def _figure_path(
         f"{safe_variable}_{comparison}_{timestamp}_c{color_index + 1}"
         f"_e{extent_index + 1}.png"
     )
-    path = layout.figures / series / "map2d" / comparison
+    prefix: tuple[str, ...] = (series, "map2d", comparison)
     if "_simulation" in comparison or subject == "all_simulations":
-        path /= quote(subject, safe="-_.")
-    return path / safe_variable / filename
+        prefix += (quote(subject, safe="-_."),)
+    return build_quantity_output_path(
+        layout,
+        OutputArea.FIGURES,
+        variable,
+        prefix=prefix,
+        filename=filename,
+    )
 
 
 def _movie_path(
@@ -1222,14 +1236,14 @@ def _movie_path(
     color_index: int,
     extent_index: int,
 ) -> Path:
-    safe_variable = quote(variable.casefold(), safe="-_.")
+    safe_variable = quote(canonical_variable_name(variable), safe="-_.")
     filename = (
         f"{safe_variable}_{comparison}_c{color_index + 1}_e{extent_index + 1}.mp4"
     )
-    path = layout.figures / series / "map2d" / comparison
+    parts: tuple[str, ...] = (series, "map2d", comparison)
     if "_simulation" in comparison or subject == "all_simulations":
-        path /= quote(subject, safe="-_.")
-    return path / filename
+        parts += (quote(subject, safe="-_."),)
+    return build_output_path(layout, OutputArea.FIGURES, *parts, filename)
 
 
 def _config_fingerprint(project: ProjectConfig, analysis: Map2DConfig) -> str:

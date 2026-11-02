@@ -23,6 +23,8 @@ from d3dplot.analyses.map2d.plot import (
     Map2DPlotError,
     Map2DPlotFrame,
     Map2DPlotSource,
+    _figure_path,
+    _movie_path,
     plot_map2d_group,
 )
 from d3dplot.config.project import ProjectConfig
@@ -44,6 +46,44 @@ _HOOK_RIVER_LABELS: list[tuple[str, ...]] = []
 _HOOK_MAP_TEXTS: list[tuple[str, ...]] = []
 _HOOK_MEASUREMENT_AXES: list[bool] = []
 _HOOK_SHARED_MEASUREMENT_LIMITS: list[tuple[float, float, float, float] | None] = []
+_HOOK_MAP_APPEARANCES: list[tuple[str, str]] = []
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("variable", "canonical_name"),
+    (("h", "water_depth"), ("bed_level", "bed_level")),
+)
+def test_map2d_figure_and_movie_paths_use_canonical_names(
+    tmp_path: Path,
+    variable: str,
+    canonical_name: str,
+) -> None:
+    layout = OutputLayout(tmp_path / "output")
+    timestamp = datetime(2021, 1, 1, tzinfo=UTC)
+    figure_path = _figure_path(
+        layout,
+        "series",
+        "simulation",
+        variable,
+        "value",
+        timestamp,
+        0,
+        0,
+    )
+    movie_path = _movie_path(
+        layout,
+        "series",
+        "simulation",
+        variable,
+        "value",
+        0,
+        0,
+    )
+
+    assert figure_path.parent.name == canonical_name
+    assert figure_path.name.startswith(f"{canonical_name}_")
+    assert movie_path.name.startswith(f"{canonical_name}_")
 
 
 def _capture_plot_state(figure: Any, context: Any) -> None:
@@ -95,10 +135,19 @@ def _capture_measurement_axes(figure: Any, context: Any) -> None:
     )
 
 
+def _capture_map_appearance(figure: Any, context: Any) -> None:
+    axes = context.axes["model"]
+    mappable = axes.collections[0] if axes.collections else axes.images[0]
+    _HOOK_MAP_APPEARANCES.append(
+        (mappable.get_cmap().name, context.axes["colorbar"].get_ylabel())
+    )
+
+
 def _project_and_source(
     tmp_path: Path,
     *,
     values: tuple[tuple[float, ...], ...],
+    variable: str = "water_depth",
     render: str = "polygons",
     map_overrides: dict[str, Any] | None = None,
     figure_overrides: dict[str, Any] | None = None,
@@ -120,7 +169,7 @@ def _project_and_source(
         Map2DPlotFrame(
             match_key=f"time-{index}",
             time=datetime(2021, 1, index + 1, tzinfo=UTC),
-            path=_write_frame(layout, guard, index, frame_values),
+            path=_write_frame(layout, guard, index, frame_values, variable=variable),
         )
         for index, frame_values in enumerate(values)
     )
@@ -129,7 +178,7 @@ def _project_and_source(
         map_config.update(map_overrides)
     analysis_config: dict[str, Any] = {
         "analysis": "map2d",
-        "variables": ["water_depth"],
+        "variables": [variable],
         "map": map_config,
     }
     if measurement_overrides is not None:
@@ -194,6 +243,8 @@ def _write_frame(
     guard: OutputWriteGuard,
     index: int,
     values: tuple[float, ...],
+    *,
+    variable: str = "water_depth",
 ) -> Path:
     path = layout.cache_data / "plot-fixtures" / f"frame-{index}.nc"
     with atomic_path(path, guard) as temporary:
@@ -202,7 +253,7 @@ def _write_frame(
             stored = dataset.createVariable("values", "f8", ("face",))
             stored[:] = values
             dataset.d3dplot_fingerprint = f"frame-{index}-fingerprint"
-            dataset.variable = "water_depth"
+            dataset.variable = variable
     return path
 
 
@@ -218,6 +269,50 @@ def _write_ldb(path: Path) -> Path:
 def _pixels(path: Path) -> np.ndarray:
     with Image.open(path) as image:
         return np.asarray(image.convert("RGBA")).copy()
+
+
+@pytest.mark.unit
+def test_time_difference_appearance_uses_label_key_and_invalidates_cached_colormap(
+    tmp_path: Path,
+) -> None:
+    _HOOK_MAP_APPEARANCES.clear()
+    hooks = [f"{__name__}:_capture_map_appearance"]
+    values = ((1.0, 2.0), (3.0, 4.0), (5.0, 6.0))
+    project, analysis, source = _project_and_source(
+        tmp_path,
+        values=values,
+        variable="bed_level",
+        map_overrides={"colormap": "viridis"},
+        hooks=hooks,
+    )
+    explicitly_configured = plot_map2d_group(
+        project,
+        analysis,
+        source,
+        "bed_level",
+        "difference_time",
+    )
+    assert explicitly_configured.output_paths
+    assert set(_HOOK_MAP_APPEARANCES) == {
+        ("viridis", "difference in bed elevation [m]")
+    }
+
+    default_analysis_data = analysis.model_dump(mode="python")
+    default_analysis_data["map"] = {"render": analysis.map.render}
+    default_analysis = Map2DConfig.model_validate(default_analysis_data)
+    default_project = project.model_copy(update={"analyses": [default_analysis]})
+    _HOOK_MAP_APPEARANCES.clear()
+    default_colormap = plot_map2d_group(
+        default_project,
+        default_analysis,
+        source,
+        "bed_level",
+        "difference_time",
+    )
+
+    assert default_colormap.output_paths == explicitly_configured.output_paths
+    assert default_colormap.reused_paths == ()
+    assert set(_HOOK_MAP_APPEARANCES) == {("RdYlBu", "difference in bed elevation [m]")}
 
 
 @pytest.mark.unit

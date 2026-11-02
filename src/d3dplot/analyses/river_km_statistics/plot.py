@@ -83,6 +83,12 @@ from d3dplot.store import (
     initialize_output_root,
 )
 from d3dplot.store.layout import is_path_within
+from d3dplot.store.paths import (
+    OutputArea,
+    build_output_path,
+    build_quantity_output_directory,
+    build_quantity_output_path,
+)
 from d3dplot.variables.context import QuantityRequest
 from d3dplot.variables.grouping import sediment_class_grouping_key
 from d3dplot.variables.registry import get_variable_spec
@@ -361,13 +367,16 @@ def load_statistic_cache_frames(
         variable_name=spec.name,
         component_grouping=component_grouping,
     )
-    cache_directory = (
-        layout.cache_data
-        / "river_km_statistics"
-        / quote(region_name, safe="-_.")
-        / quote(km_set_name, safe="-_.")
-        / quote(spec.name.casefold(), safe="-_.")
-        / selection
+    cache_directory = build_quantity_output_directory(
+        layout,
+        OutputArea.CACHE_DATA,
+        spec.name,
+        prefix=(
+            "river_km_statistics",
+            quote(region_name, safe="-_."),
+            quote(km_set_name, safe="-_."),
+        ),
+        suffix=(selection,),
     )
     cache_paths = tuple(sorted(cache_directory.glob("*.nc")))
     if not cache_paths:
@@ -1603,15 +1612,16 @@ def _diagnostic_path(
     diagnostic: str,
     suffix: str,
 ) -> Path:
-    return (
-        layout.figures
-        / quote(series, safe="-_.")
-        / quote(subject, safe="-_.")
-        / "river_km_statistics"
-        / quote(prepared.region_name, safe="-_.")
-        / quote(prepared.km_set_name, safe="-_.")
-        / "diagnostics"
-        / f"{diagnostic}_{quote(suffix, safe='-_.')}.png"
+    return build_output_path(
+        layout,
+        OutputArea.FIGURES,
+        quote(series, safe="-_."),
+        quote(subject, safe="-_."),
+        "river_km_statistics",
+        quote(prepared.region_name, safe="-_."),
+        quote(prepared.km_set_name, safe="-_."),
+        "diagnostics",
+        f"{diagnostic}_{quote(suffix, safe='-_.')}.png",
     )
 
 
@@ -3915,17 +3925,24 @@ def _line_path(
         if time is not None
         else "all_times"
     )
-    path = layout.figures / quote(series, safe="-_.")
+    prefix: tuple[str, ...] = (quote(series, safe="-_."),)
     if subject == "all_simulations":
-        path /= quote(subject, safe="-_.")
-    return (
-        path
-        / "river_km_statistics"
-        / quote(region_name, safe="-_.")
-        / quote(km_set_name, safe="-_.")
-        / quote(variable.casefold(), safe="-_.")
-        / quote(comparison, safe="-_.")
-        / f"{view_name}_{statistic}_{comparison}_{time_text}_l{limit_index + 1}.png"
+        prefix += (quote(subject, safe="-_."),)
+    filename = (
+        f"{view_name}_{statistic}_{comparison}_{time_text}_l{limit_index + 1:02d}.png"
+    )
+    return build_quantity_output_path(
+        layout,
+        OutputArea.FIGURES,
+        variable,
+        prefix=(
+            *prefix,
+            "river_km_statistics",
+            quote(region_name, safe="-_."),
+            quote(km_set_name, safe="-_."),
+        ),
+        suffix=(quote(comparison, safe="-_."),),
+        filename=filename,
     )
 
 

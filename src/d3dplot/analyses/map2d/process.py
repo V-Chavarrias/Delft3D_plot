@@ -11,7 +11,6 @@ from datetime import UTC
 from importlib import import_module
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import quote
 
 from d3dplot import __version__
 from d3dplot.analyses.river_km_statistics.config import RiverKmStatisticsConfig
@@ -31,6 +30,7 @@ from d3dplot.simulation.inspection import InspectionResult
 from d3dplot.simulation.map_reader import MapReader
 from d3dplot.simulation.subrun import SubRun
 from d3dplot.simulation.time_axis import TimeAxis, TimeEntry
+from d3dplot.simulation.time_utils import format_hydrodynamic_timestamp
 from d3dplot.store import (
     CACHE_SCHEMA_VERSION,
     OutputLayout,
@@ -41,6 +41,10 @@ from d3dplot.store import (
     fingerprint_model_output,
     fingerprint_small_input,
 )
+from d3dplot.store.paths import (
+    OutputArea,
+    build_quantity_output_path,
+)
 from d3dplot.validate.report import ValidationIssue
 from d3dplot.variables.context import QuantityContext, QuantityRequest
 from d3dplot.variables.engine import QuantityEngine
@@ -49,6 +53,7 @@ from d3dplot.variables.registry import (
     UnknownVariableError,
     VariableLocation,
     VariableSpec,
+    canonical_variable_name,
     get_variable_spec,
 )
 from d3dplot.variables.selection import quantity_selection_label
@@ -787,13 +792,16 @@ def map2d_output_path(
     entry: TimeEntry,
 ) -> Path:
     """Return the stable data-cache path for one quantity selection and time."""
-    variable = quote(request.requested_name.casefold(), safe="-_.")
     selection = map2d_selection_label(request)
-    timestamp = entry.time.astimezone(UTC)
-    filename = timestamp.strftime("%Y%m%dT%H%M%S")
-    if timestamp.microsecond:
-        filename += f".{timestamp.microsecond:06d}"
-    return layout.cache_data / "map2d" / variable / selection / f"{filename}.nc"
+    filename = format_hydrodynamic_timestamp(entry.time)
+    return build_quantity_output_path(
+        layout,
+        OutputArea.CACHE_DATA,
+        request.requested_name,
+        prefix=("map2d",),
+        suffix=(selection,),
+        filename=f"{filename}.nc",
+    )
 
 
 def map2d_selection_label(request: QuantityRequest) -> str:
@@ -823,7 +831,7 @@ def _fingerprint_parameters(
     return {
         "variable": variable,
         "quantity_version": quantity_version,
-        "requested_name": request.requested_name.casefold(),
+        "requested_name": canonical_variable_name(request.requested_name),
         "selection": selection,
         "request": request_parameters,
         "dtype": dtype,

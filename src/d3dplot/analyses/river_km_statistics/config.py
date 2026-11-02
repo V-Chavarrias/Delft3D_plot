@@ -15,7 +15,7 @@ from d3dplot.config.base import ConfigModel, Duration
 from d3dplot.config.figure import MapViewConfig
 from d3dplot.config.measurements import ProfileMeasurementsConfig
 from d3dplot.config.selections import TimesConfig
-from d3dplot.variables.registry import UnknownVariableError, get_variable_spec
+from d3dplot.variables.registry import canonical_variable_name
 
 DisplayMode: TypeAlias = Literal["auto", "lines", "stacked_area"]
 Statistic: TypeAlias = Literal[
@@ -36,13 +36,6 @@ View: TypeAlias = Literal[
     "time_series",
     "cumulative",
 ]
-
-
-def _canonical_quantity_name(name: str) -> str:
-    try:
-        return get_variable_spec(name).name.casefold()
-    except UnknownVariableError:
-        return name.casefold()
 
 
 class ConcaveHullConfig(ConfigModel):
@@ -159,7 +152,7 @@ class FractionGroupingConfig(ConfigModel):
     def validate_variables(cls, values: list[str]) -> list[str]:
         if any(not value or value != value.strip() for value in values):
             raise ValueError("fraction-grouping variable names must be trimmed.")
-        canonical_values = {_canonical_quantity_name(value) for value in values}
+        canonical_values = {canonical_variable_name(value) for value in values}
         if len(canonical_values) != len(values):
             raise ValueError("fraction-grouping variable names must be unique.")
         return values
@@ -195,9 +188,9 @@ class FractionGroupingConfig(ConfigModel):
 
     def applies_to(self, *variable_names: str) -> bool:
         """Return whether any requested or canonical name is grouped."""
-        configured = {_canonical_quantity_name(name) for name in self.variables}
+        configured = {canonical_variable_name(name) for name in self.variables}
         return any(
-            _canonical_quantity_name(name) in configured for name in variable_names
+            canonical_variable_name(name) in configured for name in variable_names
         )
 
 
@@ -297,12 +290,12 @@ class RiverKmStatisticsConfig(AnalysisConfigBase):
             return self
 
         configured_variables = {
-            _canonical_quantity_name(name) for name in self.variables
+            canonical_variable_name(name) for name in self.variables
         }
         missing = [
             name
             for name in self.fraction_grouping.variables
-            if _canonical_quantity_name(name) not in configured_variables
+            if canonical_variable_name(name) not in configured_variables
         ]
         if missing:
             raise ValueError(

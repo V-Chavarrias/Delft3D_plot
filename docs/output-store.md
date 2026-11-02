@@ -10,8 +10,12 @@ configured input locations.
 Every simulation gets a `d3dplot/` folder using this precedence:
 
 1. `simulations[*].output_dir/d3dplot/`;
-2. `output.root/<simulation label>/d3dplot/`;
+2. `output.root/d3dplot/`;
 3. `<simulation folder>/d3dplot/`.
+
+Because `output.root` is used directly, it must resolve to a unique output
+folder. For projects with multiple simulations, set a distinct
+`simulations[*].output_dir` for each one or omit `output.root`.
 
 `OutputLayout.for_simulation(simulation, project.output)` resolves this path and
 exposes standard locations such as `cache`, `figures`, `tables`, `config`, and
@@ -72,7 +76,9 @@ Fingerprints use BLAKE2b over deterministic, sorted-key JSON:
 ## Map2d data cache
 
 Processed map values are stored at
-`cache/data/map2d/<requested-variable>/<selection>/<yyyymmddTHHMMSS>.nc`.
+`cache/data/map2d/<canonical-variable>/<selection>/<yyyymmddTHHMMSS>.nc`.
+Variable-specific cache and figure paths use the shared store path helpers, which
+resolve configured aliases to registry names (`h` becomes `water_depth`).
 Each file contains `values(face)` in the configured cache dtype (float32 by
 default), compressed with zlib level 4 and using NaN as the fill value. The
 global attributes record the recursive fingerprint, canonical parameters,

@@ -10,6 +10,8 @@ import sys
 from pathlib import Path
 
 from d3dplot import __version__
+from d3dplot.analyses.m1d.config import M1DConfig
+from d3dplot.analyses.m1d.stage import plot_m1d_stage
 from d3dplot.analyses.map2d.config import Map2DConfig
 from d3dplot.analyses.map2d.process import (
     Map2DProcessResult,
@@ -17,7 +19,8 @@ from d3dplot.analyses.map2d.process import (
 )
 from d3dplot.analyses.river_km_statistics.config import RiverKmStatisticsConfig
 from d3dplot.config.analysis import AnalysisConfigBase
-from d3dplot.config.io import load_config
+from d3dplot.config.io import apply_overrides, load_config
+from d3dplot.config.project import ProjectConfig, SimulationConfig
 from d3dplot.config.selections import LayersSelection
 from d3dplot.execution.diagnostics import DiagnosticLog
 from d3dplot.execution.orchestrator import run_process_stage
@@ -71,8 +74,25 @@ def _process_project(
     *,
     serial: bool,
     reuse_inspection_cache: bool = False,
+    reprocess: str | None = None,
+    executor: str | None = None,
+    shard: str | None = None,
 ) -> int:
     project = load_config(configuration_path)
+    if reprocess is not None:
+        overrides = [f"reprocess={reprocess}"]
+        if executor is not None:
+            overrides.append(f"execution.executor={executor}")
+        if shard is not None:
+            overrides.append(f"execution.shard={shard}")
+        project = apply_overrides(project, overrides)
+    elif executor is not None or shard is not None:
+        overrides = []
+        if executor is not None:
+            overrides.append(f"execution.executor={executor}")
+        if shard is not None:
+            overrides.append(f"execution.shard={shard}")
+        project = apply_overrides(project, overrides)
     if len(project.simulations) != 1:
         raise ValueError(
             "This local processing helper currently requires exactly one "
@@ -81,6 +101,15 @@ def _process_project(
 
     simulation_config = project.simulations[0]
     layout = OutputLayout.for_simulation(simulation_config, project.output)
+    if project.analyses and all(
+        isinstance(analysis, M1DConfig) for analysis in project.analyses
+    ):
+        return _process_m1d_project(
+            project,
+            configuration_path,
+            simulation_config,
+            layout,
+        )
     validation_report_path: Path | None = None
     with DiagnosticLog.for_project(
         (layout,),
@@ -305,6 +334,40 @@ def _process_project(
     return subprocess.run(plot_command, check=False).returncode
 
 
+def _process_m1d_project(
+    project: ProjectConfig,
+    configuration_path: Path,
+    simulation_config: SimulationConfig,
+    layout: OutputLayout,
+) -> int:
+    """Run the M1D cache-and-plot path for a one-dimensional-only project."""
+    with DiagnosticLog.for_project(
+        (layout,),
+        tool_version=__version__,
+        command_line=tuple(sys.argv),
+        forbidden_roots=project.output.forbidden_roots,
+        configuration_path=configuration_path,
+    ) as diagnostics:
+        diagnostics.info(
+            f"Starting M1D cache-and-plot processing: "
+            f"simulation={simulation_config.label}."
+        )
+        result = plot_m1d_stage(
+            project,
+            simulation_label=simulation_config.label,
+            diagnostic=diagnostics.info,
+        )
+        diagnostics.info(
+            f"Finished M1D cache-and-plot processing: "
+            f"written={len(result.output_paths)}; "
+            f"reused={len(result.reused_paths)}."
+        )
+    print(f"M1D processing finished: {len(result.output_paths)} figure(s) written.")
+    print(f"Output root: {layout.root}")
+    print(f"Diagnostics: {layout.logs}")
+    return 0
+
+
 def _reuse_inspection_cache(
     simulation: Simulation,
     layout: OutputLayout,
@@ -359,12 +422,29 @@ def main() -> int:
             "rescanning model output."
         ),
     )
+    parser.add_argument(
+        "--reprocess",
+        choices=("if_changed", "never", "always"),
+        help="Override the configured cache reprocessing policy.",
+    )
+    parser.add_argument(
+        "--executor",
+        choices=("serial", "processes", "slurm"),
+        help="Override the configured executor.",
+    )
+    parser.add_argument(
+        "--shard",
+        help="Override deterministic shard selection in the form i/N.",
+    )
     arguments = parser.parse_args()
     configuration_path = arguments.configuration.expanduser().resolve(strict=True)
     return _process_project(
         configuration_path,
         serial=arguments.serial,
         reuse_inspection_cache=arguments.reuse_inspection_cache,
+        reprocess=arguments.reprocess,
+        executor=arguments.executor,
+        shard=arguments.shard,
     )
 
 

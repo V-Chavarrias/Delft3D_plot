@@ -224,28 +224,28 @@ def _derived_spec(
 VARIABLE_SPECS: Final[tuple[VariableSpec, ...]] = (
     _raw_spec(
         "water_depth",
-        ("mesh2d_waterdepth",),
+        ("mesh2d_waterdepth", "mesh1d_waterdepth"),
         aliases=("h", "wd", "waterdepth"),
         units="m",
         label_key="depth",
     ),
     _raw_spec(
         "velocity_magnitude",
-        ("mesh2d_ucmaga", "mesh2d_ucmag"),
+        ("mesh2d_ucmaga", "mesh2d_ucmag", "mesh1d_ucmag"),
         aliases=("umag", "umag_layer"),
         units="m/s",
         label_key="velocity_magnitude",
     ),
     _raw_spec(
         "water_level",
-        ("mesh2d_s1",),
+        ("mesh2d_s1", "mesh1d_s1"),
         aliases=("wl",),
         units="m",
         label_key="water_level",
     ),
     _raw_spec(
         "bed_level",
-        ("mesh2d_mor_bl", "mesh2d_flowelem_bl"),
+        ("mesh2d_mor_bl", "mesh2d_flowelem_bl", "mesh1d_flowelem_bl"),
         aliases=("bl", "DPS", "etab"),
         units="m",
         label_key="bed_elevation",
@@ -651,6 +651,14 @@ def get_variable_spec(name: str) -> VariableSpec:
     if spec is None:
         raise UnknownVariableError(name, suggest_variable_names(name))
     return spec
+
+
+def canonical_variable_name(name: str) -> str:
+    """Return a registered variable's name, or casefold an unregistered name."""
+    try:
+        return get_variable_spec(name).name.casefold()
+    except UnknownVariableError:
+        return name.casefold()
 
 
 def list_variable_specs(

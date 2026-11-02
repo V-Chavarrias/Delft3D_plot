@@ -72,6 +72,15 @@ def decode_cf_time(
     return decoded.astimezone(UTC)
 
 
+def format_hydrodynamic_timestamp(value: datetime) -> str:
+    """Format a UTC hydrodynamic timestamp for cache filenames."""
+    timestamp = value.astimezone(UTC)
+    text = timestamp.strftime("%Y%m%dT%H%M%S")
+    if timestamp.microsecond:
+        text += f".{timestamp.microsecond:06d}"
+    return text
+
+
 def cf_time_units_with_origin(
     units: str | None,
     reference_units: str | None,

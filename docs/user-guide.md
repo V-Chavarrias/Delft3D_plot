@@ -1,7 +1,7 @@
 # User guide
 
 This guide covers the currently available command-line workflow for D-Flow FM
-and SMT simulations. The built-in analyses are `map2d` and
+and SMT simulations. The built-in analyses are `m1d`, `map2d`, and
 `river_km_statistics`.
 
 ## Install

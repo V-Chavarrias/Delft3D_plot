@@ -5,6 +5,9 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import subprocess
+import sys
 from collections.abc import Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
@@ -17,7 +20,10 @@ import typer
 import yaml
 
 from d3dplot import __version__
+from d3dplot.analyses.m1d.config import M1DConfig
+from d3dplot.analyses.m1d.stage import plot_m1d_stage
 from d3dplot.analyses.map2d.plot import Map2DPlotError
+from d3dplot.analyses.registry import builtin_analysis_names
 from d3dplot.analyses.river_km_statistics.measurements import (
     ProfileMeasurementError,
     convert_mat_profile_measurements,
@@ -31,6 +37,7 @@ from d3dplot.config.io import (
     dump_config,
     dump_json_schema,
     dump_resolved_config,
+    load_config,
     load_config_data,
     write_resolved_config,
 )
@@ -65,6 +72,7 @@ from d3dplot.simulation.status import (
 from d3dplot.store import (
     OutputLayout,
     OutputWriteError,
+    OutputWriteGuard,
     atomic_write_text,
     initialize_output_root,
 )
@@ -83,7 +91,7 @@ from d3dplot.variables import (
     list_variable_specs,
 )
 
-_ANALYSIS_NAMES = frozenset({"map2d", "river_km_statistics"})
+_ANALYSIS_NAMES = frozenset(builtin_analysis_names())
 _LINE_QUANTITY_NAMES = frozenset(
     {
         "velocity_parallel",
@@ -506,6 +514,140 @@ def inspect(
             raise typer.Exit(code=1)
 
 
+@app.command()
+def prepare(
+    configuration: Annotated[
+        Path,
+        typer.Argument(
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            help="YAML or JSON project configuration.",
+        ),
+    ],
+    simulation_label: Annotated[
+        str | None,
+        typer.Option(
+            "--simulation",
+            help="Prepare only the configured simulation with this label.",
+        ),
+    ] = None,
+) -> None:
+    """Prepare guarded inspection and geometry caches for a project."""
+    inspect(configuration, simulation_label=simulation_label)
+
+
+@app.command()
+def status(
+    configuration: Annotated[
+        Path,
+        typer.Argument(
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            help="YAML or JSON project configuration.",
+        ),
+    ],
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Print machine-readable status JSON."),
+    ] = False,
+) -> None:
+    """Show status for every configured simulation."""
+    try:
+        config = load_config_data(configuration)
+        project, report = validate_config(config)
+        if project is None or not report.is_valid:
+            _emit_report(report)
+            raise typer.Exit(code=1)
+        statuses: list[dict[str, object]] = []
+        for simulation_config in project.simulations:
+            simulation, discovery_report = discover_simulation(
+                simulation_config.path,
+                check_map_headers=project.check_map_headers,
+            )
+            if simulation is None:
+                status_result, status_report = inspect_simulation_status(
+                    simulation_config.path
+                )
+                if status_result is None:
+                    report = ValidationReport(
+                        report.issues + discovery_report.issues + status_report.issues
+                    )
+                    _emit_report(report)
+                    raise typer.Exit(code=1)
+            else:
+                status_result = detect_simulation_status(simulation)
+            statuses.append(status_result.to_dict())
+    except (OSError, ValueError, yaml.YAMLError) as error:
+        typer.echo(f"Could not inspect project status: {error}", err=True)
+        raise typer.Exit(code=1) from error
+    if json_output:
+        typer.echo(json.dumps(statuses, ensure_ascii=False, indent=2))
+        return
+    for item in statuses:
+        typer.echo(
+            f"{item['label']}: {item['state']} "
+            f"({len(cast(list[object], item['subruns']))} sub-run(s), "
+            f"{item['n_partitions']} partition(s))"
+        )
+
+
+@app.command()
+def clean(
+    configuration: Annotated[
+        Path,
+        typer.Argument(
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            help="YAML or JSON project configuration.",
+        ),
+    ],
+    figures: Annotated[
+        bool,
+        typer.Option("--figures", help="Remove generated figures."),
+    ] = False,
+    cache: Annotated[
+        bool,
+        typer.Option("--cache", help="Remove processed and inspection caches."),
+    ] = False,
+) -> None:
+    """Remove selected guarded d3dplot outputs without touching inputs."""
+    try:
+        project = load_config(configuration)
+        remove_figures = figures or not cache
+        remove_cache = cache or not figures
+        removed: list[Path] = []
+        for simulation in project.simulations:
+            layout = OutputLayout.for_simulation(simulation, project.output)
+            guard = OutputWriteGuard(
+                layout.root,
+                forbidden_roots=project.output.forbidden_roots,
+            )
+            for target in (
+                (layout.figures if remove_figures else None),
+                (layout.cache if remove_cache else None),
+            ):
+                if target is None or not target.exists():
+                    continue
+                safe_target = guard.validate_target(target)
+                if safe_target == layout.root:
+                    raise OutputWriteError(
+                        "Refusing to clean the complete d3dplot output root."
+                    )
+                shutil.rmtree(safe_target)
+                removed.append(safe_target)
+    except (OSError, OutputWriteError, ValueError, yaml.YAMLError) as error:
+        typer.echo(f"Clean failed: {error}", err=True)
+        raise typer.Exit(code=1) from error
+    for path in removed:
+        typer.echo(f"Removed {path}")
+
+
 def _inspect_project(
     config: ProjectConfig,
     static_report: ValidationReport,
@@ -806,6 +948,123 @@ def plot(
 
 
 @app.command()
+def process(
+    configuration: Annotated[
+        Path,
+        typer.Argument(
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            help="YAML or JSON project configuration.",
+        ),
+    ],
+    serial: Annotated[
+        bool,
+        typer.Option("--serial", help="Run processing serially."),
+    ] = False,
+    reprocess: Annotated[
+        Literal["if_changed", "never", "always"] | None,
+        typer.Option("--reprocess", help="Override the cache reprocessing policy."),
+    ] = None,
+    executor: Annotated[
+        Literal["serial", "processes", "slurm"] | None,
+        typer.Option("--executor", help="Override the configured executor."),
+    ] = None,
+    shard: Annotated[
+        str | None,
+        typer.Option("--shard", help="Override deterministic shard selection i/N."),
+    ] = None,
+) -> None:
+    """Process configured quantities through the source-checkout stage bridge."""
+    project = load_config(configuration)
+    if project.analyses and all(
+        isinstance(analysis, M1DConfig) for analysis in project.analyses
+    ):
+        if executor == "slurm":
+            typer.echo(
+                "The native M1D processor does not submit SLURM jobs; "
+                "use executor=serial or processes.",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+        overrides: list[str] = []
+        if reprocess is not None:
+            overrides.append(f"reprocess={reprocess}")
+        if executor is not None:
+            overrides.append(f"execution.executor={executor}")
+        if shard is not None:
+            overrides.append(f"execution.shard={shard}")
+        if overrides:
+            project = apply_overrides(project, overrides)
+        m1d_result = plot_m1d_stage(project)
+        typer.echo(
+            f"Native M1D processing finished: "
+            f"{len(m1d_result.output_paths)} figure(s) written, "
+            f"{len(m1d_result.reused_paths)} reused."
+        )
+        return
+    helper = Path(__file__).resolve().parents[2] / "tools" / "process_project.py"
+    if not helper.is_file():
+        typer.echo(
+            "The process stage bridge is unavailable in this installation; "
+            "use the installed stage runner when WP 2.4 is packaged.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+    command = [sys.executable, str(helper), str(configuration)]
+    if serial:
+        command.append("--serial")
+    if reprocess is not None:
+        command.extend(("--reprocess", reprocess))
+    if executor is not None:
+        command.extend(("--executor", executor))
+    if shard is not None:
+        command.extend(("--shard", shard))
+    result = subprocess.run(command, check=False)
+    raise typer.Exit(code=result.returncode)
+
+
+@app.command()
+def run(
+    configuration: Annotated[
+        Path,
+        typer.Argument(
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            help="YAML or JSON project configuration.",
+        ),
+    ],
+    serial: Annotated[
+        bool,
+        typer.Option("--serial", help="Run processing serially."),
+    ] = False,
+    reprocess: Annotated[
+        Literal["if_changed", "never", "always"] | None,
+        typer.Option("--reprocess", help="Override the cache reprocessing policy."),
+    ] = None,
+    executor: Annotated[
+        Literal["serial", "processes", "slurm"] | None,
+        typer.Option("--executor", help="Override the configured executor."),
+    ] = None,
+    shard: Annotated[
+        str | None,
+        typer.Option("--shard", help="Override deterministic shard selection i/N."),
+    ] = None,
+) -> None:
+    """Run the currently available end-to-end processing stage bridge."""
+    process(
+        configuration,
+        serial=serial,
+        reprocess=reprocess,
+        executor=executor,
+        shard=shard,
+    )
+
+
+@app.command()
 def replot(
     figure: Annotated[
         Path,
@@ -960,22 +1219,42 @@ def _run_plot_stage(
                         f"written={len(river_km_result.output_paths)}; "
                         f"reused={len(river_km_result.reused_paths)}."
                     )
+                if diagnostic_log is not None:
+                    diagnostic_log.info("Starting M1D plotting stage.")
+                m1d_result = plot_m1d_stage(
+                    replayable_config,
+                    analysis_name=analysis_name,
+                    simulation_label=simulation_label,
+                    diagnostic=(
+                        diagnostic_log.info if diagnostic_log is not None else None
+                    ),
+                )
+                if diagnostic_log is not None:
+                    diagnostic_log.info(
+                        "Finished M1D plotting stage: "
+                        f"written={len(m1d_result.output_paths)}; "
+                        f"reused={len(m1d_result.reused_paths)}."
+                    )
             else:
                 river_km_result = None
+                m1d_result = None
             result = PlotStageResult(
                 output_paths=(
                     map_result.output_paths
                     + (() if river_km_result is None else river_km_result.output_paths)
+                    + (() if m1d_result is None else m1d_result.output_paths)
                 ),
                 reused_paths=(
                     map_result.reused_paths
                     + (() if river_km_result is None else river_km_result.reused_paths)
+                    + (() if m1d_result is None else m1d_result.reused_paths)
                 ),
                 movie_paths=map_result.movie_paths,
                 reused_movie_paths=map_result.reused_movie_paths,
                 messages=(
                     map_result.messages
                     + (() if river_km_result is None else river_km_result.messages)
+                    + (() if m1d_result is None else m1d_result.messages)
                 ),
             )
             if diagnostic_log is not None:
@@ -1080,7 +1359,7 @@ def init(
         str,
         typer.Option(
             "--analyses",
-            help="Comma-separated built-in analyses: map2d, river_km_statistics.",
+            help="Comma-separated built-in analyses: m1d, map2d, river_km_statistics.",
         ),
     ] = "map2d",
 ) -> None:
@@ -1697,6 +1976,13 @@ def _starter_config(
                 }
             ]
             analysis["river_km"] = {"file": "path/to/river_km.ldb"}
+        elif name == "m1d":
+            analysis.update(
+                {
+                    "branches": [["replace_with_branch"]],
+                    "branch_names": ["branch"],
+                }
+            )
         analyses.append(analysis)
     return ProjectConfig.model_validate(
         {"simulations": simulations, "analyses": analyses}

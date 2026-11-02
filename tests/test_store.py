@@ -49,9 +49,7 @@ def test_output_layout_uses_documented_precedence(tmp_path: Path) -> None:
     )
 
     assert default_layout.root == (tmp_path / "model" / "d3dplot").resolve()
-    assert (
-        shared_layout.root == (tmp_path / "shared" / "reference" / "d3dplot").resolve()
-    )
+    assert shared_layout.root == (tmp_path / "shared" / "d3dplot").resolve()
     assert overridden_layout.root == (tmp_path / "override" / "d3dplot").resolve()
     assert default_layout.cache_inputs == default_layout.cache / "inputs"
 

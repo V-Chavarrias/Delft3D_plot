@@ -54,6 +54,7 @@ from d3dplot.simulation.time_axis import (
     TimeEntry,
     TimeSelectionResult,
 )
+from d3dplot.simulation.time_utils import format_hydrodynamic_timestamp
 from d3dplot.store import (
     CACHE_SCHEMA_VERSION,
     OutputLayout,
@@ -62,6 +63,10 @@ from d3dplot.store import (
     canonical_json,
     fingerprint_artifact,
     fingerprint_small_input,
+)
+from d3dplot.store.paths import (
+    OutputArea,
+    build_quantity_output_path,
 )
 from d3dplot.validate.report import ValidationIssue
 from d3dplot.variables.context import QuantityRequest
@@ -73,7 +78,7 @@ from d3dplot.variables.grouping import (
     sediment_class_grouping_key,
     sediment_class_membership,
 )
-from d3dplot.variables.registry import VariableSpec
+from d3dplot.variables.registry import VariableSpec, canonical_variable_name
 from d3dplot.variables.selection import quantity_selection_label
 
 FloatArray: TypeAlias = NDArray[np.float64]
@@ -994,7 +999,6 @@ def river_km_statistics_output_path(
     component_grouping: str | None = None,
 ) -> Path:
     """Return the stable cache path for one region, set, quantity, and time."""
-    variable = quote(variable_name.casefold(), safe="-_.")
     region = quote(region_name, safe="-_.")
     km_set = quote(km_set_name, safe="-_.")
     selection = quantity_selection_label(
@@ -1002,18 +1006,14 @@ def river_km_statistics_output_path(
         variable_name=variable_name,
         component_grouping=component_grouping,
     )
-    timestamp = entry.time.astimezone(UTC)
-    filename = timestamp.strftime("%Y%m%dT%H%M%S")
-    if timestamp.microsecond:
-        filename += f".{timestamp.microsecond:06d}"
-    return (
-        layout.cache_data
-        / "river_km_statistics"
-        / region
-        / km_set
-        / variable
-        / selection
-        / f"{filename}.nc"
+    filename = format_hydrodynamic_timestamp(entry.time)
+    return build_quantity_output_path(
+        layout,
+        OutputArea.CACHE_DATA,
+        variable_name,
+        prefix=("river_km_statistics", region, km_set),
+        suffix=(selection,),
+        filename=f"{filename}.nc",
     )
 
 
@@ -1175,7 +1175,7 @@ def _write_segment_statistics_file(
         "km_set": prepared.km_set_name,
         "variable": spec.name,
         "quantity_version": spec.version,
-        "requested_name": request.requested_name.casefold(),
+        "requested_name": canonical_variable_name(request.requested_name),
         "fractions": list(request.fractions) if request.fractions is not None else None,
         "layers": list(request.layers) if request.layers is not None else None,
         "sum_fractions": request.sum_fractions,

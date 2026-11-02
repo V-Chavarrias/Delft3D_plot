@@ -10,6 +10,7 @@ from typing import Annotated, Literal, TypeAlias
 
 from pydantic import Field, PositiveInt, StrictInt, StrictStr, field_validator
 
+from d3dplot.analyses.m1d.config import M1DConfig
 from d3dplot.analyses.map2d.config import Map2DConfig
 from d3dplot.analyses.river_km_statistics.config import RiverKmStatisticsConfig
 from d3dplot.config.analysis import AnalysisConfigBase, ProcessingPolicy
@@ -19,7 +20,7 @@ from d3dplot.config.status import StatusConfig
 from d3dplot.paths import resolve_path_preserving_drive
 
 AnalysisConfig: TypeAlias = Annotated[
-    Map2DConfig | RiverKmStatisticsConfig,
+    M1DConfig | Map2DConfig | RiverKmStatisticsConfig,
     Field(discriminator="analysis"),
 ]
 
@@ -44,7 +45,9 @@ class OutputConfig(ConfigModel):
 
     root: Path | None = Field(
         default=None,
-        description="Optional shared root for generated d3dplot output.",
+        description=(
+            "Optional base directory; generated output is written to root/d3dplot."
+        ),
     )
     forbidden_roots: list[Path] = Field(
         default_factory=list,

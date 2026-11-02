@@ -150,8 +150,8 @@ def _check_simulation_labels_and_output_roots(
                         f"simulations[{previous_index}] ({previous_name!r})."
                     ),
                     hint=(
-                        "Assign a distinct output_dir or output.root/label for each "
-                        "simulation."
+                        "Assign a distinct simulations[*].output_dir to each "
+                        "simulation, or omit output.root."
                     ),
                 )
             )

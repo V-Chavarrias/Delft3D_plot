@@ -15,6 +15,7 @@ from d3dplot.plotting.finalize import FigureContext, finalize_figure
 from d3dplot.plotting.writers import get_figure_writer
 from d3dplot.river_km.geometry import RiverKmSegmentGeometry
 from d3dplot.store import OutputLayout, OutputWriteGuard
+from d3dplot.store.paths import OutputArea, build_output_path
 
 
 def write_invalid_segment_diagnostic(
@@ -114,16 +115,17 @@ def write_invalid_segment_diagnostic(
     )
     axes.legend()
 
-    output_path = (
-        layout.figures
-        / "river_km_statistics"
-        / "diagnostics"
-        / (
+    output_path = build_output_path(
+        layout,
+        OutputArea.FIGURES,
+        "river_km_statistics",
+        "diagnostics",
+        (
             "invalid_segment_"
             f"{quote(region_name, safe='')}_"
             f"{quote(km_set_name, safe='')}_"
             f"{segment_index:04d}.png"
-        )
+        ),
     )
     context = FigureContext(
         analysis="river_km_statistics",

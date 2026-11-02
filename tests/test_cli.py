@@ -181,7 +181,7 @@ def test_slurm_write_persists_template_inside_marked_output_root(
 
     result = runner.invoke(app, ["slurm", "write", str(configuration)])
 
-    script_path = output_root / "reference" / "d3dplot" / "config" / "slurm_array.sh"
+    script_path = output_root / "d3dplot" / "config" / "slurm_array.sh"
     assert result.exit_code == 0, result.output
     assert script_path.is_file()
     assert (script_path.parent.parent / ".d3dplot-output").is_file()
@@ -207,13 +207,9 @@ def test_validate_accepts_registered_and_present_raw_variables(
 
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout) == {"valid": True, "issues": []}
-    assert (
-        tmp_path / "generated" / "reference" / "d3dplot" / "cache" / "merge_plan.nc"
-    ).is_file()
+    assert (tmp_path / "generated" / "d3dplot" / "cache" / "merge_plan.nc").is_file()
     validation_reports = tuple(
-        (tmp_path / "generated" / "reference" / "d3dplot" / "tables").glob(
-            "validation_*.json"
-        )
+        (tmp_path / "generated" / "d3dplot" / "tables").glob("validation_*.json")
     )
     assert len(validation_reports) == 1
     assert json.loads(validation_reports[0].read_text(encoding="utf-8")) == {
@@ -221,9 +217,7 @@ def test_validate_accepts_registered_and_present_raw_variables(
         "issues": [],
     }
     diagnostics = tuple(
-        (tmp_path / "generated" / "reference" / "d3dplot" / "logs").glob(
-            "d3dplot_*.dia"
-        )
+        (tmp_path / "generated" / "d3dplot" / "logs").glob("d3dplot_*.dia")
     )
     assert len(diagnostics) == 1
     assert "Validation summary: valid=True" in diagnostics[0].read_text(
@@ -245,10 +239,12 @@ def test_inspect_builds_and_reuses_cache_for_selected_simulation(
                     {
                         "path": str(synthetic_case / "simulations" / "r001"),
                         "label": "smt",
+                        "output_dir": str(output_root / "smt"),
                     },
                     {
                         "path": str(synthetic_case / "simulations" / "fm_single"),
                         "label": "plain",
+                        "output_dir": str(output_root / "plain"),
                     },
                 ],
                 "analyses": [{"analysis": "map2d", "variables": ["bed_level"]}],

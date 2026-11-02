@@ -130,6 +130,16 @@ class LineView:
         if title is not None:
             self.axes.set_title(title)
 
+    def add_overlay(self, x: _Array, values: _Array, label: str) -> Line2D:
+        """Add a measurement or auxiliary line without rebuilding the template."""
+        line = self.axes.plot(
+            np.asarray(x, dtype=np.float64),
+            np.asarray(values, dtype=np.float64),
+            label=label,
+        )[0]
+        self.axes.legend()
+        return line
+
 
 def _validated_data(
     x: _Array,
