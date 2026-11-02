@@ -5,10 +5,10 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import Field, PositiveFloat
+from pydantic import Field, PositiveFloat, model_validator
 
 from d3dplot.config.analysis import AnalysisConfigBase
-from d3dplot.config.base import ConfigModel
+from d3dplot.config.base import ConfigModel, reject_unimplemented_fields
 from d3dplot.config.figure import MapViewConfig
 from d3dplot.config.measurements import MapMeasurementsConfig
 
@@ -43,9 +43,12 @@ class Map2DConfig(AnalysisConfigBase):
     )
     export: list[Literal["shapefile", "netcdf"]] = Field(
         default_factory=list,
-        description="Additional data export formats.",
+        description="Not implemented in v1; setting it is rejected.",
     )
-    view_3d: bool = Field(default=False, description="Show a 3D map view.")
+    view_3d: bool = Field(
+        default=False,
+        description="Not implemented in v1; setting it is rejected.",
+    )
     velocity_vectors: Literal["none", "scaled", "normalized"] = Field(
         default="none",
         description="Velocity-vector overlay style.",
@@ -54,3 +57,8 @@ class Map2DConfig(AnalysisConfigBase):
         default_factory=dict,
         description="Optional value ranges to mask, keyed by variable.",
     )
+
+    @model_validator(mode="after")
+    def reject_unimplemented(self) -> Map2DConfig:
+        reject_unimplemented_fields(self, ["export", "view_3d"])
+        return self

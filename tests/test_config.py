@@ -372,6 +372,37 @@ def test_unknown_keys_are_rejected_at_all_model_levels() -> None:
 
 
 @pytest.mark.unit
+def test_unimplemented_options_are_rejected() -> None:
+    export_data = _minimal_data()
+    export_data["analyses"][0]["export"] = ["netcdf"]
+    with pytest.raises(ValidationError, match="'export' is not implemented in v1"):
+        ProjectConfig.model_validate(export_data)
+
+    view_3d_data = _minimal_data()
+    view_3d_data["analyses"][0]["view_3d"] = True
+    with pytest.raises(ValidationError, match="'view_3d' is not implemented in v1"):
+        ProjectConfig.model_validate(view_3d_data)
+
+    fixed_weirs_data = _minimal_data()
+    fixed_weirs_data["analyses"][0]["map"] = {"fixed_weirs": "input"}
+    with pytest.raises(ValidationError, match="'fixed_weirs' is not implemented"):
+        ProjectConfig.model_validate(fixed_weirs_data)
+
+    display_name_data = _minimal_data()
+    display_name_data["figure"] = {"display_name": "Water level"}
+    with pytest.raises(ValidationError, match="'display_name' is not implemented"):
+        ProjectConfig.model_validate(display_name_data)
+
+    implemented_data = _minimal_data()
+    implemented_data["analyses"][0]["velocity_vectors"] = "scaled"
+    implemented_data["analyses"][0]["mask_range"] = {"mesh2d_s1": [0.0, None]}
+    implemented_data["figure"] = {"formats": ["png"]}
+    config = ProjectConfig.model_validate(implemented_data)
+    assert config.analyses[0].velocity_vectors == "scaled"
+    assert config.analyses[0].mask_range == {"mesh2d_s1": (0.0, None)}
+
+
+@pytest.mark.unit
 def test_fixed_utc_offset_validation() -> None:
     data = _minimal_data()
     data["time_zone"] = "+01:00"
