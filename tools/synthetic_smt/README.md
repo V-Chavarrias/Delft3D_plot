@@ -32,6 +32,7 @@ It also checks that every map variable has all its time steps.
 | `simulations/variants/` | `running` (has `output/work`; last sub-run truncated), `crashed` (stopped before `TStop`), `non_partitioned`, `gap` (sub-run 2 missing), `corrupt_partition` (sub-run 0, partition 1: garbage `time`/`morft` and ±1e308 values at map times 1–2, as `r209` sub-run 0 partition 0021) |
 | `simulations/fm_partitioned/` | Plain FM: one root `dflowfm.mdu`, `dimr_config.xml`, three partition map files, 40 map times in `DFM_OUTPUT_dflowfm/`; no `smt.yml` |
 | `simulations/fm_single/` | Plain FM: one root `dflowfm.mdu`, one unpartitioned map file and explicit `OutputDir=single_output`; no `smt.yml` |
+| `simulations/fm_3d/` | Plain FM sigma-layer case with layered velocity, salinity, tracer, interface fields, and a `.sub` decay-rate input |
 | `inputs/rkm/` | river-km files in the fixed format `x, y, <km>_<TAG>, km`: Maas (`MA`), generic (`SY`), Rijntakken (`WA`); 100 m, 1 km and 3 km spacing |
 | `inputs/regions/` | `L1R1` (summer bed), `L1L3`/`R1R3` (halves), `WIDE` (whole width) |
 | `inputs/ldb/` | land boundary as `.ldb` (Tekal), the only accepted input format (a `.mat` is only ever a cache) |

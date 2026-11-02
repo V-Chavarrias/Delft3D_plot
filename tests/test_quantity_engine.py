@@ -623,3 +623,51 @@ def test_all_2d_quantities_match_synthetic_analytic_values(
             selected_percentile[face, 0],
             expected["d50"],
         )
+
+
+@pytest.mark.integration
+def test_three_dimensional_plain_fm_quantities_match_analytic_fields(
+    synthetic_case: Any,
+    tmp_path: Any,
+) -> None:
+    simulation, report = discover_simulation(synthetic_case / "simulations" / "fm_3d")
+    assert simulation is not None
+    assert report.is_valid
+    inspection, inspection_report = inspect_simulation(
+        simulation,
+        OutputLayout(tmp_path / "d3dplot_3d"),
+        forbidden_roots=(),
+    )
+    assert inspection is not None, inspection_report.to_text()
+    time_axis = TimeAxis.from_cache(inspection.times_path)
+    entry = time_axis.entries[1]
+    context = replace(
+        QuantityContext.from_model_input(
+            simulation.subruns[entry.subrun].model_input,
+            grid_geometry=GridGeometry.from_path(inspection.grid_paths[0]),
+        ),
+        current_time=entry.time,
+    )
+    reader = MapReader(simulation, inspection.merge_plan_path)
+    with reader.session(entry.subrun) as map_session:
+        quantities = QuantityEngine().at_time(map_session, entry, context)
+        velocity = quantities.get("velocity_magnitude_layer_mean")
+        chloride = quantities.get("chloride_mass")
+        residence_max = quantities.get("residence_time_max")
+        residence_average = quantities.get("residence_time_depth_average")
+        residence_surface = quantities.get("residence_time_surface")
+        water_depth = quantities.get("water_depth")
+        velocity_raw = quantities.get("velocity_magnitude")
+
+    face = int(np.flatnonzero(water_depth > 0.05)[0])
+    np.testing.assert_allclose(
+        velocity[face],
+        np.mean(velocity_raw[face]),
+    )
+    np.testing.assert_allclose(chloride[face], 1.5 * water_depth[face])
+    np.testing.assert_allclose(residence_max[face], 4.0)
+    np.testing.assert_allclose(residence_surface[face], 4.0)
+    np.testing.assert_allclose(
+        residence_average[face],
+        3.0,
+    )

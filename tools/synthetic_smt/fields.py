@@ -206,3 +206,33 @@ def map_fields(
         ).copy(),
         "mesh2d_hu": edge_depth,
     }
+
+
+def three_dimensional_fields(
+    p: Params,
+    mesh: Mesh,
+    sim: SimulationParams,
+    run: SubRunTimes,
+) -> dict[str, np.ndarray]:
+    """Return the base fields plus analytic sigma-layer water-quality fields."""
+    fields = map_fields(p, mesh, sim, run)
+    nt = len(run.time)
+    n_faces = mesh.n_faces
+    bed = fields["mesh2d_mor_bl"]
+    water_level = fields["mesh2d_s1"]
+    middle = 0.5 * (bed + water_level)
+    fields["mesh2d_flowelem_zw"] = np.stack((bed, middle, water_level), axis=-1)
+    fields["mesh2d_ucmag"] = np.stack(
+        (0.8 * fields["mesh2d_ucmag"], 1.2 * fields["mesh2d_ucmag"]),
+        axis=-1,
+    )
+    fields["mesh2d_sa1"] = np.broadcast_to(
+        np.array([1.80655, 3.6131], dtype=np.float64),
+        (nt, n_faces, 2),
+    ).copy()
+    fields["mesh2d_cTR1"] = np.ones((nt, n_faces, 2), dtype=np.float64)
+    fields["mesh2d_dTR1"] = np.broadcast_to(
+        np.array([np.exp(-0.2), np.exp(-0.4)], dtype=np.float64),
+        (nt, n_faces, 2),
+    ).copy()
+    return fields

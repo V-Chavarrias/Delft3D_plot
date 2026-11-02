@@ -24,6 +24,7 @@ from fields import (
     map_fields,
     plain_fm_times,
     subrun_times,
+    three_dimensional_fields,
 )
 from fm_files import (
     write_dia,
@@ -34,6 +35,7 @@ from fm_files import (
     write_net,
     write_sed,
     write_smt_yml,
+    write_substance,
 )
 from matlab_script import write_matlab_script
 from measurements import write_catalogue, write_rasters, write_smb_mat, write_vakken
@@ -93,11 +95,14 @@ def write_simulation(
     finished_last: bool = True,
     work_folder: bool = False,
     corrupt: tuple[int, int, tuple[int, ...]] | None = None,
+    three_dimensional: bool = False,
 ):
     """`corrupt` is (sub-run, partition, map-time indices) with r209-like garbage."""
     root.mkdir(parents=True, exist_ok=True)
     write_smt_yml(root / "smt.yml", p, len(runs))
     write_sed(root / "sed" / "synthetic.sed", p)
+    if three_dimensional:
+        write_substance(root / "synthetic.sub")
     initial_bl = bed_level(p, mesh.face_s, mesh.face_n, 0.0, sim.erosion_rate_m_per_day)
     full = partition_subset(mesh, None)
     subsets = (
@@ -109,7 +114,11 @@ def write_simulation(
     for run in runs:
         if run.index in skip_subruns:
             continue
-        fields = map_fields(p, mesh, sim, run)
+        fields = (
+            three_dimensional_fields(p, mesh, sim, run)
+            if three_dimensional
+            else map_fields(p, mesh, sim, run)
+        )
         last = run.index == runs[-1].index
         if last and truncate_last:
             run = replace(run, time=run.time[:2], morft=run.morft[:2])
@@ -119,7 +128,14 @@ def write_simulation(
         d = root / "output" / str(run.index)
         d.mkdir(parents=True, exist_ok=True)
         map_interval = (p.spinup_s, run.tstart, run.tstop)
-        write_mdu(d / "dflowfm.mdu", p, run, "synthetic_net.nc", map_interval)
+        write_mdu(
+            d / "dflowfm.mdu",
+            p,
+            run,
+            "synthetic_net.nc",
+            map_interval,
+            substance_file="../../synthetic.sub" if three_dimensional else None,
+        )
         write_net(d / "synthetic_net.nc", p, mesh, full, initial_bl)
         write_mor(d / "mor.mor", p)
         write_dimr_config(
@@ -135,7 +151,14 @@ def write_simulation(
                     else ()
                 )
                 write_mdu(
-                    d / f"dflowfm_{k:04d}.mdu", p, run, "synthetic_net.nc", map_interval
+                    d / f"dflowfm_{k:04d}.mdu",
+                    p,
+                    run,
+                    "synthetic_net.nc",
+                    map_interval,
+                    substance_file=(
+                        "../../synthetic.sub" if three_dimensional else None
+                    ),
                 )
                 write_map(
                     res / f"dflowfm_{k:04d}_map.nc",
@@ -147,6 +170,7 @@ def write_simulation(
                     initial_bl,
                     partitioned=True,
                     corrupt_times=bad,
+                    three_dimensional=three_dimensional,
                 )
                 write_dia(
                     res / f"dflowfm_{k:04d}.dia",
@@ -167,6 +191,7 @@ def write_simulation(
                 fields,
                 initial_bl,
                 partitioned=False,
+                three_dimensional=three_dimensional,
             )
             write_dia(res / "dflowfm.dia", run, 0, 1, finished, "dflowfm.mdu")
     if work_folder:
@@ -182,18 +207,25 @@ def write_plain_fm(
     *,
     partitioned: bool,
     output_dir: str,
+    three_dimensional: bool = False,
 ):
     """Write one plain FM run without an SMT manifest or sub-run directory."""
     root.mkdir(parents=True, exist_ok=True)
     stem = "dflowfm"
     full = partition_subset(mesh, None)
     initial_bl = bed_level(p, mesh.face_s, mesh.face_n, 0.0, sim.erosion_rate_m_per_day)
-    fields = map_fields(p, mesh, sim, run)
+    fields = (
+        three_dimensional_fields(p, mesh, sim, run)
+        if three_dimensional
+        else map_fields(p, mesh, sim, run)
+    )
     map_interval = (float(run.time[1] - run.time[0]), run.tstart, run.tstop)
 
     write_net(root / "synthetic_net.nc", p, mesh, full, initial_bl)
     write_mor(root / "mor.mor", p)
     write_sed(root / "sed" / "synthetic.sed", p)
+    if three_dimensional:
+        write_substance(root / "synthetic.sub")
     write_mdu(
         root / f"{stem}.mdu",
         p,
@@ -202,6 +234,7 @@ def write_plain_fm(
         map_interval,
         output_dir=None if partitioned else output_dir,
         sed_file="sed/synthetic.sed",
+        substance_file="synthetic.sub" if three_dimensional else None,
     )
 
     output = root / output_dir
@@ -223,6 +256,7 @@ def write_plain_fm(
                 fields,
                 initial_bl,
                 partitioned=True,
+                three_dimensional=three_dimensional,
             )
             write_dia(
                 output / f"{stem}_{rank:04d}.dia",
@@ -250,6 +284,7 @@ def write_plain_fm(
             fields,
             initial_bl,
             partitioned=False,
+            three_dimensional=three_dimensional,
         )
         write_dia(
             output / f"{stem}.dia",
@@ -328,6 +363,12 @@ def write_readme(
             "| `simulations/fm_partitioned`, `fm_single` | plain FM runs "
             "(one sub-run, 40 map times); partitioned default output and "
             "non-partitioned explicit `OutputDir` |"
+            if variants
+            else ""
+        ),
+        (
+            "| `simulations/fm_3d` | plain FM sigma-layer run with "
+            "layered velocity, salinity, tracer, and interface fields |"
             if variants
             else ""
         ),
@@ -431,6 +472,16 @@ def generate(
             plain_run,
             partitioned=False,
             output_dir="single_output",
+        )
+        write_plain_fm(
+            sims / "fm_3d",
+            p,
+            mesh,
+            base,
+            plain_run,
+            partitioned=False,
+            output_dir="output_3d",
+            three_dimensional=True,
         )
         print("  plain FM variants")
 

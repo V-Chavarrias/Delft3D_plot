@@ -99,6 +99,12 @@ _EDGE_DATA_VARS = {
     "mesh2d_hu": {"long_name": "Water depth at edge", "units": "m"},
 }
 
+_THREED_DATA_VARS = {
+    "mesh2d_sa1": {"long_name": "Synthetic salinity", "units": "psu"},
+    "mesh2d_cTR1": {"long_name": "Conservative tracer", "units": "1"},
+    "mesh2d_dTR1": {"long_name": "Decaying tracer", "units": "1"},
+}
+
 
 def _var(ds, name, dtype, dims, attrs=None, fill=None, data=None, zlib=False):
     v = ds.createVariable(
@@ -379,6 +385,7 @@ def write_map(
     initial_bl: np.ndarray,
     partitioned: bool,
     corrupt_times: tuple[int, ...] = (),
+    three_dimensional: bool = False,
 ):
     """Reproduce corrupt time, morft and values from r209 sub-run 0, partition 0021."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -401,6 +408,9 @@ def write_map(
         ds.createDimension("time", None)
         ds.createDimension("nSedTot", p.n_fractions)
         ds.createDimension("nBedLayers", p.n_bed_layers)
+        if three_dimensional:
+            ds.createDimension("nLayers", 2)
+            ds.createDimension("nInterfaces", 3)
         _var(
             ds,
             "time",
@@ -432,7 +442,10 @@ def write_map(
             data=initial_bl[sub.faces],
         )
         for name, attrs in _DATA_VARS.items():
-            dimensions = ("time", "mesh2d_nFaces", *_FACE_EXTRA_DIMS.get(name, ()))
+            extra_dims = _FACE_EXTRA_DIMS.get(name, ())
+            if three_dimensional and name == "mesh2d_ucmag":
+                extra_dims = ("nLayers",)
+            dimensions = ("time", "mesh2d_nFaces", *extra_dims)
             _var(
                 ds,
                 name,
@@ -443,6 +456,28 @@ def write_map(
                 data=fields[name],
                 zlib=True,
             )
+        if three_dimensional:
+            _var(
+                ds,
+                "mesh2d_flowelem_zw",
+                "f8",
+                ("time", "mesh2d_nFaces", "nInterfaces"),
+                {**_FACE_ATTRS, "long_name": "Layer interfaces", "units": "m"},
+                fill=FILL_DBL,
+                data=fields["mesh2d_flowelem_zw"],
+                zlib=True,
+            )
+            for name, attrs in _THREED_DATA_VARS.items():
+                _var(
+                    ds,
+                    name,
+                    "f8",
+                    ("time", "mesh2d_nFaces", "nLayers"),
+                    {**_FACE_ATTRS, **attrs},
+                    fill=FILL_DBL,
+                    data=fields[name],
+                    zlib=True,
+                )
         for name, attrs in _EDGE_DATA_VARS.items():
             _var(
                 ds,
@@ -517,6 +552,7 @@ def write_mdu(
     *,
     output_dir: str | None = "results",
     sed_file: str = "../../sed/synthetic.sed",
+    substance_file: str | None = None,
 ):
     restart = (
         ""
@@ -579,6 +615,14 @@ def write_mdu(
         _fmt("MorFile", "mor.mor", "Morphology settings file (*.mor)"),
         "",
     ]
+    if substance_file is not None:
+        lines.extend(
+            [
+                "[Processes]",
+                _fmt("SubstanceFile", substance_file, "D-WAQ substance file"),
+                "",
+            ]
+        )
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
@@ -624,6 +668,18 @@ def write_sed(path: Path, p: Params):
         )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("".join(blocks), encoding="utf-8")
+
+
+def write_substance(path: Path):
+    """Write one conservative/decaying tracer pair for residence-time tests."""
+    path.write_text(
+        "parameter 'RcDecTR1'\n"
+        "   description   'Synthetic decay rate'\n"
+        "   unit          '1/s'\n"
+        "   value         0.1\n"
+        "end-parameter\n",
+        encoding="utf-8",
+    )
 
 
 def write_dia(
