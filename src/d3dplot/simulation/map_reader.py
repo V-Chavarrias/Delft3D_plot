@@ -313,10 +313,24 @@ class MapReader:
                         non_time_dimensions = tuple(
                             dimension for dimension in dimensions if dimension != "time"
                         )
+                        present_dimensions = set(non_time_dimensions)
+                        required_extra_dimensions = set(spec.extra_dims).difference(
+                            spec.optional_extra_dims
+                        )
+                        expected_present_dimensions = {
+                            location_dimension,
+                            *required_extra_dimensions,
+                        }
                         if (
                             time_dimensions > 1
-                            or len(non_time_dimensions) != len(expected_dimensions)
-                            or set(non_time_dimensions) != set(expected_dimensions)
+                            or location_dimension not in present_dimensions
+                            or not expected_present_dimensions.issubset(
+                                present_dimensions
+                            )
+                            or any(
+                                dimension not in expected_dimensions
+                                for dimension in non_time_dimensions
+                            )
                         ):
                             raise MapReaderError(
                                 _issue(
@@ -373,6 +387,7 @@ class MapReader:
                         extra_shape = tuple(
                             shape_by_dimension[dimension]
                             for dimension in spec.extra_dims
+                            if dimension in shape_by_dimension
                         )
                         if output is None:
                             output = np.full(
@@ -704,7 +719,11 @@ def _read_partition_values(
         mask, local_indices, axis=dimensions_without_time.index(location_dimension)
     )
     remaining_dimensions = list(dimensions_without_time)
-    canonical_dimensions = [location_dimension, *spec.extra_dims]
+    canonical_dimensions = [
+        dimension
+        for dimension in (location_dimension, *spec.extra_dims)
+        if dimension in remaining_dimensions
+    ]
     permutation = [
         remaining_dimensions.index(dimension) for dimension in canonical_dimensions
     ]

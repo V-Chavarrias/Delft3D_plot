@@ -129,6 +129,41 @@ def velocity_vector(
     return np.stack((eastward, northward), axis=-1)
 
 
+def velocity_magnitude_layer_mean(
+    inputs: Mapping[str, _Array],
+    context: QuantityContext,
+    request: QuantityRequest,
+) -> _Array:
+    """Return the arithmetic mean of velocity magnitude over retained layers."""
+    del context, request
+    values = np.asarray(inputs["velocity_magnitude"], dtype=np.float64)
+    if values.ndim == 1:
+        return values
+    return np.mean(values, axis=1)
+
+
+def chloride_mass(
+    inputs: Mapping[str, _Array],
+    context: QuantityContext,
+    request: QuantityRequest,
+) -> _Array:
+    """Return vertically integrated chloride mass per unit horizontal area."""
+    del context, request
+    salinity = np.asarray(inputs["mesh2d_sa1"], dtype=np.float64)
+    interfaces = np.asarray(inputs["mesh2d_flowelem_zw"], dtype=np.float64)
+    if salinity.ndim != 2 or interfaces.ndim != 2:
+        raise QuantityContextError(
+            "chloride_mass requires face-by-layer salinity and face-by-interface "
+            "elevations."
+        )
+    if interfaces.shape[1] != salinity.shape[1] + 1:
+        raise QuantityContextError(
+            "chloride_mass layer and interface counts do not match."
+        )
+    thickness = np.abs(np.diff(interfaces, axis=1))
+    return np.nansum(salinity / 1.80655 * thickness, axis=1)
+
+
 def water_level_rate(
     inputs: Mapping[str, _Array],
     context: QuantityContext,

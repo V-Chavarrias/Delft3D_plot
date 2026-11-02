@@ -193,6 +193,28 @@ def test_engine_applies_thickness_weighted_depth_average() -> None:
 
 
 @pytest.mark.unit
+def test_engine_computes_layer_mean_velocity_and_chloride_mass() -> None:
+    session = _MemoryMapSession(
+        {
+            "mesh2d_ucmag": np.array([[1.0, 3.0], [2.0, 6.0]]),
+            "mesh2d_sa1": np.array([[1.80655, 3.6131], [0.0, 1.80655]]),
+            "mesh2d_flowelem_zw": np.array([[0.0, 2.0, 3.0], [0.0, 1.0, 3.0]]),
+        }
+    )
+    quantities = QuantityEngine().at_time(
+        session,
+        _entry(),
+        QuantityContext(),
+    )
+
+    velocity = quantities.get("velocity_magnitude_layer_mean")
+    chloride = quantities.get("chloride_mass")
+
+    np.testing.assert_allclose(velocity, [2.0, 4.0])
+    np.testing.assert_allclose(chloride, [4.0, 2.0])
+
+
+@pytest.mark.unit
 def test_missing_dependency_reports_quantity_chain_and_subrun() -> None:
     session = _MemoryMapSession(
         {"mesh2d_waterdepth": np.array([1.0])},

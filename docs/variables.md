@@ -14,7 +14,7 @@ Registered computation callbacks run through the shared quantity engine.
 | `bed_shear_stress` | raw | `taub` | `mesh2d_taus` | face | - | `Pa` | `bed_shear_stress` | - | - | - | - | - | - |
 | `cell_area` | raw | `ba` | `mesh2d_flowelem_ba` | face | - | `m^2` | `cell_area` | - | - | - | - | - | - |
 | `chezy` | raw | `czs` | `mesh2d_czs` | face | - | `m^0.5/s` | `chezy_friction_coefficient` | - | - | - | - | - | - |
-| `chloride_mass` | derived | `clm2` | - | face | - | `kg/m^2` | `chloride_mass` | `mesh2d_sa1`, `mesh2d_flowelem_zw` | - | - | `sal2cl` | inputs | 1 |
+| `chloride_mass` | derived | `clm2` | - | face | - | `kg/m^2` | `chloride_mass` | `mesh2d_sa1`, `mesh2d_flowelem_zw` | - | - | - | output | 1 |
 | `energy_head` | derived | `E` | - | face | - | `m` | `energy_head` | `water_level`, `velocity_magnitude` | - | - | `gravity` | inputs | 1 |
 | `froude_number` | derived | `Fr` | - | face | - | `1` | `fr` | `velocity_magnitude`, `water_depth` | - | - | `gravity`, `dry_depth_m` | inputs | 1 |
 | `grain_size_percentile` | derived | `d10`, `d50`, `d90` | - | face | `nBedLayers` | `m` | `grain_size_percentile` | `layer_fraction` | - | - | `sediment_diameters` | output | 1 |
@@ -23,8 +23,10 @@ Registered computation callbacks run through the shared quantity engine.
 | `mean_grain_size_arithmetic` | derived | `dm` | - | face | `nBedLayers` | `m` | `dm` | `layer_fraction` | - | - | `sediment_diameters` | output | 1 |
 | `mean_grain_size_geometric` | derived | `dg` | - | face | `nBedLayers` | `m` | `dg` | `layer_fraction` | - | - | `sediment_diameters` | output | 1 |
 | `mean_grain_size_geometric_output` | raw | - | `mesh2d_dg` | face | - | `m` | `dg` | - | - | - | - | - | - |
+| `mesh2d_flowelem_zw` | raw | - | `mesh2d_flowelem_zw` | face | `nInterfaces` | `m` | `elevation` | - | - | - | - | - | - |
 | `mesh2d_hu` | raw | - | `mesh2d_hu` | edge | - | `m` | `depth` | - | - | - | - | - | - |
 | `mesh2d_s0` | raw | - | `mesh2d_s0` | face | - | `m` | `water_level` | - | - | - | - | - | - |
+| `mesh2d_sa1` | raw | - | `mesh2d_sa1` | face | `nLayers` | `psu` | `salinity` | - | - | - | - | - | - |
 | `mesh2d_sbcx` | raw | - | `mesh2d_sbcx` | face | `nSedTot` | `m^2/s` | `bedload_sediment_transport` | - | - | - | - | - | - |
 | `mesh2d_sbcy` | raw | - | `mesh2d_sbcy` | face | `nSedTot` | `m^2/s` | `bedload_sediment_transport` | - | - | - | - | - | - |
 | `mesh2d_sxtot` | raw | - | `mesh2d_sxtot` | face | `nSedTot` | `m^2/s` | `sediment_transport_size_frac_L2T` | - | - | - | - | - | - |
@@ -44,7 +46,7 @@ Registered computation callbacks run through the shared quantity engine.
 | `total_sediment_thickness` | derived | `Ltot` | - | face | - | `m` | `sediment_thickness` | `layer_thickness` | - | - | - | inputs | 1 |
 | `transport_streamfunction` | derived | - | - | face | - | `m^3/s` | `transport_streamfunction` | `mesh2d_u1`, `mesh2d_hu` | - | - | `grid_geometry`, `sparse_laplacian_factorization` | inputs | 1 |
 | `velocity_direction` | derived | `udir` | - | face | - | `degree` | `direction` | `mesh2d_ucx`, `mesh2d_ucy` | - | - | - | inputs | 1 |
-| `velocity_magnitude` | raw | `umag`, `umag_layer` | `mesh2d_ucmaga`, `mesh2d_ucmag`, `mesh1d_ucmag` | face | - | `m/s` | `velocity_magnitude` | - | - | - | - | - | - |
+| `velocity_magnitude` | raw | `umag`, `umag_layer` | `mesh2d_ucmaga`, `mesh2d_ucmag`, `mesh1d_ucmag` | face | `nLayers` | `m/s` | `velocity_magnitude` | - | - | - | - | - | - |
 | `velocity_magnitude_layer_mean` | derived | - | - | face | - | `m/s` | `velocity_magnitude` | `velocity_magnitude` | - | - | - | inputs | 1 |
 | `velocity_vector` | derived | `uv` | - | face | `component` | `m/s` | `velocity_vector` | `mesh2d_ucx`, `mesh2d_ucy` | - | - | - | inputs | 1 |
 | `vorticity` | derived | - | - | face | - | `1/s` | `vorticity` | `mesh2d_u1` | - | - | `grid_geometry` | inputs | 1 |
