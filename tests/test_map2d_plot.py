@@ -24,6 +24,7 @@ from d3dplot.analyses.map2d.plot import (
     Map2DPlotFrame,
     Map2DPlotSource,
     _figure_path,
+    _mask_values_outside_range,
     _movie_path,
     plot_map2d_group,
 )
@@ -47,6 +48,20 @@ _HOOK_MAP_TEXTS: list[tuple[str, ...]] = []
 _HOOK_MEASUREMENT_AXES: list[bool] = []
 _HOOK_SHARED_MEASUREMENT_LIMITS: list[tuple[float, float, float, float] | None] = []
 _HOOK_MAP_APPEARANCES: list[tuple[str, str]] = []
+
+
+@pytest.mark.unit
+def test_mask_values_outside_range_sets_nan_and_counts_without_mutating_input() -> None:
+    values = np.array([0.5, 1.0, 2.0, 3.0, np.nan])
+    masked, count = _mask_values_outside_range(values, (1.0, 2.5))
+    np.testing.assert_array_equal(masked[:2], [np.nan, 1.0])
+    np.testing.assert_array_equal(masked[2:4], [2.0, np.nan])
+    assert np.isnan(masked[4])
+    assert count == 2
+    assert values[0] == 0.5
+    open_ended, open_count = _mask_values_outside_range(values, (None, 2.0))
+    assert open_count == 1
+    np.testing.assert_array_equal(open_ended[1:3], [1.0, 2.0])
 
 
 @pytest.mark.unit
@@ -351,6 +366,32 @@ def test_plot_map2d_is_pixel_identical_when_fresh(
                 first_pixels[path],
             )
             assert image.info["figure_fingerprint"]
+
+
+@pytest.mark.unit
+def test_plot_map2d_masks_values_outside_mask_range_and_reports_count(
+    tmp_path: Path,
+) -> None:
+    project, analysis, source = _project_and_source(
+        tmp_path,
+        values=((1.0, 2.0), (3.0, 4.0)),
+    )
+    analysis.mask_range["water_depth"] = (1.5, 3.5)
+    result = plot_map2d_group(
+        project,
+        analysis,
+        source,
+        "water_depth",
+        "value",
+        fresh_figures=True,
+    )
+    assert len(result.output_paths) == 2
+    masked_messages = [
+        message
+        for message in result.messages
+        if "Masked 1 values of 'water_depth'" in message
+    ]
+    assert len(masked_messages) == 2
 
 
 @pytest.mark.unit

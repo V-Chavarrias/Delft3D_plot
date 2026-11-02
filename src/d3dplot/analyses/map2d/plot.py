@@ -377,6 +377,17 @@ def plot_map2d_group(
                 regridder,
                 current_grid,
             )
+            value_range = analysis.mask_range.get(variable)
+            if value_range is not None:
+                map_values, masked_count = _mask_values_outside_range(
+                    map_values,
+                    value_range,
+                )
+                if masked_count:
+                    report(
+                        f"Masked {masked_count} values of {variable!r} outside "
+                        f"{value_range}."
+                    )
             if comparison in {"difference_time", "difference_simulation_time"}:
                 if (
                     matched_frame_index == 0
@@ -1164,6 +1175,22 @@ def _scaled_limits(
         None if lower is None else lower * scale,
         None if upper is None else upper * scale,
     )
+
+
+def _mask_values_outside_range(
+    values: _FloatArray,
+    value_range: tuple[float | None, float | None],
+) -> tuple[_FloatArray, int]:
+    """Return a copy with values outside the closed range set to NaN, and the count."""
+    lower, upper = value_range
+    masked = np.array(values, dtype=np.float64, copy=True)
+    outside = np.zeros(masked.shape, dtype=bool)
+    if lower is not None:
+        outside |= masked < lower
+    if upper is not None:
+        outside |= masked > upper
+    masked[outside] = np.nan
+    return masked, int(np.count_nonzero(outside))
 
 
 def _colormap_for(
