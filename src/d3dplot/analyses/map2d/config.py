@@ -12,6 +12,8 @@ from d3dplot.config.base import ConfigModel, reject_unimplemented_fields
 from d3dplot.config.figure import MapViewConfig
 from d3dplot.config.measurements import MapMeasurementsConfig
 
+VELOCITY_COMPONENT_VARIABLES: tuple[str, str] = ("mesh2d_ucx", "mesh2d_ucy")
+
 
 class MovieConfig(ConfigModel):
     """Movie export settings for map frames."""

@@ -14,7 +14,7 @@ from d3dplot import __version__
 from d3dplot.analyses.m1d.config import M1DConfig
 from d3dplot.analyses.m1d.process import M1DProcessError
 from d3dplot.analyses.m1d.stage import process_m1d_stage
-from d3dplot.analyses.map2d.config import Map2DConfig
+from d3dplot.analyses.map2d.config import VELOCITY_COMPONENT_VARIABLES, Map2DConfig
 from d3dplot.analyses.map2d.process import (
     Map2DProcessError,
     Map2DProcessResult,
@@ -108,6 +108,9 @@ def _quantity_requests(analysis: AnalysisConfigBase) -> tuple[QuantityRequest, .
         raise ValueError("Unsupported vertical selection.")
 
     fractions = None if analysis.fractions == "all" else tuple(analysis.fractions)
+    names = list(analysis.variables)
+    if isinstance(analysis, Map2DConfig) and analysis.velocity_vectors != "none":
+        names.extend(VELOCITY_COMPONENT_VARIABLES)
     return tuple(
         dict.fromkeys(
             QuantityRequest(
@@ -122,7 +125,7 @@ def _quantity_requests(analysis: AnalysisConfigBase) -> tuple[QuantityRequest, .
                 z_range=z_range,
                 elevation=elevation,
             )
-            for name in analysis.variables
+            for name in names
         )
     )
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from hashlib import blake2b
 from importlib import import_module
@@ -17,7 +17,7 @@ import netCDF4
 from PIL import Image, UnidentifiedImageError
 
 from d3dplot import __version__
-from d3dplot.analyses.map2d.config import Map2DConfig
+from d3dplot.analyses.map2d.config import VELOCITY_COMPONENT_VARIABLES, Map2DConfig
 from d3dplot.config.analysis import Comparison
 from d3dplot.config.figure import DaysSinceColorLimits
 from d3dplot.config.project import ProjectConfig
@@ -89,6 +89,7 @@ _DIFFERENCE_COMPARISONS = frozenset(
         "difference_simulation_relative",
     }
 )
+_VELOCITY_ARROW_FRACTION = 0.05
 
 
 class Map2DPlotError(RuntimeError):
@@ -107,6 +108,7 @@ class Map2DPlotFrame:
     time: datetime
     path: Path
     morph_time: datetime | None = None
+    vector_paths: tuple[Path, Path] | None = None
 
     def __post_init__(self) -> None:
         if not self.match_key or self.match_key != self.match_key.strip():
@@ -334,6 +336,11 @@ def plot_map2d_group(
         first_current_fingerprint: str | None = None
         first_reference: _FloatArray | None = None
         first_reference_fingerprint: str | None = None
+        first_velocity_reference: float | None = None
+        first_velocity_fingerprints: tuple[str, str] | None = None
+        draw_velocity = analysis.velocity_vectors != "none" and comparison == "value"
+        if analysis.velocity_vectors != "none" and not draw_velocity:
+            report(f"Velocity vectors omitted for comparison {comparison!r}.")
         matched_frame_index = 0
         for frame in source.frames:
             paired_reference = reference_frames.get(frame.match_key)
@@ -458,12 +465,36 @@ def plot_map2d_group(
                 "value",
                 extra_dictionaries=project.labels.extra_dictionaries,
             ).text
+            x_axis_label = label(
+                "x_coord",
+                project.language,
+                "value",
+                extra_dictionaries=project.labels.extra_dictionaries,
+            ).text
             y_axis_label = label(
                 "y_coord",
                 project.language,
                 "value",
                 extra_dictionaries=project.labels.extra_dictionaries,
             ).text
+            velocity_components: tuple[_FloatArray, _FloatArray] | None = None
+            velocity_fingerprints: tuple[str, str] | None = None
+            if draw_velocity:
+                u_values, v_values, velocity_fingerprints = _read_velocity_frame(
+                    frame,
+                    current_grid.n_face,
+                )
+                if first_velocity_reference is None:
+                    first_velocity_reference = _velocity_reference_speed(
+                        u_values,
+                        v_values,
+                    )
+                    first_velocity_fingerprints = velocity_fingerprints
+                velocity_components = _velocity_components(
+                    u_values,
+                    v_values,
+                    analysis.velocity_vectors,
+                )
 
             for window in extent_set.windows:
                 if window.faces.size == 0:
@@ -566,6 +597,13 @@ def plot_map2d_group(
                         data_fingerprints.append(first_reference_fingerprint)
                     if regrid_fingerprint is not None:
                         data_fingerprints.append(regrid_fingerprint)
+                    if velocity_fingerprints is not None:
+                        data_fingerprints.extend(velocity_fingerprints)
+                    if (
+                        analysis.velocity_vectors == "scaled"
+                        and first_velocity_fingerprints is not None
+                    ):
+                        data_fingerprints.extend(first_velocity_fingerprints)
                     if measurement is not None:
                         data_fingerprints.append(measurement.fingerprint)
                     fingerprint = fingerprint_artifact(
@@ -618,6 +656,19 @@ def plot_map2d_group(
                             report(f"WARNING: {decision.warning}")
                         continue
 
+                    velocity_scale = (
+                        None
+                        if velocity_components is None
+                        else _velocity_scale(
+                            analysis.velocity_vectors,
+                            first_velocity_reference or 0.0,
+                            _VELOCITY_ARROW_FRACTION
+                            * max(
+                                window.bounds[1] - window.bounds[0],
+                                window.bounds[3] - window.bounds[2],
+                            ),
+                        )
+                    )
                     if (
                         view is None
                         or view.window.fingerprint != window.fingerprint
@@ -638,8 +689,12 @@ def plot_map2d_group(
                             initial_limits=limits,
                             decorations=decorations,
                             measurement_panel=show_measurements,
+                            velocity_scale=velocity_scale,
                         )
                     view.update(map_values, limits=limits)
+                    if velocity_components is not None:
+                        u_arrows, v_arrows = velocity_components
+                        view.update_velocity(u_arrows, v_arrows)
                     view.axes.set_title(title)
                     measurement_label = label(
                         "measurement",
@@ -867,6 +922,60 @@ def _read_frame(frame: Map2DPlotFrame, variable: str) -> tuple[_FloatArray, str]
             f"Map2d cache variable {cache_variable!r} does not match {variable!r}.",
         )
     return values, fingerprint
+
+
+def _read_velocity_frame(
+    frame: Map2DPlotFrame,
+    n_faces: int,
+) -> tuple[_FloatArray, _FloatArray, tuple[str, str]]:
+    if frame.vector_paths is None:
+        raise Map2DPlotError(
+            "V-PLOT-002",
+            f"No velocity component caches are linked to {frame.path}.",
+        )
+    ucx_path, ucy_path = frame.vector_paths
+    u_values, u_fingerprint = _read_frame(
+        replace(frame, path=ucx_path),
+        VELOCITY_COMPONENT_VARIABLES[0],
+    )
+    v_values, v_fingerprint = _read_frame(
+        replace(frame, path=ucy_path),
+        VELOCITY_COMPONENT_VARIABLES[1],
+    )
+    for values, path in ((u_values, ucx_path), (v_values, ucy_path)):
+        if values.size != n_faces:
+            raise Map2DPlotError(
+                "V-PLOT-002",
+                f"Velocity cache has {values.size} values for {n_faces} "
+                f"grid faces: {path}.",
+            )
+    return u_values, v_values, (u_fingerprint, v_fingerprint)
+
+
+def _velocity_reference_speed(u_values: _FloatArray, v_values: _FloatArray) -> float:
+    speed = np.hypot(u_values, v_values)
+    finite_speed = speed[np.isfinite(speed)]
+    return float(finite_speed.max()) if finite_speed.size else 0.0
+
+
+def _velocity_components(
+    u_values: _FloatArray,
+    v_values: _FloatArray,
+    mode: str,
+) -> tuple[_FloatArray, _FloatArray]:
+    if mode == "scaled":
+        return u_values, v_values
+    speed = np.hypot(u_values, v_values)
+    direction_speed = np.where(speed > 0, speed, np.nan)
+    return u_values / direction_speed, v_values / direction_speed
+
+
+def _velocity_scale(mode: str, reference_speed: float, arrow_length: float) -> float:
+    """Return the quiver scale so that arrows have the intended length in data units."""
+    if mode == "scaled":
+        reference = reference_speed if reference_speed > 0 else 1.0
+        return reference / arrow_length
+    return 1.0 / arrow_length
 
 
 def _match_reference_frames(
