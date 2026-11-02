@@ -28,10 +28,22 @@ from d3dplot.variables.registry import (
     _build_registry,
     suggest_variable_names,
 )
+from d3dplot.variables.sampling import GridSampling, Sampling, SamplingPlan
 
 _Array = Any
 np: Any = import_module("numpy")
 _logger = logging.getLogger(__name__)
+
+_VERTICAL_INTERFACES_SPEC = VariableSpec(
+    name="vertical_interfaces",
+    kind=VariableKind.RAW,
+    aliases=(),
+    netcdf_candidates=("mesh2d_flowelem_zw",),
+    location=VariableLocation.FACE,
+    extra_dims=("nInterfaces",),
+    units="m",
+    label_key="elevation",
+)
 
 
 class QuantityReaderSession(Protocol):
@@ -72,6 +84,7 @@ class QuantityEngine:
         if specs is None and load_plugins:
             registered_specs += load_quantity_plugins()
         self._by_name, self._by_identifier = _build_registry(registered_specs)
+        self._sampling_plans: dict[str, SamplingPlan] = {}
 
     def at_time(
         self,
@@ -89,6 +102,19 @@ class QuantityEngine:
                 "Quantity context time does not match the selected map output."
             )
         return QuantityTimeSession(self, map_session, entry, context)
+
+    def sampling_plan(
+        self,
+        sampling: Sampling,
+        context: QuantityContext,
+    ) -> SamplingPlan:
+        """Prepare one sampling plan per engine and sampling fingerprint."""
+        fingerprint = sampling.fingerprint()
+        plan = self._sampling_plans.get(fingerprint)
+        if plan is None:
+            plan = sampling.prepare(context.grid_geometry, None)
+            self._sampling_plans[fingerprint] = plan
+        return plan
 
 
 class QuantityTimeSession:
@@ -129,6 +155,21 @@ class QuantityTimeSession:
             self._entry.local_index,
         )
         spec = self.resolve_spec(normalized_request)
+        if spec.location is VariableLocation.LINE and isinstance(
+            normalized_request.sampling, GridSampling
+        ):
+            raise QuantityEngineError(
+                ValidationIssue(
+                    code="V-VAR-006",
+                    level="error",
+                    location=spec.name,
+                    message=(
+                        f"Quantity {spec.name!r} requires line sampling, but "
+                        "GridSampling was requested."
+                    ),
+                    hint="Use a line sampling plan from a PRF analysis.",
+                )
+            )
         values = self._compute(
             spec,
             normalized_request,
@@ -137,6 +178,11 @@ class QuantityTimeSession:
         )
         if normalized_request.sum_fractions:
             values = _sum_fractions(values, spec)
+        plan = self._engine.sampling_plan(
+            normalized_request.sampling,
+            self._context,
+        )
+        values = normalized_request.sampling.apply(values, plan)
         result = np.asarray(values, dtype=np.float64)
         _logger.info(
             "Finished quantity evaluation: requested=%s; resolved=%s; "
@@ -357,6 +403,10 @@ class QuantityTimeSession:
         )
         return values
 
+    def vertical_interfaces(self) -> _Array:
+        """Read layer interfaces needed by vertical reductions."""
+        return self._read_raw(_VERTICAL_INTERFACES_SPEC, ("vertical_interfaces",))
+
     def _resolve_input_names(
         self,
         spec: VariableSpec,
@@ -566,6 +616,142 @@ def _select_values(
                 )
             )
         result = np.take(result, selected_indices, axis=axis)
+    if "nLayers" not in spec.extra_dims or request.vertical == "all":
+        return result
+
+    layer_axis = 1 + spec.extra_dims.index("nLayers")
+    if request.vertical == "top":
+        return np.take(result, 0, axis=layer_axis)
+    if request.vertical == "bottom":
+        return np.take(result, result.shape[layer_axis] - 1, axis=layer_axis)
+
+    interfaces = np.asarray(session.vertical_interfaces(), dtype=np.float64)
+    if interfaces.ndim != 2 or interfaces.shape[0] != result.shape[0]:
+        raise QuantityEngineError(
+            ValidationIssue(
+                code="V-VAR-004",
+                level="error",
+                location=f"sub-run {session._entry.subrun}",
+                message=(
+                    "Vertical interface coordinates do not match the face/layer "
+                    f"shape of {spec.name!r}."
+                ),
+                hint="Restore mesh2d_flowelem_zw with one interface per layer.",
+            )
+        )
+    if interfaces.shape[1] != result.shape[layer_axis] + 1:
+        raise QuantityEngineError(
+            ValidationIssue(
+                code="V-VAR-004",
+                level="error",
+                location=f"sub-run {session._entry.subrun}",
+                message=(
+                    f"Vertical interface count {interfaces.shape[1]} does not "
+                    f"match {result.shape[layer_axis]} layers."
+                ),
+                hint="Use compatible layer and interface dimensions.",
+            )
+        )
+    if request.vertical == "depth_average":
+        weights = np.abs(np.diff(interfaces, axis=1))
+        if request.z_range is not None:
+            low, high = request.z_range
+            lower = np.minimum(interfaces[:, :-1], interfaces[:, 1:])
+            upper = np.maximum(interfaces[:, :-1], interfaces[:, 1:])
+            weights = np.maximum(
+                0.0,
+                np.minimum(upper, high) - np.maximum(lower, low),
+            )
+        expanded_weights = weights
+        while expanded_weights.ndim < result.ndim:
+            expanded_weights = expanded_weights[..., np.newaxis]
+        valid = np.isfinite(result) & np.isfinite(expanded_weights)
+        weighted = np.where(valid, result * expanded_weights, 0.0)
+        denominator = np.sum(
+            np.where(valid, expanded_weights, 0.0),
+            axis=layer_axis,
+        )
+        numerator = np.sum(weighted, axis=layer_axis)
+        return np.divide(
+            numerator,
+            denominator,
+            out=np.full_like(numerator, np.nan, dtype=np.float64),
+            where=denominator > 0,
+        )
+    if request.vertical == "elevation":
+        if request.elevation is None:
+            raise QuantityEngineError(
+                ValidationIssue(
+                    code="V-CFG-001",
+                    level="error",
+                    location="vertical.elevation",
+                    message="An elevation value is required.",
+                    hint="Set vertical.elevation to a model elevation.",
+                )
+            )
+        return _interpolate_at_elevation(
+            result,
+            interfaces,
+            layer_axis=layer_axis,
+            elevation=request.elevation,
+        )
+    raise QuantityEngineError(
+        ValidationIssue(
+            code="V-CFG-001",
+            level="error",
+            location="vertical",
+            message=f"Unsupported vertical selection {request.vertical!r}.",
+            hint="Use all, top, bottom, depth_average, or elevation.",
+        )
+    )
+
+
+def _interpolate_at_elevation(
+    values: _Array,
+    interfaces: _Array,
+    *,
+    layer_axis: int,
+    elevation: float,
+) -> _Array:
+    """Interpolate layer-centred values at one elevation face by face."""
+    layer_values = np.moveaxis(np.asarray(values, dtype=np.float64), layer_axis, 1)
+    centres = 0.5 * (interfaces[:, :-1] + interfaces[:, 1:])
+    result = np.full(
+        (layer_values.shape[0], *layer_values.shape[2:]),
+        np.nan,
+        dtype=np.float64,
+    )
+    trailing_shape = layer_values.shape[2:]
+    columns = int(np.prod(trailing_shape, dtype=np.int64)) if trailing_shape else 1
+    flattened = layer_values.reshape(
+        layer_values.shape[0], layer_values.shape[1], columns
+    )
+    flattened_result = result.reshape(result.shape[0], columns)
+    for face in range(layer_values.shape[0]):
+        valid_z = np.isfinite(centres[face])
+        if not np.any(valid_z):
+            continue
+        z_values = centres[face, valid_z]
+        order = np.argsort(z_values)
+        z_values = z_values[order]
+        if elevation < z_values[0] or elevation > z_values[-1]:
+            continue
+        for column in range(columns):
+            column_values = flattened[face, valid_z, column][order]
+            valid_values = np.isfinite(column_values)
+            if not np.any(valid_values):
+                continue
+            z_column = z_values[valid_values]
+            values_column = column_values[valid_values]
+            if z_column.size == 1:
+                flattened_result[face, column] = values_column[0]
+            else:
+                flattened_result[face, column] = np.interp(
+                    elevation,
+                    z_column,
+                    values_column,
+                )
+    return result
     return result
 
 

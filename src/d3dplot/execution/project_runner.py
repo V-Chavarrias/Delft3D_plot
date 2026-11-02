@@ -26,7 +26,11 @@ from d3dplot.analyses.river_km_statistics.process import (
 )
 from d3dplot.config.analysis import AnalysisConfigBase, ProcessingPolicy
 from d3dplot.config.project import ProjectConfig, SimulationConfig
-from d3dplot.config.selections import LayersSelection
+from d3dplot.config.selections import (
+    DepthAverageSelection,
+    ElevationSelection,
+    LayersSelection,
+)
 from d3dplot.execution.cache import CacheFingerprintReadError
 from d3dplot.execution.diagnostics import DiagnosticLog
 from d3dplot.execution.orchestrator import run_process_stage
@@ -68,12 +72,40 @@ class _PreparedSimulation:
 
 
 def _quantity_requests(analysis: AnalysisConfigBase) -> tuple[QuantityRequest, ...]:
+    vertical: Literal[
+        "all",
+        "top",
+        "bottom",
+        "depth_average",
+        "elevation",
+    ]
     if analysis.vertical == "all":
         layers = None
+        vertical = "all"
+        z_range = None
+        elevation = None
     elif isinstance(analysis.vertical, LayersSelection):
         layers = tuple(analysis.vertical.layers)
+        vertical = "all"
+        z_range = None
+        elevation = None
+    elif analysis.vertical in {"top", "bottom"}:
+        layers = None
+        vertical = analysis.vertical
+        z_range = None
+        elevation = None
+    elif isinstance(analysis.vertical, DepthAverageSelection):
+        layers = None
+        vertical = "depth_average"
+        z_range = analysis.vertical.depth_average.z_range
+        elevation = None
+    elif isinstance(analysis.vertical, ElevationSelection):
+        layers = None
+        vertical = "elevation"
+        z_range = None
+        elevation = analysis.vertical.elevation
     else:
-        raise ValueError("Processing supports vertical: all or explicit layers.")
+        raise ValueError("Unsupported vertical selection.")
 
     fractions = None if analysis.fractions == "all" else tuple(analysis.fractions)
     return tuple(
@@ -86,6 +118,9 @@ def _quantity_requests(analysis: AnalysisConfigBase) -> tuple[QuantityRequest, .
                 active_sediment_thickness_threshold_m=(
                     analysis.active_sediment_thickness_threshold_m
                 ),
+                vertical=vertical,
+                z_range=z_range,
+                elevation=elevation,
             )
             for name in analysis.variables
         )

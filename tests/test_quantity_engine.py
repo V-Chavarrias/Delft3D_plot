@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -26,6 +26,7 @@ from d3dplot.variables.registry import (
     VariableLocation,
     VariableSpec,
 )
+from d3dplot.variables.sampling import SamplingPlan
 
 _TIME = datetime(2021, 1, 1, tzinfo=UTC)
 
@@ -64,6 +65,28 @@ class _MemoryMapSession:
             self._edge_orientation if spec.location is VariableLocation.EDGE else None
         )
         return MapReadResult(self._values[candidate], orientation, ())
+
+
+@dataclass(frozen=True, slots=True)
+class _FixedFaceSampling:
+    """Test sampling that retains a deterministic subset of global faces."""
+
+    indices: tuple[int, ...]
+    kind: str = "fixed_faces"
+
+    def fingerprint(self) -> str:
+        return "fixed-faces-" + "-".join(str(index) for index in self.indices)
+
+    def prepare(
+        self,
+        grid: GridGeometry | None,
+        merge_plan: object | None,
+    ) -> _FixedFaceSampling:
+        del grid, merge_plan
+        return self
+
+    def apply(self, values: Any, plan: SamplingPlan) -> Any:
+        return np.take(values, plan.indices, axis=0)
 
 
 def _entry(
@@ -110,6 +133,63 @@ def test_engine_resolves_aliases_and_reads_shared_dependencies_once() -> None:
         "water_depth": 1,
         "water_level": 1,
     }
+
+
+@pytest.mark.unit
+def test_engine_applies_sampling_after_global_quantity_computation() -> None:
+    session = _MemoryMapSession({"mesh2d_waterdepth": np.array([1.0, 2.0, 3.0])})
+    quantities = QuantityEngine().at_time(
+        session,
+        _entry(),
+        QuantityContext(),
+    )
+
+    selected = quantities.get(
+        QuantityRequest(
+            "water_depth",
+            sampling=_FixedFaceSampling((2, 0)),
+        )
+    )
+
+    np.testing.assert_allclose(selected, [3.0, 1.0])
+    assert session.read_counts == {"water_depth": 1}
+
+
+@pytest.mark.unit
+def test_engine_applies_thickness_weighted_depth_average() -> None:
+    layer_spec = VariableSpec(
+        name="layered_value",
+        kind=VariableKind.RAW,
+        aliases=(),
+        netcdf_candidates=("layered_value",),
+        location=VariableLocation.FACE,
+        extra_dims=("nLayers",),
+        units="1",
+        label_key="layered_value",
+    )
+    session = _MemoryMapSession(
+        {
+            "layered_value": np.array([[1.0, 3.0], [10.0, 20.0]]),
+            "mesh2d_flowelem_zw": np.array([[0.0, 2.0, 3.0], [0.0, 1.0, 3.0]]),
+        }
+    )
+    quantities = QuantityEngine(
+        specs=(layer_spec,),
+        load_plugins=False,
+    ).at_time(
+        session,
+        _entry(),
+        QuantityContext(),
+    )
+
+    selected = quantities.get(
+        QuantityRequest(
+            "layered_value",
+            vertical="depth_average",
+        )
+    )
+
+    np.testing.assert_allclose(selected, [5.0 / 3.0, 50.0 / 3.0])
 
 
 @pytest.mark.unit
