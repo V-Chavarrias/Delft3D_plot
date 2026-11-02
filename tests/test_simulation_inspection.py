@@ -354,6 +354,7 @@ def test_configured_time_zone_conflict_uses_map_offset(
 
     assert result is not None, report.to_text()
     assert "V-TIME-002" in {issue.code for issue in report.warnings}
+    assert "V-MDU-002" in {issue.code for issue in report.warnings}
     assert TimeAxis.from_cache(result.times_path).source_utc_offset == "+01:00"
 
 

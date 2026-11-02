@@ -1507,9 +1507,35 @@ def _prepare_time_axis(
             corrupt_by_partition[partition] = set(indices)
 
         calendar = time_series.calendar or "standard"
+        offset_hours = _timezone_hours(zone)
+        try:
+            map_origin = decode_cf_time(
+                0.0,
+                time_series.units,
+                calendar,
+                offset_hours,
+            )
+            refdate_text = str(subrun.mdu.refdate)
+            refdate = datetime.strptime(refdate_text, "%Y%m%d").date()
+        except (TypeError, ValueError):
+            map_origin = None
+            refdate = None
+        if map_origin is not None and refdate is not None:
+            if map_origin.date() != refdate:
+                issues.append(
+                    _issue(
+                        "V-MDU-002",
+                        "warning",
+                        subrun.mdu.mdu_path,
+                        (
+                            f"MDU RefDate {refdate.isoformat()} differs from the "
+                            f"map time-units origin {map_origin.date().isoformat()}."
+                        ),
+                        "Confirm that the map time origin is intentional.",
+                    )
+                )
         decoded_times: list[datetime | None] = []
         decode_error: str | None = None
-        offset_hours = _timezone_hours(zone)
         for local_index, value in enumerate(time_series.values):
             if (
                 local_index >= time_series.mask.size
