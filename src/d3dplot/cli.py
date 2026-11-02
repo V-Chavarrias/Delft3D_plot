@@ -20,7 +20,6 @@ import typer
 import yaml
 
 from d3dplot import __version__
-from d3dplot.analyses.m1d.config import M1DConfig
 from d3dplot.analyses.m1d.stage import plot_m1d_stage
 from d3dplot.analyses.map2d.plot import Map2DPlotError
 from d3dplot.analyses.registry import builtin_analysis_names
@@ -44,6 +43,10 @@ from d3dplot.config.io import (
 from d3dplot.config.project import ProjectConfig, SimulationConfig
 from d3dplot.config.selections import TimesConfig
 from d3dplot.execution.diagnostics import DiagnosticLog
+from d3dplot.execution.project import (
+    ProjectStageUnavailable,
+    run_native_project,
+)
 from d3dplot.execution.slurm import render_slurm_script
 from d3dplot.paths import resolve_path_preserving_drive
 from d3dplot.plotting.stage import (
@@ -978,9 +981,7 @@ def process(
 ) -> None:
     """Process configured quantities through the source-checkout stage bridge."""
     project = load_config(configuration)
-    if project.analyses and all(
-        isinstance(analysis, M1DConfig) for analysis in project.analyses
-    ):
+    if project.analyses:
         if executor == "slurm":
             typer.echo(
                 "The native M1D processor does not submit SLURM jobs; "
@@ -997,13 +998,17 @@ def process(
             overrides.append(f"execution.shard={shard}")
         if overrides:
             project = apply_overrides(project, overrides)
-        m1d_result = plot_m1d_stage(project)
-        typer.echo(
-            f"Native M1D processing finished: "
-            f"{len(m1d_result.output_paths)} figure(s) written, "
-            f"{len(m1d_result.reused_paths)} reused."
-        )
-        return
+        try:
+            native_result = run_native_project(project)
+        except ProjectStageUnavailable:
+            pass
+        else:
+            typer.echo(
+                f"Native processing finished: "
+                f"{len(native_result.output_paths)} figure(s) written, "
+                f"{len(native_result.reused_paths)} reused."
+            )
+            return
     helper = Path(__file__).resolve().parents[2] / "tools" / "process_project.py"
     if not helper.is_file():
         typer.echo(
