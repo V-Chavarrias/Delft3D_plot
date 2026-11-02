@@ -9,6 +9,7 @@ from pathlib import Path
 from d3dplot.model_input.mdu import MduInfo
 from d3dplot.model_input.morphology import MorphologyInfo, read_morphology
 from d3dplot.model_input.sediment import SedimentInfo, read_sediment
+from d3dplot.model_input.substance import SubstanceInfo, read_substance
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,6 +19,7 @@ class ModelInput:
     mdu: MduInfo
     morphology: MorphologyInfo | None
     sediment: SedimentInfo | None
+    substance: SubstanceInfo | None = None
 
 
 def read_model_input(path: Path) -> ModelInput:
@@ -25,4 +27,12 @@ def read_model_input(path: Path) -> ModelInput:
     mdu = MduInfo.from_path(path)
     morphology = read_morphology(mdu.mor_file) if mdu.mor_file is not None else None
     sediment = read_sediment(mdu.sed_file) if mdu.sed_file is not None else None
-    return ModelInput(mdu=mdu, morphology=morphology, sediment=sediment)
+    substance = (
+        read_substance(mdu.substance_file) if mdu.substance_file is not None else None
+    )
+    return ModelInput(
+        mdu=mdu,
+        morphology=morphology,
+        sediment=sediment,
+        substance=substance,
+    )

@@ -29,6 +29,7 @@ class QuantityContext:
     water_density_kg_m3: float = 1000.0
     sediment_diameters_m: tuple[float | None, ...] = ()
     sediment_densities_kg_m3: tuple[float | None, ...] = ()
+    decay_rates_s_1: tuple[float, ...] = ()
     dry_depth_m: float = 0.01
     grid_geometry: GridGeometry | None = None
     previous_water_level: _Array | None = None
@@ -72,6 +73,11 @@ class QuantityContext:
             sediment_diameters_m=tuple(item.effective_diameter_m for item in fractions),
             sediment_densities_kg_m3=tuple(
                 item.solid_density_kg_m3 for item in fractions
+            ),
+            decay_rates_s_1=(
+                model_input.substance.decay_rates_s_1
+                if model_input.substance is not None
+                else ()
             ),
             dry_depth_m=dry_depth_m,
             grid_geometry=grid_geometry,

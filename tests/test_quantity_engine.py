@@ -215,6 +215,32 @@ def test_engine_computes_layer_mean_velocity_and_chloride_mass() -> None:
 
 
 @pytest.mark.unit
+def test_engine_computes_residence_time_variants() -> None:
+    session = _MemoryMapSession(
+        {
+            "mesh2d_cTR1": np.array([[1.0, 1.0], [1.0, 1.0]]),
+            "mesh2d_dTR1": np.array(
+                [[np.exp(-0.2), np.exp(-0.4)], [np.exp(-0.1), np.exp(-0.3)]]
+            ),
+            "mesh2d_flowelem_zw": np.array([[0.0, 1.0, 3.0], [0.0, 2.0, 3.0]]),
+        }
+    )
+    quantities = QuantityEngine().at_time(
+        session,
+        _entry(),
+        QuantityContext(decay_rates_s_1=(0.1,)),
+    )
+
+    maximum = quantities.get("residence_time_max")
+    depth_average = quantities.get("residence_time_depth_average")
+    surface = quantities.get("residence_time_surface")
+
+    np.testing.assert_allclose(maximum, [4.0, 3.0])
+    np.testing.assert_allclose(depth_average, [10.0 / 3.0, 5.0 / 3.0])
+    np.testing.assert_allclose(surface, [4.0, 3.0])
+
+
+@pytest.mark.unit
 def test_missing_dependency_reports_quantity_chain_and_subrun() -> None:
     session = _MemoryMapSession(
         {"mesh2d_waterdepth": np.array([1.0])},

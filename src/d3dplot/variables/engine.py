@@ -518,6 +518,10 @@ class QuantityTimeSession:
             return bool(context.sediment_densities_kg_m3) and all(
                 value is not None for value in context.sediment_densities_kg_m3
             )
+        if requirement == "substance_file":
+            return bool(context.decay_rates_s_1)
+        if requirement == "decay_rate":
+            return bool(context.decay_rates_s_1)
         return False
 
     def _raise_missing(

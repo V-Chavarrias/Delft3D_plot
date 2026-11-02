@@ -40,6 +40,7 @@ class MduInfo:
     gravity: float
     water_density: float
     tzone_explicit: bool = False
+    substance_file: Path | None = None
 
     @classmethod
     def from_path(cls, path: Path) -> MduInfo:
@@ -85,6 +86,11 @@ class MduInfo:
             sed_file=_resolve_input_file(model.sediment.sedfile, base_dir),
             gravity=model.physics.ag,
             water_density=model.physics.rhomean,
+            substance_file=(
+                _resolve_input_file(model.processes.substancefile, base_dir)
+                if model.processes is not None
+                else None
+            ),
         )
 
 

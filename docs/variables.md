@@ -23,6 +23,8 @@ Registered computation callbacks run through the shared quantity engine.
 | `mean_grain_size_arithmetic` | derived | `dm` | - | face | `nBedLayers` | `m` | `dm` | `layer_fraction` | - | - | `sediment_diameters` | output | 1 |
 | `mean_grain_size_geometric` | derived | `dg` | - | face | `nBedLayers` | `m` | `dg` | `layer_fraction` | - | - | `sediment_diameters` | output | 1 |
 | `mean_grain_size_geometric_output` | raw | - | `mesh2d_dg` | face | - | `m` | `dg` | - | - | - | - | - | - |
+| `mesh2d_cTR1` | raw | - | `mesh2d_cTR1` | face | `nLayers` | `1` | `salinity` | - | - | - | - | - | - |
+| `mesh2d_dTR1` | raw | - | `mesh2d_dTR1` | face | `nLayers` | `1` | `salinity` | - | - | - | - | - | - |
 | `mesh2d_flowelem_zw` | raw | - | `mesh2d_flowelem_zw` | face | `nInterfaces` | `m` | `elevation` | - | - | - | - | - | - |
 | `mesh2d_hu` | raw | - | `mesh2d_hu` | edge | - | `m` | `depth` | - | - | - | - | - | - |
 | `mesh2d_s0` | raw | - | `mesh2d_s0` | face | - | `m` | `water_level` | - | - | - | - | - | - |
@@ -35,9 +37,9 @@ Registered computation callbacks run through the shared quantity engine.
 | `mesh2d_ucx` | raw | - | `mesh2d_ucx` | face | - | `m/s` | `velocity_vector` | - | - | - | - | - | - |
 | `mesh2d_ucy` | raw | - | `mesh2d_ucy` | face | - | `m/s` | `velocity_vector` | - | - | - | - | - | - |
 | `morphological_active_area` | derived | `ba_mor` | - | face | - | `m^2` | `morphodynamic_cell_area` | `cell_area`, `total_sediment_thickness` | - | - | - | inputs | 1 |
-| `residence_time_depth_average` | derived | `T_da` | - | face | - | `s` | `depth_average_residence_time` | `mesh2d_cTR<i>`, `mesh2d_dTR<i>`, `mesh2d_flowelem_zw` | - | - | `substance_file`, `decay_rate` | inputs | 1 |
-| `residence_time_max` | derived | `T_max` | - | face | - | `s` | `maximum_residence_time` | `mesh2d_cTR<i>`, `mesh2d_dTR<i>`, `mesh2d_flowelem_zw` | - | - | `substance_file`, `decay_rate` | inputs | 1 |
-| `residence_time_surface` | derived | `T_surf` | - | face | - | `s` | `surface_residence_time` | `mesh2d_cTR<i>`, `mesh2d_dTR<i>`, `mesh2d_flowelem_zw` | - | - | `substance_file`, `decay_rate` | inputs | 1 |
+| `residence_time_depth_average` | derived | `T_da` | - | face | - | `s` | `depth_average_residence_time` | `mesh2d_cTR1`, `mesh2d_dTR1`, `mesh2d_flowelem_zw` | - | - | `substance_file`, `decay_rate` | output | 1 |
+| `residence_time_max` | derived | `T_max` | - | face | - | `s` | `maximum_residence_time` | `mesh2d_cTR1`, `mesh2d_dTR1`, `mesh2d_flowelem_zw` | - | - | `substance_file`, `decay_rate` | output | 1 |
+| `residence_time_surface` | derived | `T_surf` | - | face | - | `s` | `surface_residence_time` | `mesh2d_cTR1`, `mesh2d_dTR1`, `mesh2d_flowelem_zw` | - | - | `substance_file`, `decay_rate` | output | 1 |
 | `sediment_transport_magnitude` | derived | `stot` | - | face | `nSedTot` | `m^2/s` | `sediment_transport_size_frac_L2T` | `mesh2d_sxtot`, `mesh2d_sytot` | - | - | - | output | 1 |
 | `sediment_transport_magnitude_sum` | derived | `stot_sum` | - | face | - | `m^2/s` | `total_sediment_transport_L2T` | `sediment_transport_magnitude` | - | - | - | inputs | 1 |
 | `shields_number_times_diameter` | derived | `ShieldsD` | - | face | `nSedTot` | `m` | `shieldsd` | - | - | `bed_shear_stress`; `velocity_magnitude` + `chezy` | `gravity`, `water_density`, `sediment_density`, `sediment_diameters` | output | 1 |
