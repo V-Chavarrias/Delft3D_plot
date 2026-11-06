@@ -2419,7 +2419,7 @@ Per D65, use generated local cases for development, automated tests, and perform
 | 5.2 | Implemented and locally validated on `feat/matlab-comparison`: coordinate-matched bed-level and derived-specific-discharge maps, plus all eight SMB statistics for both simulations; generated current-version references in a new local case without replacing the original |
 | 5.3 | Implemented and locally validated on `feat/slurm-stub`: guarded, single-node SLURM array-template generation (`slurm write`), write-free `--dry-run`, zero-based stable-shard mapping and user documentation. Submission and execution remain deferred; the template checks for the not-yet-integrated `d3dplot run` command and exits explicitly until it exists |
 | 5.4 | Implemented and locally validated on `feat/user-documentation`: user guide, reference index, Matlab migration guide, synthetic plot gallery, and three user-facing skills packaged under `d3dplot/skills/`; workspace developer skills remain separate |
-| 5.5 | Release v1.0 on **PyPI** as `delft3d-plot` (D44): locally implemented on `feat/pypi-release` with tag/version and changelog checks, sdist + wheel build, gated TestPyPI then PyPI Trusted Publishing, and a changelog-backed GitHub release. Requires WP 0.2 before publication |
+| 5.5 | Release v1.0 on **PyPI** as `delft3d-plot` (D44): tag-triggered GitHub Actions build of sdist + wheel, TestPyPI canary, final-version PyPI Trusted Publishing (OIDC; no tokens), and GitHub release with the matching changelog section. Locally implemented on `feat/pypi-release`; all publication jobs are gated by D84. **Not releasable until WP 0.2 is released**, the dependency minimum is updated, and the trusted-publisher environments are configured |
 
 ### 15.7 Later
 
