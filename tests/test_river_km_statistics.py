@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 from pydantic import ValidationError
@@ -19,6 +20,7 @@ from d3dplot.analyses.river_km_statistics.config import (
 from d3dplot.analyses.river_km_statistics.plot import (
     RiverKmStatisticsPlotError,
     StatisticCacheFrame,
+    _clear_profile_overlays,
     _comparison_values,
     _line_path,
     _plot_axis_times,
@@ -40,9 +42,11 @@ from d3dplot.analyses.river_km_statistics.process import (
     river_km_statistics_output_path,
     select_time_average_outputs,
 )
+from d3dplot.config.figure import FigureConfig
 from d3dplot.config.project import ProjectConfig
 from d3dplot.config.selections import TimesConfig
 from d3dplot.execution.tasks import AnalysisTimeSelection, plan_process_tasks
+from d3dplot.plotting.views.line import LineView
 from d3dplot.simulation.time_axis import TimeAxis, TimeEntry, TimeSelectionResult
 from d3dplot.store import OutputLayout, initialize_output_root
 from d3dplot.variables.context import QuantityRequest
@@ -139,7 +143,8 @@ def test_river_km_output_paths_use_canonical_variable_names(
     )
 
     assert cache_path.parents[1].name == canonical_name
-    assert figure_path.parents[1].name == canonical_name
+    assert figure_path.parents[2].name == canonical_name
+    assert figure_path.name == "all_times_l01.png"
 
 
 @pytest.mark.unit
@@ -170,7 +175,40 @@ def test_line_path_zero_pads_limit_index(
 
 
 @pytest.mark.unit
-def test_segment_statistics_use_componentwise_finite_masks_and_sample_std() -> None:
+def test_profile_template_clears_overlays_and_rescales_between_frames() -> None:
+    x = np.array([0.0, 1.0, 2.0])
+    view = LineView.create(
+        x,
+        np.array([[1.0, 2.0, 3.0]]),
+        ("model",),
+        display="lines",
+        figure_config=FigureConfig(),
+        x_label="x",
+        y_label="y",
+        title="first",
+        show_legend=True,
+        y_limits=(0.0, 20.0),
+    )
+    try:
+        lines_before_overlay = list(view.axes.lines)
+        view.axes.plot([0.0, 2.0], [10.0, 12.0], label="measured")
+        view.axes.legend()
+        overlay_lines = [
+            line for line in view.axes.lines if line not in lines_before_overlay
+        ]
+        _clear_profile_overlays(view, overlay_lines, None, (0.0, 20.0))
+        assert list(view.axes.lines) == list(view.artists)
+        assert view.axes.get_legend() is None
+        assert view.axes.get_autoscalex_on()
+        assert not view.axes.get_autoscaley_on()
+
+        view.update(x, np.array([[4.0, 5.0, 6.0]]), title="second")
+        assert view.axes.get_title() == "second"
+        assert view.axes.get_xlim()[1] >= 2.0
+        assert view.axes.get_ylim() == (0.0, 20.0)
+    finally:
+        plt.close(view.figure)
+
     result = compute_segment_statistics(
         values=[[1.0, 10.0], [3.0, np.nan], [np.inf, 30.0], [5.0, 50.0]],
         segment_index=[0, 0, 1, 1],

@@ -71,10 +71,9 @@ from d3dplot.store import (
 )
 from d3dplot.store.paths import (
     OutputArea,
-    build_output_path,
     build_quantity_output_path,
 )
-from d3dplot.variables.registry import canonical_variable_name, get_variable_spec
+from d3dplot.variables.registry import get_variable_spec
 
 _Array = Any
 np: Any = import_module("numpy")
@@ -1343,14 +1342,10 @@ def _figure_path(
     color_index: int,
     extent_index: int,
 ) -> Path:
-    safe_variable = quote(canonical_variable_name(variable), safe="-_.")
     timestamp = time.strftime("%Y%m%dT%H%M%S")
     if time.microsecond:
         timestamp += f".{time.microsecond:06d}"
-    filename = (
-        f"{safe_variable}_{comparison}_{timestamp}_c{color_index + 1}"
-        f"_e{extent_index + 1}.png"
-    )
+    filename = f"{timestamp}_c{color_index + 1}_e{extent_index + 1}.png"
     prefix: tuple[str, ...] = (series, "map2d", comparison)
     if "_simulation" in comparison or subject == "all_simulations":
         prefix += (quote(subject, safe="-_."),)
@@ -1372,14 +1367,17 @@ def _movie_path(
     color_index: int,
     extent_index: int,
 ) -> Path:
-    safe_variable = quote(canonical_variable_name(variable), safe="-_.")
-    filename = (
-        f"{safe_variable}_{comparison}_c{color_index + 1}_e{extent_index + 1}.mp4"
-    )
+    filename = f"movie_c{color_index + 1}_e{extent_index + 1}.mp4"
     parts: tuple[str, ...] = (series, "map2d", comparison)
     if "_simulation" in comparison or subject == "all_simulations":
         parts += (quote(subject, safe="-_."),)
-    return build_output_path(layout, OutputArea.FIGURES, *parts, filename)
+    return build_quantity_output_path(
+        layout,
+        OutputArea.FIGURES,
+        variable,
+        prefix=parts,
+        filename=filename,
+    )
 
 
 def _config_fingerprint(project: ProjectConfig, analysis: Map2DConfig) -> str:

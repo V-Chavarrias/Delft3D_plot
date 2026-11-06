@@ -7,6 +7,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote
 
 import netCDF4
 import numpy as np
@@ -813,13 +814,17 @@ def _figure_path(
     *,
     limit_index: int = 0,
 ) -> Path:
-    filename = f"{view}_{comparison}_{time:%Y%m%dT%H%M%S}_l{limit_index + 1:02d}.png"
+    filename = f"{time:%Y%m%dT%H%M%S}_l{limit_index + 1:02d}.png"
     return build_quantity_output_path(
         layout,
         OutputArea.FIGURES,
         variable,
         prefix=(f"analysis-{analysis_index}-m1d", simulation.label),
-        suffix=(chain_name,),
+        suffix=(
+            chain_name,
+            quote(comparison, safe="-_."),
+            quote(view, safe="-_."),
+        ),
         filename=filename,
     )
 

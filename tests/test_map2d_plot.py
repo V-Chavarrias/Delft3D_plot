@@ -103,8 +103,9 @@ def test_map2d_figure_and_movie_paths_use_canonical_names(
     )
 
     assert figure_path.parent.name == canonical_name
-    assert figure_path.name.startswith(f"{canonical_name}_")
-    assert movie_path.name.startswith(f"{canonical_name}_")
+    assert figure_path.name == "20210101T000000_c1_e1.png"
+    assert movie_path.parent.name == canonical_name
+    assert movie_path.name == "movie_c1_e1.mp4"
 
 
 def _capture_plot_state(figure: Any, context: Any) -> None:
