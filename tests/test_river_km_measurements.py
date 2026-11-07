@@ -430,6 +430,25 @@ def test_v73_and_malformed_mat_files_have_stable_validation_codes(
 
 
 @pytest.mark.unit
+def test_missing_profile_variables_have_stable_validation_code(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "partial_measurements.mat"
+    _write_mat(source)
+    layout, guard = _root(tmp_path)
+
+    with pytest.raises(ProfileMeasurementError) as error:
+        load_profile_measurements(
+            source,
+            ["bed_level", "mean_grain_size_geometric"],
+            time_zone="+00:00",
+            layout=layout,
+            guard=guard,
+        )
+    assert error.value.code == "V-MEA-005"
+
+
+@pytest.mark.unit
 def test_measurements_convert_cli_creates_guarded_netcdf_files(
     tmp_path: Path,
 ) -> None:

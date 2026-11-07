@@ -44,6 +44,9 @@ class UgridGrid(Protocol):
     def face_node_connectivity(self) -> _Array: ...
 
     @property
+    def face_coordinates(self) -> _Array: ...
+
+    @property
     def node_coordinates(self) -> _Array: ...
 
     @property

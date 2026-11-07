@@ -13,6 +13,7 @@ import pytest
 import rasterio
 import xarray as xr
 import xugrid as xu
+from matplotlib.quiver import Quiver
 from PIL import Image
 from rasterio.transform import from_origin
 
@@ -24,11 +25,16 @@ from d3dplot.analyses.map2d.plot import (
     Map2DPlotFrame,
     Map2DPlotSource,
     _figure_path,
+    _mask_values_outside_range,
     _movie_path,
+    _velocity_components,
+    _velocity_reference_speed,
+    _velocity_scale,
     plot_map2d_group,
 )
 from d3dplot.config.project import ProjectConfig
 from d3dplot.config.selections import TimesConfig
+from d3dplot.execution.project_runner import _quantity_requests
 from d3dplot.plotting.views.decorations import _clip_line
 from d3dplot.store import (
     OutputLayout,
@@ -47,6 +53,21 @@ _HOOK_MAP_TEXTS: list[tuple[str, ...]] = []
 _HOOK_MEASUREMENT_AXES: list[bool] = []
 _HOOK_SHARED_MEASUREMENT_LIMITS: list[tuple[float, float, float, float] | None] = []
 _HOOK_MAP_APPEARANCES: list[tuple[str, str]] = []
+_HOOK_QUIVERS: list[tuple[float, tuple[float, ...], tuple[float, ...]]] = []
+
+
+@pytest.mark.unit
+def test_mask_values_outside_range_sets_nan_and_counts_without_mutating_input() -> None:
+    values = np.array([0.5, 1.0, 2.0, 3.0, np.nan])
+    masked, count = _mask_values_outside_range(values, (1.0, 2.5))
+    np.testing.assert_array_equal(masked[:2], [np.nan, 1.0])
+    np.testing.assert_array_equal(masked[2:4], [2.0, np.nan])
+    assert np.isnan(masked[4])
+    assert count == 2
+    assert values[0] == 0.5
+    open_ended, open_count = _mask_values_outside_range(values, (None, 2.0))
+    assert open_count == 1
+    np.testing.assert_array_equal(open_ended[1:3], [1.0, 2.0])
 
 
 @pytest.mark.unit
@@ -82,8 +103,9 @@ def test_map2d_figure_and_movie_paths_use_canonical_names(
     )
 
     assert figure_path.parent.name == canonical_name
-    assert figure_path.name.startswith(f"{canonical_name}_")
-    assert movie_path.name.startswith(f"{canonical_name}_")
+    assert figure_path.name == "20210101T000000_c1_e1.png"
+    assert movie_path.parent.name == canonical_name
+    assert movie_path.name == "movie_c1_e1.mp4"
 
 
 def _capture_plot_state(figure: Any, context: Any) -> None:
@@ -143,6 +165,22 @@ def _capture_map_appearance(figure: Any, context: Any) -> None:
     )
 
 
+def _capture_quiver(figure: Any, context: Any) -> None:
+    axes = context.axes["model"]
+    for artist in axes.collections:
+        if isinstance(artist, Quiver):
+            hidden = np.broadcast_to(
+                np.asarray(artist.Umask, dtype=bool), artist.U.shape
+            )
+            _HOOK_QUIVERS.append(
+                (
+                    float(artist.scale),
+                    tuple(np.where(hidden, np.nan, artist.U).tolist()),
+                    tuple(np.where(hidden, np.nan, artist.V).tolist()),
+                )
+            )
+
+
 def _project_and_source(
     tmp_path: Path,
     *,
@@ -157,6 +195,7 @@ def _project_and_source(
     hooks: list[str] | None = None,
     with_hook: bool = False,
     grid_faces: int = 2,
+    velocity: tuple[tuple[tuple[float, ...], tuple[float, ...]], ...] | None = None,
 ) -> tuple[ProjectConfig, Map2DConfig, Map2DPlotSource]:
     layout = OutputLayout(tmp_path / "output")
     guard = initialize_output_root(
@@ -170,6 +209,11 @@ def _project_and_source(
             match_key=f"time-{index}",
             time=datetime(2021, 1, index + 1, tzinfo=UTC),
             path=_write_frame(layout, guard, index, frame_values, variable=variable),
+            vector_paths=(
+                None
+                if velocity is None
+                else _write_velocity_frame(layout, guard, index, velocity[index])
+            ),
         )
         for index, frame_values in enumerate(values)
     )
@@ -245,16 +289,44 @@ def _write_frame(
     values: tuple[float, ...],
     *,
     variable: str = "water_depth",
+    suffix: str = "",
 ) -> Path:
-    path = layout.cache_data / "plot-fixtures" / f"frame-{index}.nc"
+    path = layout.cache_data / "plot-fixtures" / f"frame-{index}{suffix}.nc"
     with atomic_path(path, guard) as temporary:
         with netCDF4.Dataset(temporary, mode="w") as dataset:
             dataset.createDimension("face", len(values))
             stored = dataset.createVariable("values", "f8", ("face",))
             stored[:] = values
-            dataset.d3dplot_fingerprint = f"frame-{index}-fingerprint"
+            dataset.d3dplot_fingerprint = f"frame-{index}{suffix}-fingerprint"
             dataset.variable = variable
     return path
+
+
+def _write_velocity_frame(
+    layout: OutputLayout,
+    guard: OutputWriteGuard,
+    index: int,
+    components: tuple[tuple[float, ...], tuple[float, ...]],
+) -> tuple[Path, Path]:
+    u_values, v_values = components
+    return (
+        _write_frame(
+            layout,
+            guard,
+            index,
+            u_values,
+            variable="mesh2d_ucx",
+            suffix="-ucx",
+        ),
+        _write_frame(
+            layout,
+            guard,
+            index,
+            v_values,
+            variable="mesh2d_ucy",
+            suffix="-ucy",
+        ),
+    )
 
 
 def _write_ldb(path: Path) -> Path:
@@ -351,6 +423,132 @@ def test_plot_map2d_is_pixel_identical_when_fresh(
                 first_pixels[path],
             )
             assert image.info["figure_fingerprint"]
+
+
+@pytest.mark.unit
+def test_plot_map2d_masks_values_outside_mask_range_and_reports_count(
+    tmp_path: Path,
+) -> None:
+    project, analysis, source = _project_and_source(
+        tmp_path,
+        values=((1.0, 2.0), (3.0, 4.0)),
+    )
+    analysis.mask_range["water_depth"] = (1.5, 3.5)
+    result = plot_map2d_group(
+        project,
+        analysis,
+        source,
+        "water_depth",
+        "value",
+        fresh_figures=True,
+    )
+    assert len(result.output_paths) == 2
+    masked_messages = [
+        message
+        for message in result.messages
+        if "Masked 1 values of 'water_depth'" in message
+    ]
+    assert len(masked_messages) == 2
+
+
+@pytest.mark.unit
+def test_velocity_helpers_keep_reference_speed_at_arrow_length() -> None:
+    assert _velocity_reference_speed(
+        np.array([3.0, np.nan]), np.array([4.0, 0.0])
+    ) == pytest.approx(5.0)
+    assert _velocity_scale("scaled", 5.0, 0.5) == pytest.approx(10.0)
+    assert _velocity_scale("scaled", 0.0, 0.5) == pytest.approx(2.0)
+    assert _velocity_scale("normalized", 5.0, 0.5) == pytest.approx(2.0)
+
+
+@pytest.mark.unit
+def test_velocity_components_normalize_and_hide_still_water() -> None:
+    u_arrows, v_arrows = _velocity_components(
+        np.array([3.0, 0.0]), np.array([4.0, 0.0]), "normalized"
+    )
+    assert u_arrows[0] == pytest.approx(0.6)
+    assert v_arrows[0] == pytest.approx(0.8)
+    assert np.isnan(u_arrows[1]) and np.isnan(v_arrows[1])
+    scaled_u, scaled_v = _velocity_components(
+        np.array([3.0, 0.0]), np.array([4.0, 0.0]), "scaled"
+    )
+    np.testing.assert_array_equal(scaled_u, [3.0, 0.0])
+    np.testing.assert_array_equal(scaled_v, [4.0, 0.0])
+
+
+@pytest.mark.unit
+def test_velocity_components_are_requested_only_for_vector_overlays() -> None:
+    analysis = Map2DConfig.model_validate(
+        {"analysis": "map2d", "variables": ["water_depth"]}
+    )
+    assert [request.requested_name for request in _quantity_requests(analysis)] == [
+        "water_depth"
+    ]
+    analysis.velocity_vectors = "normalized"
+    assert [request.requested_name for request in _quantity_requests(analysis)] == [
+        "water_depth",
+        "mesh2d_ucx",
+        "mesh2d_ucy",
+    ]
+
+
+@pytest.mark.unit
+def test_plot_map2d_scaled_velocity_arrows_use_one_fixed_scale(tmp_path: Path) -> None:
+    _HOOK_QUIVERS.clear()
+    project, analysis, source = _project_and_source(
+        tmp_path,
+        values=((1.0, 2.0), (1.0, 2.0)),
+        hooks=[f"{__name__}:_capture_quiver"],
+        velocity=(
+            ((3.0, 0.0), (4.0, 0.0)),
+            ((6.0, 0.0), (8.0, 0.0)),
+        ),
+    )
+    analysis.velocity_vectors = "scaled"
+    result = plot_map2d_group(
+        project,
+        analysis,
+        source,
+        "water_depth",
+        "value",
+        fresh_figures=True,
+    )
+    assert len(result.output_paths) == 2
+    assert len(_HOOK_QUIVERS) == 2
+    first_scale, first_u, first_v = _HOOK_QUIVERS[0]
+    second_scale, second_u, second_v = _HOOK_QUIVERS[1]
+    assert second_scale == pytest.approx(first_scale)
+    np.testing.assert_allclose(first_u, [3.0, 0.0])
+    np.testing.assert_allclose(first_v, [4.0, 0.0])
+    first_lengths = np.hypot(first_u, first_v) / first_scale
+    second_lengths = np.hypot(second_u, second_v) / second_scale
+    np.testing.assert_allclose(second_lengths, 2.0 * first_lengths)
+
+
+@pytest.mark.unit
+def test_plot_map2d_normalized_velocity_arrows_show_direction_only(
+    tmp_path: Path,
+) -> None:
+    _HOOK_QUIVERS.clear()
+    project, analysis, source = _project_and_source(
+        tmp_path,
+        values=((1.0, 2.0),),
+        hooks=[f"{__name__}:_capture_quiver"],
+        velocity=(((3.0, 0.0), (4.0, 0.0)),),
+    )
+    analysis.velocity_vectors = "normalized"
+    plot_map2d_group(
+        project,
+        analysis,
+        source,
+        "water_depth",
+        "value",
+        fresh_figures=True,
+    )
+    assert len(_HOOK_QUIVERS) == 1
+    _, u_arrows, v_arrows = _HOOK_QUIVERS[0]
+    assert np.hypot(u_arrows[0], v_arrows[0]) == pytest.approx(1.0)
+    assert np.isnan(u_arrows[1]) and np.isnan(v_arrows[1])
 
 
 @pytest.mark.unit
@@ -798,6 +996,51 @@ def test_map2d_invalid_overlay_inputs_have_stable_validation_codes(
     with pytest.raises(Map2DPlotError) as error:
         plot_map2d_group(project, analysis, source, "water_depth", "value")
     assert error.value.code == "V-RKM-001"
+
+
+@pytest.mark.unit
+def test_map2d_rejects_non_face_variables_and_missing_reference(
+    tmp_path: Path,
+) -> None:
+    project, analysis, source = _project_and_source(
+        tmp_path / "edge-variable",
+        values=((1.0, 2.0),),
+        variable="mesh2d_u1",
+    )
+    with pytest.raises(Map2DPlotError) as error:
+        plot_map2d_group(project, analysis, source, "mesh2d_u1", "value")
+    assert error.value.code == "V-PLOT-003"
+
+    project, analysis, source = _project_and_source(
+        tmp_path / "missing-reference",
+        values=((1.0, 2.0),),
+    )
+    with pytest.raises(Map2DPlotError) as error:
+        plot_map2d_group(
+            project,
+            analysis,
+            source,
+            "water_depth",
+            "difference_simulation",
+        )
+    assert error.value.code == "V-PLOT-003"
+
+
+@pytest.mark.unit
+def test_map2d_invalid_figure_hook_has_stable_validation_code(
+    tmp_path: Path,
+) -> None:
+    for index, hook in enumerate(
+        ("hook_without_separator", "d3dplot_missing_module_for_test:hook")
+    ):
+        project, analysis, source = _project_and_source(
+            tmp_path / f"invalid-hook-{index}",
+            values=((1.0, 2.0),),
+            hooks=[hook],
+        )
+        with pytest.raises(Map2DPlotError) as error:
+            plot_map2d_group(project, analysis, source, "water_depth", "value")
+        assert error.value.code == "V-HOOK-001"
 
 
 @pytest.mark.unit

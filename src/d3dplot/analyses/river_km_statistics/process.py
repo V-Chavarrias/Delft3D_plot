@@ -1017,6 +1017,122 @@ def river_km_statistics_output_path(
     )
 
 
+def _river_km_statistics_cache_identity(
+    layout: OutputLayout,
+    config: RiverKmStatisticsConfig,
+    prepared: PreparedRegionSegments,
+    request: QuantityRequest,
+    spec: VariableSpec,
+    entry: TimeEntry,
+    plan_index: int,
+    input_fingerprints: Sequence[str],
+    *,
+    dtype: Literal["float32", "float64"],
+    fraction_grouping: FractionGroupingConfig | None,
+    fraction_diameters_m: Sequence[float | None],
+    component_grouping: str | None,
+) -> tuple[Path, str, dict[str, object]]:
+    """Return one river-km output path, fingerprint, and serialized parameters."""
+    output_path = river_km_statistics_output_path(
+        layout,
+        prepared.region_name,
+        prepared.km_set_name,
+        spec.name,
+        request,
+        entry,
+        component_grouping=component_grouping,
+    )
+    parameters: dict[str, object] = {
+        "analysis": "river_km_statistics",
+        "region": prepared.region_name,
+        "km_set": prepared.km_set_name,
+        "variable": spec.name,
+        "quantity_version": spec.version,
+        "requested_name": canonical_variable_name(request.requested_name),
+        "fractions": list(request.fractions) if request.fractions is not None else None,
+        "layers": list(request.layers) if request.layers is not None else None,
+        "sum_fractions": request.sum_fractions,
+        "active_sediment_thickness_threshold_m": (
+            request.active_sediment_thickness_threshold_m
+        ),
+        "analysis_active_sediment_thickness_threshold_m": (
+            config.active_sediment_thickness_threshold_m
+        ),
+        "statistics": list(config.statistics),
+        "multiply_by_width": config.multiply_by_width,
+        "fraction_grouping": (
+            {
+                "variables": list(fraction_grouping.variables),
+                "limits_m": list(fraction_grouping.limits_m),
+                "labels": list(fraction_grouping.labels),
+                "component_diameters_m": list(fraction_diameters_m),
+            }
+            if fraction_grouping is not None
+            else None
+        ),
+        "dtype": dtype,
+        "plan": plan_index,
+        "subrun": entry.subrun,
+        "local_index": entry.local_index,
+        "morphological_time": (
+            entry.morph_time.astimezone(UTC).isoformat()
+            if entry.morph_time is not None
+            else None
+        ),
+    }
+    fingerprint = fingerprint_artifact(
+        kind="river_km_statistics_data",
+        schema_version=CACHE_SCHEMA_VERSION,
+        tool_version=__version__,
+        algorithm_version="1",
+        parameters=parameters,
+        inputs=(*input_fingerprints, prepared.fingerprint),
+        time=entry.time.astimezone(UTC).isoformat(),
+    )
+    return output_path, fingerprint, parameters
+
+
+def river_km_statistics_cache_identity(
+    layout: OutputLayout,
+    config: RiverKmStatisticsConfig,
+    prepared: PreparedRegionSegments,
+    request: QuantityRequest,
+    spec: VariableSpec,
+    entry: TimeEntry,
+    plan_index: int,
+    input_fingerprints: Sequence[str],
+    *,
+    dtype: Literal["float32", "float64"],
+    fraction_diameters_m: Sequence[float | None] = (),
+) -> tuple[Path, str, dict[str, object]]:
+    """Resolve grouping settings and return one river-km cache identity."""
+    (
+        fraction_grouping,
+        selected_diameters_m,
+        _,
+        component_grouping,
+    ) = _fraction_grouping_details(
+        config,
+        request,
+        spec,
+        fraction_diameters_m,
+    )
+    return _river_km_statistics_cache_identity(
+        layout,
+        config,
+        prepared,
+        request,
+        spec,
+        entry,
+        plan_index,
+        input_fingerprints,
+        dtype=dtype,
+        fraction_grouping=fraction_grouping,
+        fraction_diameters_m=selected_diameters_m,
+        component_grouping=component_grouping,
+    )
+
+
 def component_labels(
     spec: VariableSpec,
     request: QuantityRequest,
@@ -1096,6 +1212,7 @@ def _write_segment_statistics_file(
     path: Path,
     guard: OutputWriteGuard,
     *,
+    layout: OutputLayout,
     config: RiverKmStatisticsConfig,
     prepared: PreparedRegionSegments,
     request: QuantityRequest,
@@ -1169,53 +1286,22 @@ def _write_segment_statistics_file(
     elif data.ndim == 1:
         statistic_values = statistic_values[:, :, 0]
 
-    parameters: dict[str, object] = {
-        "analysis": "river_km_statistics",
-        "region": prepared.region_name,
-        "km_set": prepared.km_set_name,
-        "variable": spec.name,
-        "quantity_version": spec.version,
-        "requested_name": canonical_variable_name(request.requested_name),
-        "fractions": list(request.fractions) if request.fractions is not None else None,
-        "layers": list(request.layers) if request.layers is not None else None,
-        "sum_fractions": request.sum_fractions,
-        "active_sediment_thickness_threshold_m": (
-            request.active_sediment_thickness_threshold_m
-        ),
-        "analysis_active_sediment_thickness_threshold_m": (
-            config.active_sediment_thickness_threshold_m
-        ),
-        "statistics": list(config.statistics),
-        "multiply_by_width": config.multiply_by_width,
-        "fraction_grouping": (
-            {
-                "variables": list(fraction_grouping.variables),
-                "limits_m": list(fraction_grouping.limits_m),
-                "labels": list(fraction_grouping.labels),
-                "component_diameters_m": list(fraction_diameters_m),
-            }
-            if fraction_grouping is not None
-            else None
-        ),
-        "dtype": dtype,
-        "plan": plan_index,
-        "subrun": entry.subrun,
-        "local_index": entry.local_index,
-        "morphological_time": (
-            entry.morph_time.astimezone(UTC).isoformat()
-            if entry.morph_time is not None
-            else None
-        ),
-    }
-    fingerprint = fingerprint_artifact(
-        kind="river_km_statistics_data",
-        schema_version=CACHE_SCHEMA_VERSION,
-        tool_version=__version__,
-        algorithm_version="1",
-        parameters=parameters,
-        inputs=(*input_fingerprints, prepared.fingerprint),
-        time=entry.time.astimezone(UTC).isoformat(),
+    expected_path, fingerprint, parameters = _river_km_statistics_cache_identity(
+        layout,
+        config,
+        prepared,
+        request,
+        spec,
+        entry,
+        plan_index,
+        input_fingerprints,
+        dtype=dtype,
+        fraction_grouping=fraction_grouping,
+        fraction_diameters_m=fraction_diameters_m,
+        component_grouping=component_grouping,
     )
+    if path != expected_path:
+        raise ValueError("River-km output path does not match its cache identity.")
     stored_values = np.asarray(statistic_values, dtype=np.dtype(dtype))
     relative_grid_path = os.path.relpath(grid_path, path.parent).replace("\\", "/")
     current_time = entry.time.astimezone(UTC)
@@ -1399,6 +1485,7 @@ def write_segment_statistics_cache(
     return _write_segment_statistics_file(
         path,
         guard,
+        layout=layout,
         config=config,
         prepared=prepared,
         request=request,

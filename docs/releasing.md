@@ -1,0 +1,49 @@
+# Maintainer release guide
+
+The release workflow is intentionally inert for publishing until the repository
+variable `D3DPLOT_RELEASES_ENABLED` is set to `true`. **Do not enable it or
+publish a release until WP 0.2 is complete:** the required HYDROLIB-core changes
+are still local and unreleased ([upstream status](./upstream.md)).
+
+## One-time GitHub and PyPI setup
+
+1. Create GitHub environments named `testpypi` and `pypi`. Add required
+   reviewers or other protection rules appropriate for publishing.
+2. Configure a Trusted Publisher for the `delft3d-plot` project on TestPyPI:
+   GitHub owner/repository `V-Chavarrias/Delft3D_plot`, workflow
+   `.github/workflows/release.yml`, environment `testpypi`.
+3. Configure the corresponding Trusted Publisher on PyPI with the same
+   repository and workflow, and environment `pypi`.
+4. Keep publishing credentials out of GitHub secrets. The workflow uses
+   GitHub's OIDC identity token and the PyPA publishing action.
+5. After WP 0.2 is released and the package's HYDROLIB-core minimum is updated
+   to that release, set the repository variable
+   `D3DPLOT_RELEASES_ENABLED` to `true`.
+
+The workflow builds an sdist and wheel for every `v*` tag and checks that the
+tag matches `project.version` in `pyproject.toml`. A prerelease tag (for example
+`v1.0.0rc1`) publishes only to TestPyPI. A final `vX.Y.Z` tag publishes to
+TestPyPI first, then PyPI, and creates a GitHub release using that version's
+`CHANGELOG.md` section. The TestPyPI upload is a real prerelease publication,
+not a no-upload dry run; install and smoke-test it from TestPyPI before tagging
+the final version.
+
+## Release procedure
+
+1. Confirm CI and the strict documentation build pass on the release commit.
+   Verify all release prerequisites in the architecture plan, especially WP
+   0.2 and the current [upstream contribution status](./upstream.md).
+2. Use Commitizen to bump the package version and generate its changelog entry.
+   For a release candidate, use `uv run cz bump --prerelease rc`; for the final
+   release, use the intended version explicitly, for example
+   `uv run cz bump 1.0.0`. Review the generated commit, changelog, and tag.
+3. Push the release commit and its tag. The tag starts the workflow; no package
+   is published from a branch or pull request.
+4. For a release candidate, install the package from TestPyPI in a clean
+   environment and verify its import and CLI before proceeding. The final-tag
+   workflow also publishes to TestPyPI before attempting PyPI publication.
+5. For a final version, confirm the `pypi` environment approval and check the
+   resulting GitHub release and PyPI page.
+
+If publishing is not yet enabled, tag workflows build and retain the
+distributions but skip all publishing and GitHub-release jobs.

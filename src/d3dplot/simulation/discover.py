@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import StrEnum
@@ -110,6 +111,8 @@ def discover_simulation(
         if subrun is not None:
             subruns.append(subrun)
 
+    issues.extend(_path_length_issues(subruns))
+
     if kind is SimulationKind.SMT:
         issues.extend(_check_partition_counts(root, subruns))
 
@@ -117,6 +120,32 @@ def discover_simulation(
     if not report.is_valid or not subruns:
         return None, report
     return Simulation(root=root, kind=kind, subruns=tuple(subruns)), report
+
+
+def _path_length_issues(subruns: Sequence[SubRun]) -> tuple[ValidationIssue, ...]:
+    """Warn when discovered model-output paths exceed the Windows safe limit."""
+    issues: list[ValidationIssue] = []
+    for subrun in subruns:
+        for map_file in subrun.map_files:
+            path_length = len(str(map_file))
+            if path_length <= 240:
+                continue
+            issues.append(
+                ValidationIssue(
+                    code="V-OUT-040",
+                    level="warning",
+                    location=str(map_file),
+                    message=(
+                        f"Model-output path is {path_length} characters long; "
+                        "Windows NetCDF/HDF5 access may exceed MAX_PATH."
+                    ),
+                    hint=(
+                        "Use a shorter simulation/output path or a drive "
+                        "mapping before processing."
+                    ),
+                )
+            )
+    return tuple(issues)
 
 
 def _discover_subruns(

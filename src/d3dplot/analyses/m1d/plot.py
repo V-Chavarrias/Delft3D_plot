@@ -41,7 +41,7 @@ def comparison_values(
         baseline = data[0] if initial_values is None else np.asarray(initial_values)
         if baseline.shape != data.shape[1:]:
             raise M1DProcessError("M1D initial values do not match coordinates.")
-        return data - baseline[np.newaxis, :]
+        return np.asarray(data - baseline[np.newaxis, :], dtype=np.float64)
     if reference_values is None:
         raise M1DProcessError("M1D simulation differences require reference values.")
     reference = np.asarray(reference_values, dtype=np.float64)

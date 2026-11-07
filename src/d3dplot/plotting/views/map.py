@@ -17,6 +17,7 @@ from matplotlib.collections import PolyCollection
 from matplotlib.colorbar import Colorbar
 from matplotlib.figure import Figure
 from matplotlib.image import AxesImage
+from matplotlib.quiver import Quiver
 
 from d3dplot.config.figure import Extent, FigureConfig, MapViewConfig
 from d3dplot.plotting.views.decorations import MapDecorations
@@ -54,6 +55,7 @@ class MapView:
     raster_resolution: float | None
     visible_faces: _Array
     n_faces: int
+    velocity: Quiver | None = None
 
     @classmethod
     def create(
@@ -71,6 +73,7 @@ class MapView:
         initial_limits: tuple[float | None, float | None] | None = None,
         decorations: MapDecorations | None = None,
         measurement_panel: bool = False,
+        velocity_scale: float | None = None,
     ) -> MapView:
         if window.faces.size == 0:
             raise MapViewError(f"Extent {window.name!r} contains no visible faces.")
@@ -177,6 +180,24 @@ class MapView:
             mappable = image
         if decorations is not None:
             decorations.draw_foreground(axes, window.bounds)
+        velocity: Quiver | None = None
+        if velocity_scale is not None:
+            if not velocity_scale > 0:
+                raise MapViewError("Velocity arrow scale must be positive.")
+            centres = np.asarray(grid.face_coordinates, dtype=np.float64)[window.faces]
+            zeros = np.zeros(window.faces.size, dtype=np.float64)
+            velocity = axes.quiver(
+                centres[:, 0],
+                centres[:, 1],
+                zeros,
+                zeros,
+                angles="xy",
+                scale_units="xy",
+                scale=velocity_scale,
+                pivot="mid",
+                color="black",
+                zorder=3,
+            )
         axes.set_xlim(window.bounds[0], window.bounds[1])
         axes.set_ylim(window.bounds[2], window.bounds[3])
         axes.set_aspect(map_config.aspect)
@@ -202,6 +223,7 @@ class MapView:
             raster_resolution=raster_resolution,
             visible_faces=np.asarray(window.faces, dtype=np.int64),
             n_faces=grid.n_face,
+            velocity=velocity,
         )
         view.update(values, limits=initial_limits)
         return view
@@ -302,6 +324,17 @@ class MapView:
         self.mappable.set_clim(lower, upper)
         if title is not None:
             self.axes.set_title(title)
+
+    def update_velocity(self, u_values: _Array, v_values: _Array) -> None:
+        """Update the cached velocity-vector arrows from face components."""
+        if self.velocity is None:
+            raise MapViewError("Map view was created without a velocity overlay.")
+        u_faces = _as_face_values(u_values, self.n_faces)
+        v_faces = _as_face_values(v_values, self.n_faces)
+        self.velocity.set_UVC(
+            u_faces[self.visible_faces],
+            v_faces[self.visible_faces],
+        )
 
 
 def _as_face_values(values: _Array, n_faces: int) -> _Array:

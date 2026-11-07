@@ -705,8 +705,8 @@ def test_combined_map2d_and_river_km_share_quantity_reads_and_match_synthetic(
     assert first_plot.output_paths
     assert not first_plot.reused_paths
     assert any("selected 2 output(s)" in message for message in first_plot.messages)
-    assert any("segment_map" in path.name for path in first_plot.output_paths)
-    assert any("segment_membership" in path.name for path in first_plot.output_paths)
+    assert any("segment_map" in path.parts for path in first_plot.output_paths)
+    assert any("segment_membership" in path.parts for path in first_plot.output_paths)
     assert {"profile", "profile_all_times", "time_series"} <= {
         context.view for context in measurement_contexts
     }

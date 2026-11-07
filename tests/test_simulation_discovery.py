@@ -5,11 +5,13 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import netCDF4
 import pytest
 
 from d3dplot.simulation import SimulationKind, discover_simulation
+from d3dplot.simulation.discover import _path_length_issues
 
 
 @pytest.mark.integration
@@ -346,3 +348,13 @@ def _dimr_document(components: str) -> str:
         f"{components}\n"
         "</dimrConfig>\n"
     )
+
+
+@pytest.mark.unit
+def test_long_model_output_path_reports_v_out_040(tmp_path: Path) -> None:
+    long_path = tmp_path / ("x" * 250) / "map.nc"
+    issues = _path_length_issues(
+        (SimpleNamespace(map_files=(long_path,)),),  # type: ignore[arg-type]
+    )
+
+    assert [issue.code for issue in issues] == ["V-OUT-040"]

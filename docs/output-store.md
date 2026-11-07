@@ -100,9 +100,11 @@ visible grid-face indices as int32, with the extent bounds and fingerprint in
 global attributes. Cross-grid comparisons may cache an xugrid centroid
 regridder at `cache/geometry/regrid_<hash>.nc`.
 
-Map images are stored below `figures/<series>/<subject>/` with the variable,
-comparison, hydrodynamic time, colour-limit index, and extent index in the
-filename. PNG metadata records the tool version, project/analysis configuration
+Map images are stored below `figures/<series>/map2d/<comparison>/<subject>/<variable>/`
+with the hydrodynamic time, colour-limit index (`c<k>`), and extent index (`e<k>`)
+in the filename, for example `20210101T000000_c1_e1.png`. Map movies are
+`movie_c<k>_e<k>.mp4` in the variable folder. Variable, comparison, and plot type
+are folders, not filename parts. PNG metadata records the tool version, project/analysis configuration
 hash, figure fingerprint, and task key. Figure fingerprints include the
 processed cache fingerprints, inspected grid, extent, effective figure/map
 settings, and figure-hook source hashes. A matching image is reused when

@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -26,6 +26,7 @@ from d3dplot.variables.registry import (
     VariableLocation,
     VariableSpec,
 )
+from d3dplot.variables.sampling import SamplingPlan
 
 _TIME = datetime(2021, 1, 1, tzinfo=UTC)
 
@@ -64,6 +65,28 @@ class _MemoryMapSession:
             self._edge_orientation if spec.location is VariableLocation.EDGE else None
         )
         return MapReadResult(self._values[candidate], orientation, ())
+
+
+@dataclass(frozen=True, slots=True)
+class _FixedFaceSampling:
+    """Test sampling that retains a deterministic subset of global faces."""
+
+    indices: tuple[int, ...]
+    kind: str = "fixed_faces"
+
+    def fingerprint(self) -> str:
+        return "fixed-faces-" + "-".join(str(index) for index in self.indices)
+
+    def prepare(
+        self,
+        grid: GridGeometry | None,
+        merge_plan: object | None,
+    ) -> _FixedFaceSampling:
+        del grid, merge_plan
+        return self
+
+    def apply(self, values: Any, plan: SamplingPlan) -> Any:
+        return np.take(values, plan.indices, axis=0)
 
 
 def _entry(
@@ -110,6 +133,111 @@ def test_engine_resolves_aliases_and_reads_shared_dependencies_once() -> None:
         "water_depth": 1,
         "water_level": 1,
     }
+
+
+@pytest.mark.unit
+def test_engine_applies_sampling_after_global_quantity_computation() -> None:
+    session = _MemoryMapSession({"mesh2d_waterdepth": np.array([1.0, 2.0, 3.0])})
+    quantities = QuantityEngine().at_time(
+        session,
+        _entry(),
+        QuantityContext(),
+    )
+
+    selected = quantities.get(
+        QuantityRequest(
+            "water_depth",
+            sampling=_FixedFaceSampling((2, 0)),
+        )
+    )
+
+    np.testing.assert_allclose(selected, [3.0, 1.0])
+    assert session.read_counts == {"water_depth": 1}
+
+
+@pytest.mark.unit
+def test_engine_applies_thickness_weighted_depth_average() -> None:
+    layer_spec = VariableSpec(
+        name="layered_value",
+        kind=VariableKind.RAW,
+        aliases=(),
+        netcdf_candidates=("layered_value",),
+        location=VariableLocation.FACE,
+        extra_dims=("nLayers",),
+        units="1",
+        label_key="layered_value",
+    )
+    session = _MemoryMapSession(
+        {
+            "layered_value": np.array([[1.0, 3.0], [10.0, 20.0]]),
+            "mesh2d_flowelem_zw": np.array([[0.0, 2.0, 3.0], [0.0, 1.0, 3.0]]),
+        }
+    )
+    quantities = QuantityEngine(
+        specs=(layer_spec,),
+        load_plugins=False,
+    ).at_time(
+        session,
+        _entry(),
+        QuantityContext(),
+    )
+
+    selected = quantities.get(
+        QuantityRequest(
+            "layered_value",
+            vertical="depth_average",
+        )
+    )
+
+    np.testing.assert_allclose(selected, [5.0 / 3.0, 50.0 / 3.0])
+
+
+@pytest.mark.unit
+def test_engine_computes_layer_mean_velocity_and_chloride_mass() -> None:
+    session = _MemoryMapSession(
+        {
+            "mesh2d_ucmag": np.array([[1.0, 3.0], [2.0, 6.0]]),
+            "mesh2d_sa1": np.array([[1.80655, 3.6131], [0.0, 1.80655]]),
+            "mesh2d_flowelem_zw": np.array([[0.0, 2.0, 3.0], [0.0, 1.0, 3.0]]),
+        }
+    )
+    quantities = QuantityEngine().at_time(
+        session,
+        _entry(),
+        QuantityContext(),
+    )
+
+    velocity = quantities.get("velocity_magnitude_layer_mean")
+    chloride = quantities.get("chloride_mass")
+
+    np.testing.assert_allclose(velocity, [2.0, 4.0])
+    np.testing.assert_allclose(chloride, [4.0, 2.0])
+
+
+@pytest.mark.unit
+def test_engine_computes_residence_time_variants() -> None:
+    session = _MemoryMapSession(
+        {
+            "mesh2d_cTR1": np.array([[1.0, 1.0], [1.0, 1.0]]),
+            "mesh2d_dTR1": np.array(
+                [[np.exp(-0.2), np.exp(-0.4)], [np.exp(-0.1), np.exp(-0.3)]]
+            ),
+            "mesh2d_flowelem_zw": np.array([[0.0, 1.0, 3.0], [0.0, 2.0, 3.0]]),
+        }
+    )
+    quantities = QuantityEngine().at_time(
+        session,
+        _entry(),
+        QuantityContext(decay_rates_s_1=(0.1,)),
+    )
+
+    maximum = quantities.get("residence_time_max")
+    depth_average = quantities.get("residence_time_depth_average")
+    surface = quantities.get("residence_time_surface")
+
+    np.testing.assert_allclose(maximum, [4.0, 3.0])
+    np.testing.assert_allclose(depth_average, [10.0 / 3.0, 5.0 / 3.0])
+    np.testing.assert_allclose(surface, [4.0, 3.0])
 
 
 @pytest.mark.unit
@@ -495,3 +623,51 @@ def test_all_2d_quantities_match_synthetic_analytic_values(
             selected_percentile[face, 0],
             expected["d50"],
         )
+
+
+@pytest.mark.integration
+def test_three_dimensional_plain_fm_quantities_match_analytic_fields(
+    synthetic_case: Any,
+    tmp_path: Any,
+) -> None:
+    simulation, report = discover_simulation(synthetic_case / "simulations" / "fm_3d")
+    assert simulation is not None
+    assert report.is_valid
+    inspection, inspection_report = inspect_simulation(
+        simulation,
+        OutputLayout(tmp_path / "d3dplot_3d"),
+        forbidden_roots=(),
+    )
+    assert inspection is not None, inspection_report.to_text()
+    time_axis = TimeAxis.from_cache(inspection.times_path)
+    entry = time_axis.entries[1]
+    context = replace(
+        QuantityContext.from_model_input(
+            simulation.subruns[entry.subrun].model_input,
+            grid_geometry=GridGeometry.from_path(inspection.grid_paths[0]),
+        ),
+        current_time=entry.time,
+    )
+    reader = MapReader(simulation, inspection.merge_plan_path)
+    with reader.session(entry.subrun) as map_session:
+        quantities = QuantityEngine().at_time(map_session, entry, context)
+        velocity = quantities.get("velocity_magnitude_layer_mean")
+        chloride = quantities.get("chloride_mass")
+        residence_max = quantities.get("residence_time_max")
+        residence_average = quantities.get("residence_time_depth_average")
+        residence_surface = quantities.get("residence_time_surface")
+        water_depth = quantities.get("water_depth")
+        velocity_raw = quantities.get("velocity_magnitude")
+
+    face = int(np.flatnonzero(water_depth > 0.05)[0])
+    np.testing.assert_allclose(
+        velocity[face],
+        np.mean(velocity_raw[face]),
+    )
+    np.testing.assert_allclose(chloride[face], 1.5 * water_depth[face])
+    np.testing.assert_allclose(residence_max[face], 4.0)
+    np.testing.assert_allclose(residence_surface[face], 4.0)
+    np.testing.assert_allclose(
+        residence_average[face],
+        3.0,
+    )

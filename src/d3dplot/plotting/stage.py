@@ -15,7 +15,7 @@ import netCDF4
 from PIL import Image, UnidentifiedImageError
 
 from d3dplot import __version__
-from d3dplot.analyses.map2d.config import Map2DConfig
+from d3dplot.analyses.map2d.config import VELOCITY_COMPONENT_VARIABLES, Map2DConfig
 from d3dplot.analyses.map2d.plot import (
     Map2DPlotError,
     Map2DPlotFrame,
@@ -342,8 +342,7 @@ def _load_map2d_source(
         forbidden_roots=project.output.forbidden_roots,
     )
     selection = _selection(analysis, variable)
-    variable_directory = quote(variable.casefold(), safe="-_.")
-    cache_directory = layout.cache_data / "map2d" / variable_directory / selection
+    cache_directory = _map2d_cache_directory(layout, variable, selection)
     cache_paths = tuple(sorted(cache_directory.glob("*.nc")))
     if not cache_paths:
         raise Map2DPlotError(
@@ -369,6 +368,12 @@ def _load_map2d_source(
     selected_outputs = {
         (entry.subrun, entry.local_index) for entry in time_selection.entries
     }
+    velocity_directories: tuple[Path, Path] | None = None
+    if analysis.velocity_vectors != "none":
+        velocity_directories = (
+            _map2d_cache_directory(layout, VELOCITY_COMPONENT_VARIABLES[0], selection),
+            _map2d_cache_directory(layout, VELOCITY_COMPONENT_VARIABLES[1], selection),
+        )
     frames: list[Map2DPlotFrame] = []
     grid_paths: set[Path] = set()
     for cache_path in cache_paths:
@@ -399,12 +404,25 @@ def _load_map2d_source(
         if (subrun_index, local_index) not in selected_outputs:
             continue
         grid_paths.add(grid_path)
+        vector_paths: tuple[Path, Path] | None = None
+        if velocity_directories is not None:
+            ucx_path = velocity_directories[0] / cache_path.name
+            ucy_path = velocity_directories[1] / cache_path.name
+            for component_path in (ucx_path, ucy_path):
+                if not component_path.is_file():
+                    raise Map2DPlotError(
+                        "V-PLOT-002",
+                        f"Velocity vectors need the processed component cache "
+                        f"{component_path}; it was not found.",
+                    )
+            vector_paths = (ucx_path, ucy_path)
         frames.append(
             Map2DPlotFrame(
                 match_key=frame_time.isoformat(),
                 time=frame_time,
                 path=cache_path,
                 morph_time=morph_time,
+                vector_paths=vector_paths,
             )
         )
     if not frames:
@@ -532,6 +550,11 @@ def _read_cache_metadata(
         int(subrun_value),
         int(local_index_value),
     )
+
+
+def _map2d_cache_directory(layout: OutputLayout, variable: str, selection: str) -> Path:
+    variable_directory = quote(variable.casefold(), safe="-_.")
+    return layout.cache_data / "map2d" / variable_directory / selection
 
 
 def _selection(analysis: Map2DConfig, variable: str) -> str:

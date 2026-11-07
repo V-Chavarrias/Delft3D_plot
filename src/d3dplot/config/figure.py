@@ -7,9 +7,9 @@ from datetime import date
 from pathlib import Path
 from typing import Literal, TypeAlias
 
-from pydantic import Field, PositiveFloat, PositiveInt, field_validator
+from pydantic import Field, PositiveFloat, PositiveInt, field_validator, model_validator
 
-from d3dplot.config.base import ConfigModel
+from d3dplot.config.base import ConfigModel, reject_unimplemented_fields
 
 AxisLimit: TypeAlias = tuple[float | None, float | None]
 AxisLimits: TypeAlias = list[AxisLimit] | dict[str, dict[str, list[AxisLimit]]]
@@ -106,12 +106,17 @@ class MapViewConfig(ConfigModel):
     )
     fixed_weirs: Literal["none", "input", "snapped"] = Field(
         default="none",
-        description="Whether to draw fixed weirs and which geometry to use.",
+        description="Not implemented in v1; setting it is rejected.",
     )
     fixed_weirs_color: str = Field(
         default="black",
         description="Color used for fixed-weir overlays.",
     )
+
+    @model_validator(mode="after")
+    def reject_unimplemented(self) -> MapViewConfig:
+        reject_unimplemented_fields(self, ["fixed_weirs"])
+        return self
 
     @field_validator("extents")
     @classmethod
@@ -182,9 +187,14 @@ class FigureConfig(ConfigModel):
     )
     display_name: str | None = Field(
         default=None,
-        description="Optional display name for the plotted quantity.",
+        description="Not implemented in v1; setting it is rejected.",
     )
     display_scale: float = Field(
         default=1.0,
         description="Scale factor applied to displayed values.",
     )
+
+    @model_validator(mode="after")
+    def reject_unimplemented(self) -> FigureConfig:
+        reject_unimplemented_fields(self, ["display_name"])
+        return self

@@ -1,0 +1,146 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build distributions
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      is_final: ${{ steps.version.outputs.is_final }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: Check tag, package version, and changelog
+        id: version
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          import tomllib
+          from pathlib import Path
+
+          tag = os.environ["GITHUB_REF_NAME"]
+          version = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
+          if tag.removeprefix("v") != version:
+              raise SystemExit(f"Tag {tag!r} does not match package version {version!r}")
+
+          is_final = re.fullmatch(r"v\d+\.\d+\.\d+", tag) is not None
+          if is_final:
+              changelog = Path("CHANGELOG.md").read_text()
+              heading = re.compile(rf"^## {re.escape(version)}(?:\s|$)", re.MULTILINE)
+              if heading.search(changelog) is None:
+                  raise SystemExit(f"CHANGELOG.md has no entry for {version}")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"version={version}\n")
+              output.write(f"is_final={str(is_final).lower()}\n")
+          PY
+      - name: Build wheel and source distribution
+        run: uv build --out-dir dist
+      - name: Verify built distributions
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          wheels = list(Path("dist").glob("*.whl"))
+          sdists = list(Path("dist").glob("*.tar.gz"))
+          if len(wheels) != 1 or len(sdists) != 1:
+              raise SystemExit(
+                  f"Expected one wheel and one source distribution, found {wheels} and {sdists}"
+              )
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: distributions
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  testpypi:
+    name: Publish to TestPyPI
+    needs: build
+    if: vars.D3DPLOT_RELEASES_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/delft3d-plot/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: distributions
+          path: dist/
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  pypi:
+    name: Publish to PyPI
+    needs: [build, testpypi]
+    if: needs.build.outputs.is_final == 'true' && vars.D3DPLOT_RELEASES_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/delft3d-plot/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: distributions
+          path: dist/
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    name: Create GitHub release
+    needs: [build, pypi]
+    if: needs.build.outputs.is_final == 'true' && vars.D3DPLOT_RELEASES_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: distributions
+          path: dist/
+      - name: Extract this version's changelog entry
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          version = os.environ["VERSION"]
+          lines = Path("CHANGELOG.md").read_text().splitlines()
+          start = next(
+              (index for index, line in enumerate(lines) if line.startswith(f"## {version}")),
+              None,
+          )
+          if start is None:
+              raise SystemExit(f"CHANGELOG.md has no entry for {version}")
+          end = next(
+              (index for index in range(start + 1, len(lines)) if lines[index].startswith("## ")),
+              len(lines),
+          )
+          Path("release-notes.md").write_text("\n".join(lines[start:end]).strip() + "\n")
+          PY
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "$GITHUB_REF_NAME" --notes-file release-notes.md

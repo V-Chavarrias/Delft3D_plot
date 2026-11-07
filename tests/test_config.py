@@ -6,15 +6,20 @@ from __future__ import annotations
 import os
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 import yaml
 from pydantic import ValidationError
 
+from d3dplot.analyses import AnalysisPlugin
 from d3dplot.analyses.m1d.config import M1DConfig
 from d3dplot.analyses.map2d.config import Map2DConfig
-from d3dplot.analyses.registry import builtin_analysis_names, is_builtin_analysis
+from d3dplot.analyses.registry import (
+    builtin_analysis_names,
+    clear_plugin_analysis_cache,
+    is_builtin_analysis,
+)
 from d3dplot.analyses.river_km_statistics.config import RiverKmStatisticsConfig
 from d3dplot.config import (
     ProjectConfig,
@@ -37,6 +42,10 @@ from d3dplot.config.selections import (
     LayersSelection,
     TimeRange,
     TimesConfig,
+)
+from d3dplot.execution.project import (
+    ProjectStageUnavailable,
+    ensure_executable_analyses,
 )
 
 
@@ -228,6 +237,49 @@ def test_builtin_analysis_registry_is_stable() -> None:
 
 
 @pytest.mark.unit
+def test_plugin_analysis_config_is_validated_and_exported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class PluginConfig(M1DConfig):
+        analysis: Literal["test_plugin"] = "test_plugin"
+        plugin_option: int = 3
+
+    class EntryPoint:
+        name = "test_plugin"
+
+        def load(self) -> AnalysisPlugin:
+            return AnalysisPlugin(config_model=PluginConfig)
+
+    from d3dplot.analyses import registry
+
+    monkeypatch.setattr(registry, "entry_points", lambda group: (EntryPoint(),))
+    clear_plugin_analysis_cache()
+    try:
+        config = ProjectConfig.model_validate(
+            {
+                "simulations": [{"path": "model", "label": "reference"}],
+                "analyses": [
+                    {
+                        "analysis": "test_plugin",
+                        "variables": ["bed_level"],
+                        "branches": [["A"]],
+                        "branch_names": ["branch"],
+                        "plugin_option": 7,
+                    }
+                ],
+            }
+        )
+        assert config.analyses[0].analysis == "test_plugin"
+        assert config.analyses[0].plugin_option == 7  # type: ignore[attr-defined]
+        schema = config_json_schema()
+        assert "PluginConfig" in schema["$defs"]
+        with pytest.raises(ProjectStageUnavailable, match="config-only"):
+            ensure_executable_analyses(config)
+    finally:
+        clear_plugin_analysis_cache()
+
+
+@pytest.mark.unit
 def test_status_stale_after_is_configurable_and_non_negative() -> None:
     status = StatusConfig.model_validate({"stale_after": "30 minutes"})
     assert status.stale_after == timedelta(minutes=30)
@@ -317,6 +369,37 @@ def test_unknown_keys_are_rejected_at_all_model_levels() -> None:
     }
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
         ProjectConfig.model_validate(nested_duplicate_data)
+
+
+@pytest.mark.unit
+def test_unimplemented_options_are_rejected() -> None:
+    export_data = _minimal_data()
+    export_data["analyses"][0]["export"] = ["netcdf"]
+    with pytest.raises(ValidationError, match="'export' is not implemented in v1"):
+        ProjectConfig.model_validate(export_data)
+
+    view_3d_data = _minimal_data()
+    view_3d_data["analyses"][0]["view_3d"] = True
+    with pytest.raises(ValidationError, match="'view_3d' is not implemented in v1"):
+        ProjectConfig.model_validate(view_3d_data)
+
+    fixed_weirs_data = _minimal_data()
+    fixed_weirs_data["analyses"][0]["map"] = {"fixed_weirs": "input"}
+    with pytest.raises(ValidationError, match="'fixed_weirs' is not implemented"):
+        ProjectConfig.model_validate(fixed_weirs_data)
+
+    display_name_data = _minimal_data()
+    display_name_data["figure"] = {"display_name": "Water level"}
+    with pytest.raises(ValidationError, match="'display_name' is not implemented"):
+        ProjectConfig.model_validate(display_name_data)
+
+    implemented_data = _minimal_data()
+    implemented_data["analyses"][0]["velocity_vectors"] = "scaled"
+    implemented_data["analyses"][0]["mask_range"] = {"mesh2d_s1": [0.0, None]}
+    implemented_data["figure"] = {"formats": ["png"]}
+    config = ProjectConfig.model_validate(implemented_data)
+    assert config.analyses[0].velocity_vectors == "scaled"
+    assert config.analyses[0].mask_range == {"mesh2d_s1": (0.0, None)}
 
 
 @pytest.mark.unit

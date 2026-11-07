@@ -3,13 +3,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from math import isfinite
-from typing import Any
+from typing import Any, Literal
 
 from d3dplot.model_input.reader import ModelInput
 from d3dplot.variables.geometry import GridGeometry
+from d3dplot.variables.sampling import GridSampling, Sampling
 
 _Array = Any
 
@@ -28,6 +29,7 @@ class QuantityContext:
     water_density_kg_m3: float = 1000.0
     sediment_diameters_m: tuple[float | None, ...] = ()
     sediment_densities_kg_m3: tuple[float | None, ...] = ()
+    decay_rates_s_1: tuple[float, ...] = ()
     dry_depth_m: float = 0.01
     grid_geometry: GridGeometry | None = None
     previous_water_level: _Array | None = None
@@ -72,6 +74,11 @@ class QuantityContext:
             sediment_densities_kg_m3=tuple(
                 item.solid_density_kg_m3 for item in fractions
             ),
+            decay_rates_s_1=(
+                model_input.substance.decay_rates_s_1
+                if model_input.substance is not None
+                else ()
+            ),
             dry_depth_m=dry_depth_m,
             grid_geometry=grid_geometry,
         )
@@ -93,6 +100,10 @@ class QuantityRequest:
     layers: tuple[int, ...] | None = None
     sum_fractions: bool = False
     active_sediment_thickness_threshold_m: float = 0.001
+    sampling: Sampling = field(default_factory=GridSampling)
+    vertical: Literal["all", "top", "bottom", "depth_average", "elevation"] = "all"
+    z_range: tuple[float, float] | None = None
+    elevation: float | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -109,6 +120,16 @@ class QuantityRequest:
             raise ValueError(
                 "Active-sediment thickness threshold must be finite and non-negative."
             )
+        if self.vertical == "depth_average" and self.elevation is not None:
+            raise ValueError("Depth-average requests cannot set elevation.")
+        if self.vertical == "elevation" and self.z_range is not None:
+            raise ValueError("Elevation requests cannot set z_range.")
+        if self.vertical != "depth_average" and self.z_range is not None:
+            raise ValueError("z_range requires vertical='depth_average'.")
+        if self.vertical != "elevation" and self.elevation is not None:
+            raise ValueError("elevation requires vertical='elevation'.")
+        if self.z_range is not None and self.z_range[0] > self.z_range[1]:
+            raise ValueError("z_range must be in ascending order.")
 
     @property
     def percentile(self) -> float | None:
@@ -128,4 +149,8 @@ class QuantityRequest:
             self.layers,
             self.sum_fractions,
             self.active_sediment_thickness_threshold_m,
+            self.sampling.fingerprint(),
+            self.vertical,
+            self.z_range,
+            self.elevation,
         )

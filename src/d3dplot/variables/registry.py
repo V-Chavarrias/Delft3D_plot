@@ -12,12 +12,14 @@ from typing import TYPE_CHECKING, Any, Final
 
 from d3dplot.variables.compute import (
     bed_load_transport_magnitude,
+    chloride_mass,
     energy_head,
     froude_number,
     grain_size_percentile,
     mean_grain_size_arithmetic,
     mean_grain_size_geometric,
     morphological_active_area,
+    residence_time,
     sediment_transport_magnitude,
     sediment_transport_magnitude_sum,
     shields_number_times_diameter,
@@ -26,6 +28,7 @@ from d3dplot.variables.compute import (
     total_sediment_thickness,
     transport_streamfunction,
     velocity_direction,
+    velocity_magnitude_layer_mean,
     velocity_vector,
     vorticity,
     water_level_rate,
@@ -82,6 +85,7 @@ class VariableSpec:
     version: str | None = None
     compute: QuantityCompute | None = field(default=None, repr=False, compare=False)
     oriented: bool = False
+    optional_extra_dims: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.name or self.name != self.name.strip():
@@ -105,6 +109,13 @@ class VariableSpec:
             raise ValueError("Variable dimensions must be non-empty and trimmed.")
         if len(set(self.extra_dims)) != len(self.extra_dims):
             raise ValueError(f"Variable {self.name!r} repeats an extra dimension.")
+        if any(
+            dimension not in self.extra_dims for dimension in self.optional_extra_dims
+        ):
+            raise ValueError(
+                f"Variable {self.name!r} has an optional dimension that is not "
+                "declared as an extra dimension."
+            )
         if self.oriented and self.location is not VariableLocation.EDGE:
             raise ValueError("Only edge-located raw variables can be oriented.")
 
@@ -171,6 +182,7 @@ def _raw_spec(
     label_key: str,
     aliases: tuple[str, ...] = (),
     extra_dims: tuple[str, ...] = (),
+    optional_extra_dims: tuple[str, ...] = (),
     location: VariableLocation = VariableLocation.FACE,
     oriented: bool = False,
 ) -> VariableSpec:
@@ -181,6 +193,7 @@ def _raw_spec(
         netcdf_candidates=netcdf_candidates,
         location=location,
         extra_dims=extra_dims,
+        optional_extra_dims=optional_extra_dims,
         units=units,
         label_key=label_key,
         oriented=oriented,
@@ -233,6 +246,8 @@ VARIABLE_SPECS: Final[tuple[VariableSpec, ...]] = (
         "velocity_magnitude",
         ("mesh2d_ucmaga", "mesh2d_ucmag", "mesh1d_ucmag"),
         aliases=("umag", "umag_layer"),
+        extra_dims=("nLayers",),
+        optional_extra_dims=("nLayers",),
         units="m/s",
         label_key="velocity_magnitude",
     ),
@@ -319,6 +334,34 @@ VARIABLE_SPECS: Final[tuple[VariableSpec, ...]] = (
         units="m",
         label_key="depth",
         location=VariableLocation.EDGE,
+    ),
+    _raw_spec(
+        "mesh2d_sa1",
+        ("mesh2d_sa1",),
+        extra_dims=("nLayers",),
+        units="psu",
+        label_key="salinity",
+    ),
+    _raw_spec(
+        "mesh2d_flowelem_zw",
+        ("mesh2d_flowelem_zw",),
+        extra_dims=("nInterfaces",),
+        units="m",
+        label_key="elevation",
+    ),
+    _raw_spec(
+        "mesh2d_cTR1",
+        ("mesh2d_cTR1",),
+        extra_dims=("nLayers",),
+        units="1",
+        label_key="salinity",
+    ),
+    _raw_spec(
+        "mesh2d_dTR1",
+        ("mesh2d_dTR1",),
+        extra_dims=("nLayers",),
+        units="1",
+        label_key="salinity",
     ),
     _raw_spec(
         "mesh2d_s0",
@@ -417,6 +460,7 @@ VARIABLE_SPECS: Final[tuple[VariableSpec, ...]] = (
         ("velocity_magnitude",),
         units="m/s",
         label_key="velocity_magnitude",
+        compute=velocity_magnitude_layer_mean,
     ),
     _derived_spec(
         "water_level_rate",
@@ -535,31 +579,38 @@ VARIABLE_SPECS: Final[tuple[VariableSpec, ...]] = (
         aliases=("clm2",),
         units="kg/m^2",
         label_key="chloride_mass",
-        requires=("sal2cl",),
+        selection=SelectionTarget.OUTPUT,
+        compute=chloride_mass,
     ),
     _derived_spec(
         "residence_time_max",
-        ("mesh2d_cTR<i>", "mesh2d_dTR<i>", "mesh2d_flowelem_zw"),
+        ("mesh2d_cTR1", "mesh2d_dTR1", "mesh2d_flowelem_zw"),
         aliases=("T_max",),
         units="s",
         label_key="maximum_residence_time",
         requires=("substance_file", "decay_rate"),
+        selection=SelectionTarget.OUTPUT,
+        compute=residence_time,
     ),
     _derived_spec(
         "residence_time_depth_average",
-        ("mesh2d_cTR<i>", "mesh2d_dTR<i>", "mesh2d_flowelem_zw"),
+        ("mesh2d_cTR1", "mesh2d_dTR1", "mesh2d_flowelem_zw"),
         aliases=("T_da",),
         units="s",
         label_key="depth_average_residence_time",
         requires=("substance_file", "decay_rate"),
+        selection=SelectionTarget.OUTPUT,
+        compute=residence_time,
     ),
     _derived_spec(
         "residence_time_surface",
-        ("mesh2d_cTR<i>", "mesh2d_dTR<i>", "mesh2d_flowelem_zw"),
+        ("mesh2d_cTR1", "mesh2d_dTR1", "mesh2d_flowelem_zw"),
         aliases=("T_surf",),
         units="s",
         label_key="surface_residence_time",
         requires=("substance_file", "decay_rate"),
+        selection=SelectionTarget.OUTPUT,
+        compute=residence_time,
     ),
 )
 

@@ -172,9 +172,16 @@ titles use `yyyy-mm-dd HH:MM` by default; set `figure.time_format` (or an
 analysis-level `figure.time_format`) to change it. The format accepts
 `yyyy`, `mm`, `dd`, `HH`, `MM`, and `ss` tokens, or Python `strftime`
 directives. Maps use the `viridis` colormap for values and `RdYlBu` for
-time-difference plots, with `auto` rendering and `auto` aspect. The
-`river_km_statistics` analysis defaults to `mean_area_weighted` and the
-`profile` view.
+time-difference plots, with `auto` rendering and `auto` aspect. Set
+`velocity_vectors: scaled` or `normalized` on a value map to draw velocity
+arrows from the cached `mesh2d_ucx` and `mesh2d_ucy` components. Scaled arrows
+keep one fixed reference scale per view, set by the first frame's maximum
+speed, so arrow length shows speed. Normalized arrows show direction only. Every
+face is drawn; there is no thinning yet. `mask_range` hides values outside the
+configured range. Options that are not implemented in v1 (`view_3d`,
+`fixed_weirs`, `export`, and `display_name`) raise V-CFG-001 when set to a
+non-default value. The `river_km_statistics` analysis defaults to
+`mean_area_weighted` and the `profile` view.
 
 River-km files use the fixed comma-delimited `x, y, label, km` format. The
 branch is the label suffix after the first underscore and is matched

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from datetime import timedelta
 from typing import Annotated, Any, TypeAlias
 
@@ -70,3 +71,16 @@ class ConfigModel(BaseModel):
         validate_assignment=True,
         validate_default=True,
     )
+
+
+def reject_unimplemented_fields(model: BaseModel, field_names: Iterable[str]) -> None:
+    """Reject fields that the schema accepts but v1 does not implement.
+
+    A field is rejected only when its value differs from the default, so that
+    inherited or re-validated configurations still pass.
+    """
+    fields = type(model).model_fields
+    for name in field_names:
+        default = fields[name].get_default(call_default_factory=True)
+        if getattr(model, name) != default:
+            raise ValueError(f"'{name}' is not implemented in v1.")

@@ -82,15 +82,19 @@ def read_output_cache_states(
     if not requests:
         return ()
 
-    identities = [(item.time_index, item.request) for item in requests]
-    if len(set(identities)) != len(identities):
-        raise ValueError("Output cache requests must be unique per time and quantity.")
-
     paths = tuple(
         Path(item.output_path).expanduser().resolve(strict=False) for item in requests
     )
     if len(set(paths)) != len(paths):
         raise ValueError("Output cache request paths must be unique.")
+    identities = [
+        (item.time_index, item.request, path)
+        for item, path in zip(requests, paths, strict=True)
+    ]
+    if len(set(identities)) != len(identities):
+        raise ValueError(
+            "Output cache requests must be unique per time, quantity, and path."
+        )
 
     fingerprints = read_cache_fingerprints(paths)
     states: list[OutputCacheState] = []
@@ -128,20 +132,21 @@ class AnalysisTimeSelection:
         if len(set(self.quantities)) != len(self.quantities):
             raise ValueError("An analysis selection cannot repeat quantity requests.")
         selected_indices = {entry.time_index for entry in self.selected_entries}
-        cache_keys = [(state.time_index, state.request) for state in self.output_cache]
+        cache_keys = [
+            (state.time_index, state.request, state.output_path)
+            for state in self.output_cache
+        ]
         if len(set(cache_keys)) != len(cache_keys):
             raise ValueError(
-                "Output-cache entries must be unique per time and request."
+                "Output-cache entries must be unique per time, request, and path."
             )
-        if any(index not in selected_indices for index, _ in cache_keys):
+        if any(index not in selected_indices for index, _, _ in cache_keys):
             raise ValueError("Output-cache entries must belong to selected outputs.")
-        if any(request not in self.quantities for _, request in cache_keys):
+        if any(request not in self.quantities for _, request, _ in cache_keys):
             raise ValueError("Output-cache entries must match requested quantities.")
-        cache_paths = [
-            (state.time_index, state.output_path) for state in self.output_cache
-        ]
+        cache_paths = [state.output_path for state in self.output_cache]
         if len(set(cache_paths)) != len(cache_paths):
-            raise ValueError("Output paths must be unique per selected time.")
+            raise ValueError("Output paths must be unique per analysis selection.")
 
     @property
     def selected_entries(self) -> tuple[TimeEntry, ...]:
@@ -238,21 +243,26 @@ def plan_process_tasks(
             raise ValueError(
                 f"Cannot plan invalid time selection for {selection.analysis_key!r}."
             )
-        cache_by_time_and_request = {
-            (state.time_index, state.request): state for state in selection.output_cache
-        }
+        cache_by_time_and_request: dict[
+            tuple[int, QuantityRequest], list[OutputCacheState]
+        ] = {}
+        for state in selection.output_cache:
+            cache_by_time_and_request.setdefault(
+                (state.time_index, state.request),
+                [],
+            ).append(state)
         for entry in selection.selected_entries:
             needed_quantities = tuple(
                 request
                 for request in selection.quantities
                 if (
                     (
-                        state := cache_by_time_and_request.get(
+                        states := cache_by_time_and_request.get(
                             (entry.time_index, request)
                         )
                     )
                     is None
-                    or state.decision.action == "rebuild"
+                    or any(state.decision.action == "rebuild" for state in states)
                 )
             )
             if not needed_quantities:
@@ -308,14 +318,22 @@ def plan_process_tasks(
             )
 
     tasks.sort(key=lambda task: (-len(task.times), task.key))
-    if shard is not None:
-        shard_index, shard_count = _parse_shard(shard)
-        tasks = [
-            task
-            for task in tasks
-            if stable_shard_index(task.key, shard_count) == shard_index
-        ]
-    return tuple(tasks)
+    return select_process_shard(tasks, shard)
+
+
+def select_process_shard(
+    tasks: Sequence[ProcessTask],
+    shard: str | None,
+) -> tuple[ProcessTask, ...]:
+    """Return all tasks or the stable subset assigned to one shard."""
+    if shard is None:
+        return tuple(tasks)
+    shard_index, shard_count = _parse_shard(shard)
+    return tuple(
+        task
+        for task in tasks
+        if stable_shard_index(task.key, shard_count) == shard_index
+    )
 
 
 def stable_shard_index(task_key: str, shard_count: int) -> int:

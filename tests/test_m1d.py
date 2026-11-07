@@ -206,7 +206,8 @@ def test_m1d_output_paths_use_canonical_variable_names(
         time=time,
     )
 
-    assert figure_path.parts[-3] == canonical_name
+    assert figure_path.parents[3].name == canonical_name
+    assert figure_path.name == "20210101T000000_l01.png"
     assert cache_path.parent.parent.name == canonical_name
 
 

@@ -1621,7 +1621,8 @@ def _diagnostic_path(
         quote(prepared.region_name, safe="-_."),
         quote(prepared.km_set_name, safe="-_."),
         "diagnostics",
-        f"{diagnostic}_{quote(suffix, safe='-_.')}.png",
+        quote(diagnostic, safe="-_."),
+        f"{quote(suffix, safe='-_.')}.png",
     )
 
 
@@ -3025,6 +3026,22 @@ def _add_time_series_measurement_overlays(
     return tuple(entries)
 
 
+def _clear_profile_overlays(
+    view: LineView,
+    overlay_lines: list[Any],
+    x_limit: AxisLimit | None,
+    y_limit: AxisLimit | None,
+) -> None:
+    """Remove measurement overlays so a reused template shows only the current frame."""
+    for line in overlay_lines:
+        line.remove()
+    legend = view.axes.get_legend()
+    if legend is not None:
+        legend.remove()
+    view.axes.set_autoscalex_on(x_limit is None)
+    view.axes.set_autoscaley_on(y_limit is None)
+
+
 def _plot_profiles(
     project: ProjectConfig,
     analysis: RiverKmStatisticsConfig,
@@ -3067,164 +3084,200 @@ def _plot_profiles(
     measurement_fingerprints = tuple(
         overlay.measurement.fingerprint for overlay in measurement_overlays
     )
-    for frame, raw_values, source_fingerprints in zip(
-        times, values, fingerprints, strict=True
-    ):
-        component_count = raw_values.shape[1] if raw_values.ndim == 2 else 1
-        component_labels = frame.component_names or ("",)
-        if len(component_labels) != component_count:
-            raise RiverKmStatisticsPlotError(
-                "V-PLOT-002",
-                "Component labels do not match cached statistics dimensions.",
-            )
-        display_mode = _display_mode(analysis, variable)
-        if comparison != "value" and display_mode == "stacked_area":
-            display_mode = "lines"
-        y_values = np.asarray(raw_values, dtype=np.float64) * scale
-        if y_values.ndim == 1:
-            y_values = y_values[np.newaxis, :]
-        else:
-            y_values = y_values.T
-        line_labels: tuple[str, ...]
-        if component_count == 1:
-            line_labels = ("model",) if measurement_overlays else ("",)
-        else:
-            line_labels = tuple(
-                name or _statistic_label(statistic, project)
-                for name in component_labels
-            )
-        title = _figure_title(
-            project,
-            statistic_text,
-            region_name,
-            km_set_name,
-            comparison,
-            (
-                frame.morph_time
-                if analysis.times.axis == "morphological"
-                and frame.morph_time is not None
-                else frame.time
-            ),
-            time_format=figure_config.time_format,
-        )
-        for limit_index, (x_limit, y_limit) in enumerate(limit_pairs):
-            output_path = _line_path(
-                layout,
-                project.series,
-                simulation.label,
+    hooks = project.effective_hooks(analysis)
+    # "rebuild" hooks may change the figure, so each image is then built fresh.
+    reuse_templates = not hooks or figure_config.hooks_mode == "per_image"
+    templates: dict[tuple[int, int, int], LineView] = {}
+    overlay_artists: dict[tuple[int, int, int], list[Any]] = {}
+    try:
+        for frame, raw_values, source_fingerprints in zip(
+            times, values, fingerprints, strict=True
+        ):
+            component_count = raw_values.shape[1] if raw_values.ndim == 2 else 1
+            component_labels = frame.component_names or ("",)
+            if len(component_labels) != component_count:
+                raise RiverKmStatisticsPlotError(
+                    "V-PLOT-002",
+                    "Component labels do not match cached statistics dimensions.",
+                )
+            display_mode = _display_mode(analysis, variable)
+            if comparison != "value" and display_mode == "stacked_area":
+                display_mode = "lines"
+            y_values = np.asarray(raw_values, dtype=np.float64) * scale
+            if y_values.ndim == 1:
+                y_values = y_values[np.newaxis, :]
+            else:
+                y_values = y_values.T
+            line_labels: tuple[str, ...]
+            if component_count == 1:
+                line_labels = ("model",) if measurement_overlays else ("",)
+            else:
+                line_labels = tuple(
+                    name or _statistic_label(statistic, project)
+                    for name in component_labels
+                )
+            show_legend = len(line_labels) > 1 or bool(measurement_overlays)
+            title = _figure_title(
+                project,
+                statistic_text,
                 region_name,
                 km_set_name,
-                variable,
-                view_name,
-                statistic,
                 comparison,
-                frame.time,
-                limit_index,
-            )
-            limits_fingerprint = fingerprint_artifact(
-                kind="figure",
-                schema_version=CACHE_SCHEMA_VERSION,
-                tool_version=__version__,
-                algorithm_version="river-km-lines-2",
-                parameters={
-                    "analysis": analysis.model_dump(mode="json"),
-                    "comparison": comparison,
-                    "display": display_mode,
-                    "figure": figure_config.model_dump(mode="json"),
-                    "km_set": km_set_name,
-                    "region": region_name,
-                    "statistic": statistic,
-                    "time": frame.time.isoformat(),
-                    "variable": variable,
-                    "view": view_name,
-                    "x_limits": x_limit,
-                    "y_limits": y_limit,
-                },
-                inputs=(
-                    _configuration_fingerprint(project, analysis),
-                    *_hook_fingerprints(project.effective_hooks(analysis)),
-                    *source_fingerprints,
-                    *measurement_fingerprints,
+                (
+                    frame.morph_time
+                    if analysis.times.axis == "morphological"
+                    and frame.morph_time is not None
+                    else frame.time
                 ),
-                time=frame.time.isoformat(),
+                time_format=figure_config.time_format,
             )
-            if _reuse_figure(
-                output_path,
-                limits_fingerprint,
-                project,
-                analysis,
-                fresh_figures,
-                reused,
-                report,
-            ):
-                continue
-            view = LineView.create(
-                frame.km_centres,
-                y_values,
-                line_labels,
-                display=display_mode,
-                figure_config=figure_config,
-                x_label=label(
-                    "rkm",
-                    project.language,
-                    "value",
-                    scale=0.001,
-                    extra_dictionaries=project.labels.extra_dictionaries,
-                ).text,
-                y_label=_variable_axis_label(variable, project, scale),
-                show_legend=(len(line_labels) > 1 or bool(measurement_overlays)),
-                title=title,
-                x_limits=x_limit,
-                y_limits=y_limit,
-            )
-            measurement_data = _add_profile_measurement_overlays(
-                view.axes,
-                measurement_overlays,
-                analysis,
-                statistic,
-                frame.time,
-                comparison,
-                frames[0].time if comparison == "difference_time" and frames else None,
-                scale,
-                view_name,
-                x_limit,
-                y_limit,
-                report,
-            )
-            context = _line_context(
-                project,
-                analysis,
-                view_name,
-                variable,
-                comparison,
-                simulation.label,
-                frame.time,
-                frame.km_centres,
-                y_values,
-                output_path,
-                title,
-                x_limit,
-                y_limit,
-                axes=view.axes,
-                extra_data={"measurements": measurement_data},
-            )
-            _finalize_output(
-                view.figure,
-                context,
-                figure_config,
-                project.effective_hooks(analysis),
-                guard,
-                limits_fingerprint,
-                output_path,
-                provenance_path,
-                task_key=(
-                    f"plot|{simulation.label}|{variable}|{view_name}|"
-                    f"{comparison}|{region_name}|{km_set_name}|"
-                    f"{frame.time.isoformat()}|{limit_index}"
-                ),
-            )
-            outputs.append(output_path)
-            report(f"Saved figure {output_path}.")
+            for limit_index, (x_limit, y_limit) in enumerate(limit_pairs):
+                output_path = _line_path(
+                    layout,
+                    project.series,
+                    simulation.label,
+                    region_name,
+                    km_set_name,
+                    variable,
+                    view_name,
+                    statistic,
+                    comparison,
+                    frame.time,
+                    limit_index,
+                )
+                limits_fingerprint = fingerprint_artifact(
+                    kind="figure",
+                    schema_version=CACHE_SCHEMA_VERSION,
+                    tool_version=__version__,
+                    algorithm_version="river-km-lines-2",
+                    parameters={
+                        "analysis": analysis.model_dump(mode="json"),
+                        "comparison": comparison,
+                        "display": display_mode,
+                        "figure": figure_config.model_dump(mode="json"),
+                        "km_set": km_set_name,
+                        "region": region_name,
+                        "statistic": statistic,
+                        "time": frame.time.isoformat(),
+                        "variable": variable,
+                        "view": view_name,
+                        "x_limits": x_limit,
+                        "y_limits": y_limit,
+                    },
+                    inputs=(
+                        _configuration_fingerprint(project, analysis),
+                        *_hook_fingerprints(hooks),
+                        *source_fingerprints,
+                        *measurement_fingerprints,
+                    ),
+                    time=frame.time.isoformat(),
+                )
+                if _reuse_figure(
+                    output_path,
+                    limits_fingerprint,
+                    project,
+                    analysis,
+                    fresh_figures,
+                    reused,
+                    report,
+                ):
+                    continue
+                template_key = (limit_index, y_values.shape[0], y_values.shape[1])
+                view = templates.get(template_key)
+                if view is None:
+                    view = LineView.create(
+                        frame.km_centres,
+                        y_values,
+                        line_labels,
+                        display=display_mode,
+                        figure_config=figure_config,
+                        x_label=label(
+                            "rkm",
+                            project.language,
+                            "value",
+                            scale=0.001,
+                            extra_dictionaries=project.labels.extra_dictionaries,
+                        ).text,
+                        y_label=_variable_axis_label(variable, project, scale),
+                        show_legend=show_legend,
+                        title=title,
+                        x_limits=x_limit,
+                        y_limits=y_limit,
+                    )
+                    if reuse_templates:
+                        templates[template_key] = view
+                else:
+                    _clear_profile_overlays(
+                        view,
+                        overlay_artists.pop(template_key, []),
+                        x_limit,
+                        y_limit,
+                    )
+                    view.update(frame.km_centres, y_values, title=title)
+                    view.figure.tight_layout()
+                lines_before_overlays = list(view.axes.lines)
+                measurement_data = _add_profile_measurement_overlays(
+                    view.axes,
+                    measurement_overlays,
+                    analysis,
+                    statistic,
+                    frame.time,
+                    comparison,
+                    frames[0].time
+                    if comparison == "difference_time" and frames
+                    else None,
+                    scale,
+                    view_name,
+                    x_limit,
+                    y_limit,
+                    report,
+                )
+                if show_legend and view.axes.get_legend() is None:
+                    view.axes.legend()
+                if reuse_templates:
+                    overlay_artists[template_key] = [
+                        line
+                        for line in view.axes.lines
+                        if line not in lines_before_overlays
+                    ]
+                context = _line_context(
+                    project,
+                    analysis,
+                    view_name,
+                    variable,
+                    comparison,
+                    simulation.label,
+                    frame.time,
+                    frame.km_centres,
+                    y_values,
+                    output_path,
+                    title,
+                    x_limit,
+                    y_limit,
+                    axes=view.axes,
+                    extra_data={"measurements": measurement_data},
+                )
+                _finalize_output(
+                    view.figure,
+                    context,
+                    figure_config,
+                    hooks,
+                    guard,
+                    limits_fingerprint,
+                    output_path,
+                    provenance_path,
+                    close=not reuse_templates,
+                    task_key=(
+                        f"plot|{simulation.label}|{variable}|{view_name}|"
+                        f"{comparison}|{region_name}|{km_set_name}|"
+                        f"{frame.time.isoformat()}|{limit_index}"
+                    ),
+                )
+                outputs.append(output_path)
+                report(f"Saved figure {output_path}.")
+    finally:
+        for view in templates.values():
+            close_figure(view.figure)
     return tuple(outputs), tuple(reused)
 
 
@@ -3928,9 +3981,7 @@ def _line_path(
     prefix: tuple[str, ...] = (quote(series, safe="-_."),)
     if subject == "all_simulations":
         prefix += (quote(subject, safe="-_."),)
-    filename = (
-        f"{view_name}_{statistic}_{comparison}_{time_text}_l{limit_index + 1:02d}.png"
-    )
+    filename = f"{time_text}_l{limit_index + 1:02d}.png"
     return build_quantity_output_path(
         layout,
         OutputArea.FIGURES,
@@ -3941,7 +3992,10 @@ def _line_path(
             quote(region_name, safe="-_."),
             quote(km_set_name, safe="-_."),
         ),
-        suffix=(quote(comparison, safe="-_."),),
+        suffix=(
+            quote(comparison, safe="-_."),
+            quote(f"{view_name}_{statistic}", safe="-_."),
+        ),
         filename=filename,
     )
 

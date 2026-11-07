@@ -13,6 +13,7 @@ from d3dplot.variables.registry import (
     render_variable_catalogue,
     suggest_variable_names,
 )
+from d3dplot.variables.sampling import GridSampling, Sampling, SamplingPlan
 
 __all__ = [
     "SelectionTarget",
@@ -20,6 +21,9 @@ __all__ = [
     "VariableKind",
     "VariableLocation",
     "VariableSpec",
+    "GridSampling",
+    "Sampling",
+    "SamplingPlan",
     "canonical_variable_name",
     "get_variable_spec",
     "list_variable_specs",

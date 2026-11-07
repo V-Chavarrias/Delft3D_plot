@@ -25,7 +25,7 @@ def validate_config(data: object) -> tuple[ProjectConfig | None, ValidationRepor
             ValidationIssue(
                 code="V-CFG-001",
                 level="error",
-                location=_format_location(detail["loc"]),
+                location=_format_location(detail["loc"], data=data),
                 message=detail["msg"],
                 hint="Correct the value at this location or remove unsupported fields.",
             )
@@ -45,9 +45,28 @@ def validate_project_config(config: ProjectConfig) -> ValidationReport:
     return ValidationReport(tuple(issues))
 
 
-def _format_location(parts: tuple[str | int, ...]) -> str:
+def _format_location(
+    parts: tuple[str | int, ...],
+    *,
+    data: object = None,
+) -> str:
     if not parts:
         return "$"
+
+    if (
+        isinstance(data, dict)
+        and len(parts) == 2
+        and parts[0] == "analyses"
+        and isinstance(parts[1], str)
+        and isinstance(data.get("analyses"), list)
+    ):
+        matching_indices = tuple(
+            index
+            for index, analysis in enumerate(data["analyses"])
+            if isinstance(analysis, dict) and parts[1] in analysis
+        )
+        if len(matching_indices) == 1:
+            parts = ("analyses", matching_indices[0], parts[1])
 
     location = ""
     for index, part in enumerate(parts):

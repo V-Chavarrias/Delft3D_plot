@@ -16,9 +16,10 @@ configuration schema with `d3dplot schema` and validate it with
 | `xlims`, `ylims` | `map.extents`; `figure.x_limits`, `figure.y_limits` | Map extents and line-plot axis limits are distinct settings. |
 | `clims`, comparison-specific colour limits | `color_limits` | Configure per variable and comparison. |
 | `filter_lims` | `mask_range` | Masks values outside configured ranges. |
+| `do_vector` | `velocity_vectors` | `scaled` or `normalized` velocity arrows on map2d. |
 | `cmap` | `colormap` | Matplotlib colormap name. |
 | `fig_resolution`, `fig_size`, `font_size` | `figure.dpi`, `figure.size_cm`, `figure.font_size` | Applied during common figure finalisation. |
-| `fig_print` | `figure.formats` | Select supported output formats. |
+| `fig_print` | `figure.formats` | Only `png` is supported in v1. |
 | `Lref` | `labels.vertical_datum` | Controls the displayed vertical datum. |
 | `do_movie`, `tim_movie` | `movie: {duration_s: ...}` | Optional movie export from plotted map frames. |
 | Matlab variable aliases such as `bl`, `qsp` | `variables` | Canonical names such as `bed_level` and `specific_discharge` are also accepted. |

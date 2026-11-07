@@ -140,24 +140,20 @@ default report format, and the report is written to
 
 ## Process quantities from Python
 
-The source checkout provides `d3dplot process` and `d3dplot run` through the
-internal project runner. The old helper remains as a compatibility wrapper:
+`d3dplot process` and `d3dplot run` take the YAML or JSON project file directly:
 
 ```powershell
 .\.venv\Scripts\python.exe -m d3dplot prepare project.yaml
-.\.venv\Scripts\python.exe -m d3dplot process data_local\maas_sk_initial_final_bed_level.yml
-# equivalent source-checkout helper:
-.\.venv\Scripts\python.exe tools\process_project.py data_local\maas_sk_initial_final_bed_level.yml
+.\.venv\Scripts\python.exe -m d3dplot process project.yaml
 ```
 
-The helper processes configured `map2d` and `river_km_statistics` quantities
-then invokes the regular `d3dplot plot` stage to create the configured figures.
-It writes guarded caches beneath `output.root`, supports `vertical: all` or
-explicit `vertical.layers`, and rebuilds all selected quantity caches
-regardless of the configured reprocess policy. Use
-`--reuse-inspection-cache` only when intentionally processing against the
-existing grid, merge-plan, and time caches without rechecking model output. It
-opens guarded `.dia` and
+The native runner processes every configured simulation and the built-in
+`map2d`, `river_km_statistics`, and `m1d` analyses. It writes guarded caches
+beneath `output.root`, supports `vertical: all` or explicit
+`vertical.layers`, and honours `reprocess`, `execution.executor`,
+`execution.workers`, and `execution.shard`. Use `--shard i/N` for
+non-overlapping deterministic task subsets; `d3dplot run` skips plotting for a
+sharded run until all shards are complete. It opens guarded `.dia` and
 debug `.log` files before simulation discovery and inspection, so preflight
 failures are recorded under `output.root/d3dplot/logs`. Add `--serial`
 to run sequentially for debugging. It does not modify model or measurement
@@ -168,13 +164,19 @@ It also records river-km, polygon, and profile-measurement reads. Both files are
 flushed as messages arrive, so the `.log` can be used to see which long-running
 operation is currently active.
 
-For the Maas local configuration, the repository-root
-`run_maas_sk_processing.bat` launches this helper on Windows. Pass `--serial`
-to the batch file to run sequentially:
+Third-party analyses can register a config-only model through the
+`d3dplot.analyses` Python entry-point group. The entry point must load an
+`d3dplot.analyses.AnalysisPlugin` value whose `config_model` subclasses
+`AnalysisConfigBase` and declares `analysis` as the matching
+`Literal["plugin_name"]`. The model is included in validation and `schema`;
+`process`, `run`, and `plot` reject it explicitly because plugin runtime
+handlers are not part of this contract.
+
+For the Maas local configuration, invoke the CLI directly:
 
 ```powershell
-.\run_maas_sk_processing.bat
-.\run_maas_sk_processing.bat --serial
+.\.venv\Scripts\python.exe -m d3dplot run data_local\maas_sk_initial_final_bed_level.yml
+.\.venv\Scripts\python.exe -m d3dplot run data_local\maas_sk_initial_final_bed_level.yml --serial
 ```
 
 ## Print the configuration schema

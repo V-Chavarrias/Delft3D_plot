@@ -11,6 +11,8 @@ available in the current package, including known workflow limitations.
 - [From Matlab `D3D_plot`](./from-matlab.md): migrate common options while
   preserving Matlab time-selector and `ba_mor` behavior.
 - [Gallery](./gallery.md): synthetic examples of supported plot views.
+- [Maintainer release guide](./releasing.md): trusted publishing setup and
+  release steps.
 - [Reference](./reference.md): configuration, CLI, output store, variables,
   model input, and simulation discovery.
 

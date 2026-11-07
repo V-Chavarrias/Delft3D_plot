@@ -153,9 +153,16 @@ def verify(case: Path):
     np.testing.assert_array_equal(partition_morft, plain_run.morft)
     np.testing.assert_array_equal(single_time, plain_run.time)
     np.testing.assert_array_equal(single_morft, plain_run.morft)
+    three_d_root = case / "simulations" / "fm_3d"
+    three_d_map = three_d_root / "output_3d" / "dflowfm_map.nc"
+    assert (three_d_root / "synthetic.sub").is_file()
+    with netCDF4.Dataset(three_d_map) as ds:
+        assert ds["mesh2d_ucmag"].dimensions[-1] == "nLayers"
+        assert ds["mesh2d_flowelem_zw"].dimensions[-1] == "nInterfaces"
+        assert ds["mesh2d_cTR1"].dimensions[-1] == "nLayers"
     _ok(
         "plain FM: partitioned and single maps merge to the global mesh "
-        "with 40 expected map times"
+        "with 40 expected map times; 3D FM fields are readable"
     )
 
     # land boundary: .ldb only, readable by HYDROLIB-core

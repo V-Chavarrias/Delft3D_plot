@@ -19,11 +19,18 @@ from d3dplot.analyses.river_km_statistics.process import (
     RiverKmStatisticsError,
     fraction_grouping_choice,
     prepare_region_segments,
+    river_km_statistics_cache_identity,
     write_segment_statistics_cache,
 )
+from d3dplot.config.analysis import ProcessingPolicy
 from d3dplot.execution.cache import CacheFingerprintReadError, read_cache_fingerprints
 from d3dplot.execution.runner import TaskDiagnostic, TaskOutputReport
-from d3dplot.execution.tasks import ProcessTask
+from d3dplot.execution.tasks import (
+    AnalysisTimeSelection,
+    OutputCacheRequest,
+    ProcessTask,
+    read_output_cache_states,
+)
 from d3dplot.paths import resolve_path_preserving_drive
 from d3dplot.simulation.discover import Simulation
 from d3dplot.simulation.inspection import InspectionResult
@@ -141,6 +148,13 @@ class Map2DTaskProcessor:
         self._smb_geometry: dict[
             tuple[str, int],
             tuple[PreparedRegionSegments, ...],
+        ] = {}
+        self._planning_choices: list[str] = []
+        self._planning_issues: list[ValidationIssue] = []
+        self._cache_planned = False
+        self._cache_states: dict[
+            tuple[str, int, QuantityRequest, str],
+            bool,
         ] = {}
 
     def __call__(self, task: ProcessTask) -> Map2DProcessResult:
@@ -286,35 +300,16 @@ class Map2DTaskProcessor:
             }
         )
         for analysis_key in smb_analysis_keys:
-            cache_key = (analysis_key, plan_index)
-            if cache_key in self._smb_geometry:
-                continue
-            try:
-                prepared_segments = prepare_region_segments(
-                    self._river_km_analyses[analysis_key],
-                    grid_geometry,
-                    self._layout,
-                    self._guard,
-                    grid_path,
-                    self._inspection.merge_plan_path,
-                    model_crs=self._model_crs,
-                )
-            except RiverKmStatisticsError as error:
-                raise Map2DProcessError(
-                    ValidationIssue(
-                        code=error.code,
-                        level="error",
-                        location=analysis_key,
-                        message=str(error),
-                        hint=(
-                            "Check the configured river-km regions, geometry, and sets."
-                        ),
-                    )
-                ) from error
-            self._smb_geometry[cache_key] = prepared_segments
-            for item in prepared_segments:
-                choices.extend(item.choices)
-                issues.extend(item.issues)
+            prepared_segments = self._prepare_region_segments(
+                analysis_key,
+                plan_index,
+                grid_path,
+                grid_geometry,
+            )
+            if not self._cache_planned:
+                for item in prepared_segments:
+                    choices.extend(item.choices)
+                    issues.extend(item.issues)
 
         _logger.info(
             "Starting map output session: simulation=%s; task=%s; subrun=%d",
@@ -424,26 +419,6 @@ class Map2DTaskProcessor:
                         request,
                         variable_name=spec.name,
                     )
-                    output_path = map2d_output_path(self._layout, request, entry)
-                    parameters = _fingerprint_parameters(
-                        spec.name,
-                        spec.version,
-                        request,
-                        selection,
-                        self._dtype,
-                        self._on_corrupt_output,
-                        entry,
-                        plan_index,
-                    )
-                    fingerprint = fingerprint_artifact(
-                        kind="map2d_data",
-                        schema_version=CACHE_SCHEMA_VERSION,
-                        tool_version=__version__,
-                        algorithm_version=_MAP2D_ALGORITHM_VERSION,
-                        parameters=parameters,
-                        inputs=input_fingerprints,
-                        time=entry.time.astimezone(UTC).isoformat(),
-                    )
                     map_analysis_names = tuple(
                         dict.fromkeys(
                             work.analysis_key
@@ -452,6 +427,26 @@ class Map2DTaskProcessor:
                             and request in work.quantities
                         )
                     )
+                    output_path, fingerprint, parameters = map2d_cache_identity(
+                        self._layout,
+                        request,
+                        spec,
+                        entry,
+                        plan_index,
+                        input_fingerprints,
+                        dtype=self._dtype,
+                        on_corrupt_output=self._on_corrupt_output,
+                    )
+                    if not any(
+                        self._should_write_output(
+                            analysis_key,
+                            entry,
+                            request,
+                            output_path,
+                        )
+                        for analysis_key in map_analysis_names
+                    ):
+                        continue
                     _logger.info(
                         "Starting map2d cache write: analyses=%s; quantity=%s; "
                         "subrun=%d; time_index=%d; output=%s",
@@ -559,6 +554,7 @@ class Map2DTaskProcessor:
                         if (
                             grouping_choice is not None
                             and grouping_choice not in choices
+                            and not self._cache_planned
                         ):
                             choices.append(grouping_choice)
                         values = _smb_face_values(
@@ -568,6 +564,25 @@ class Map2DTaskProcessor:
                         )
                         for prepared_region in prepared_regions:
                             try:
+                                output_path, _, _ = river_km_statistics_cache_identity(
+                                    self._layout,
+                                    config,
+                                    prepared_region,
+                                    request,
+                                    spec,
+                                    entry,
+                                    plan_index,
+                                    input_fingerprints,
+                                    dtype=self._dtype,
+                                    fraction_diameters_m=fraction_diameters_m,
+                                )
+                                if not self._should_write_output(
+                                    work.analysis_key,
+                                    entry,
+                                    request,
+                                    output_path,
+                                ):
+                                    continue
                                 _logger.info(
                                     "Starting river-km statistics cache write: "
                                     "analysis=%s; region=%s; km_set=%s; quantity=%s; "
@@ -710,6 +725,232 @@ class Map2DTaskProcessor:
             issues=tuple(issues),
         )
 
+    def attach_output_cache_states(
+        self,
+        selections: Sequence[AnalysisTimeSelection],
+        policies: Mapping[str, ProcessingPolicy],
+    ) -> tuple[AnalysisTimeSelection, ...]:
+        """Attach expected cache identities to the selected map outputs."""
+        self._ensure_initialized()
+        reader = self._reader
+        if reader is None:
+            raise RuntimeError("Shared process task processor failed to initialize.")
+
+        subruns = {subrun.index: subrun for subrun in self._simulation.subruns}
+        attached: list[AnalysisTimeSelection] = []
+        for selection in selections:
+            analysis_key = selection.analysis_key
+            policy = policies.get(analysis_key)
+            if policy is None:
+                raise ValueError(f"No reprocess policy for {analysis_key!r}.")
+            if (
+                analysis_key not in self._map2d_analysis_keys
+                and analysis_key not in self._river_km_analyses
+            ):
+                raise ValueError(f"Unknown map analysis key: {analysis_key!r}.")
+
+            cache_requests: list[OutputCacheRequest] = []
+            for entry in selection.selected_entries:
+                subrun = subruns.get(entry.subrun)
+                if subrun is None:
+                    raise ValueError(f"Unknown sub-run index {entry.subrun}.")
+                plan_index = reader.plan_index(entry.subrun)
+                if plan_index >= len(self._inspection.grid_paths):
+                    raise Map2DProcessError(
+                        ValidationIssue(
+                            code="V-OUT-020",
+                            level="error",
+                            location=str(self._inspection.merge_plan_path),
+                            message=(
+                                f"No inspected grid exists for merge plan {plan_index}."
+                            ),
+                            hint="Run inspection again to rebuild the grid cache.",
+                        )
+                    )
+                grid_path = self._inspection.grid_paths[plan_index]
+                input_fingerprints = self._fingerprints(subrun, grid_path)
+                if analysis_key in self._map2d_analysis_keys:
+                    for request in selection.quantities:
+                        spec = get_variable_spec(request.requested_name)
+                        output_path, fingerprint, _ = map2d_cache_identity(
+                            self._layout,
+                            request,
+                            spec,
+                            entry,
+                            plan_index,
+                            input_fingerprints,
+                            dtype=self._dtype,
+                            on_corrupt_output=self._on_corrupt_output,
+                        )
+                        cache_requests.append(
+                            OutputCacheRequest(
+                                time_index=entry.time_index,
+                                request=request,
+                                output_path=output_path,
+                                expected_fingerprint=fingerprint,
+                                policy=policy,
+                            )
+                        )
+                    continue
+
+                config = self._river_km_analyses[analysis_key]
+                grid_geometry = self._grid_geometry(plan_index, grid_path)
+                prepared_regions = self._prepare_region_segments(
+                    analysis_key,
+                    plan_index,
+                    grid_path,
+                    grid_geometry,
+                )
+                sediment = subrun.model_input.sediment
+                fraction_diameters_m = (
+                    tuple(item.effective_diameter_m for item in sediment.fractions)
+                    if sediment is not None
+                    else ()
+                )
+                for request in selection.quantities:
+                    spec = get_variable_spec(request.requested_name)
+                    try:
+                        grouping_choice = fraction_grouping_choice(
+                            config,
+                            request,
+                            spec,
+                            fraction_diameters_m,
+                        )
+                    except RiverKmStatisticsError as error:
+                        raise Map2DProcessError(
+                            ValidationIssue(
+                                code=error.code,
+                                level="error",
+                                location=(f"{analysis_key}/{request.requested_name}"),
+                                message=str(error),
+                                hint=(
+                                    "Check fraction_grouping and the model "
+                                    ".sed grain diameters."
+                                ),
+                            )
+                        ) from error
+                    if (
+                        grouping_choice is not None
+                        and grouping_choice not in self._planning_choices
+                    ):
+                        self._planning_choices.append(grouping_choice)
+                    for prepared in prepared_regions:
+                        output_path, fingerprint, _ = (
+                            river_km_statistics_cache_identity(
+                                self._layout,
+                                config,
+                                prepared,
+                                request,
+                                spec,
+                                entry,
+                                plan_index,
+                                input_fingerprints,
+                                dtype=self._dtype,
+                                fraction_diameters_m=fraction_diameters_m,
+                            )
+                        )
+                        cache_requests.append(
+                            OutputCacheRequest(
+                                time_index=entry.time_index,
+                                request=request,
+                                output_path=output_path,
+                                expected_fingerprint=fingerprint,
+                                policy=policy,
+                            )
+                        )
+            states = read_output_cache_states(cache_requests)
+            self._cache_states.update(
+                {
+                    (
+                        analysis_key,
+                        state.time_index,
+                        state.request,
+                        state.output_path,
+                    ): state.decision.action == "rebuild"
+                    for state in states
+                }
+            )
+            attached.append(replace(selection, output_cache=states))
+
+        return tuple(attached)
+
+    def finish_cache_planning(self) -> None:
+        """Mark cache planning complete before dispatching process tasks."""
+        self._cache_planned = True
+
+    def cache_planning_diagnostics(
+        self,
+    ) -> tuple[tuple[str, ...], tuple[ValidationIssue, ...]]:
+        """Return choices and validation issues found while checking output caches."""
+        return tuple(self._planning_choices), tuple(self._planning_issues)
+
+    def release_planning_resources(self) -> None:
+        """Drop parent-only inspection and geometry objects before worker dispatch."""
+        self._reader = None
+        self._engine = None
+        self._time_axis = None
+        self._geometry.clear()
+        self._input_fingerprints.clear()
+        self._smb_geometry.clear()
+
+    def _prepare_region_segments(
+        self,
+        analysis_key: str,
+        plan_index: int,
+        grid_path: Path,
+        grid_geometry: GridGeometry,
+    ) -> tuple[PreparedRegionSegments, ...]:
+        cache_key = (analysis_key, plan_index)
+        cached = self._smb_geometry.get(cache_key)
+        if cached is not None:
+            return cached
+        try:
+            prepared = prepare_region_segments(
+                self._river_km_analyses[analysis_key],
+                grid_geometry,
+                self._layout,
+                self._guard,
+                grid_path,
+                self._inspection.merge_plan_path,
+                model_crs=self._model_crs,
+            )
+        except RiverKmStatisticsError as error:
+            raise Map2DProcessError(
+                ValidationIssue(
+                    code=error.code,
+                    level="error",
+                    location=analysis_key,
+                    message=str(error),
+                    hint="Check the configured river-km regions, geometry, and sets.",
+                )
+            ) from error
+        self._smb_geometry[cache_key] = prepared
+        if not self._cache_planned:
+            for item in prepared:
+                self._planning_choices.extend(item.choices)
+                self._planning_issues.extend(item.issues)
+        return prepared
+
+    def _should_write_output(
+        self,
+        analysis_key: str,
+        entry: TimeEntry,
+        request: QuantityRequest,
+        output_path: Path,
+    ) -> bool:
+        if not self._cache_planned:
+            return True
+        key = (
+            analysis_key,
+            entry.time_index,
+            request,
+            str(output_path.expanduser().resolve(strict=False)),
+        )
+        state = self._cache_states.get(key)
+        if state is None:
+            raise RuntimeError(f"Output cache state was not planned for {output_path}.")
+        return state
+
     def _ensure_initialized(self) -> None:
         if self._reader is None:
             self._reader = MapReader(
@@ -802,6 +1043,42 @@ def map2d_output_path(
         suffix=(selection,),
         filename=f"{filename}.nc",
     )
+
+
+def map2d_cache_identity(
+    layout: OutputLayout,
+    request: QuantityRequest,
+    spec: VariableSpec,
+    entry: TimeEntry,
+    plan_index: int,
+    input_fingerprints: Sequence[str],
+    *,
+    dtype: Literal["float32", "float64"],
+    on_corrupt_output: Literal["mask", "error", "skip"],
+) -> tuple[Path, str, dict[str, object]]:
+    """Return one map2d output path, fingerprint, and serialized parameters."""
+    selection = quantity_selection_label(request, variable_name=spec.name)
+    output_path = map2d_output_path(layout, request, entry)
+    parameters = _fingerprint_parameters(
+        spec.name,
+        spec.version,
+        request,
+        selection,
+        dtype,
+        on_corrupt_output,
+        entry,
+        plan_index,
+    )
+    fingerprint = fingerprint_artifact(
+        kind="map2d_data",
+        schema_version=CACHE_SCHEMA_VERSION,
+        tool_version=__version__,
+        algorithm_version=_MAP2D_ALGORITHM_VERSION,
+        parameters=parameters,
+        inputs=input_fingerprints,
+        time=entry.time.astimezone(UTC).isoformat(),
+    )
+    return output_path, fingerprint, parameters
 
 
 def map2d_selection_label(request: QuantityRequest) -> str:
@@ -980,6 +1257,7 @@ __all__ = [
     "Map2DProcessError",
     "Map2DProcessResult",
     "Map2DTaskProcessor",
+    "map2d_cache_identity",
     "map2d_output_path",
     "map2d_selection_label",
 ]

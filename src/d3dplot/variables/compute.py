@@ -129,6 +129,78 @@ def velocity_vector(
     return np.stack((eastward, northward), axis=-1)
 
 
+def velocity_magnitude_layer_mean(
+    inputs: Mapping[str, _Array],
+    context: QuantityContext,
+    request: QuantityRequest,
+) -> _Array:
+    """Return the arithmetic mean of velocity magnitude over retained layers."""
+    del context, request
+    values = np.asarray(inputs["velocity_magnitude"], dtype=np.float64)
+    if values.ndim == 1:
+        return values
+    return np.mean(values, axis=1)
+
+
+def chloride_mass(
+    inputs: Mapping[str, _Array],
+    context: QuantityContext,
+    request: QuantityRequest,
+) -> _Array:
+    """Return vertically integrated chloride mass per unit horizontal area."""
+    del context, request
+    salinity = np.asarray(inputs["mesh2d_sa1"], dtype=np.float64)
+    interfaces = np.asarray(inputs["mesh2d_flowelem_zw"], dtype=np.float64)
+    if salinity.ndim != 2 or interfaces.ndim != 2:
+        raise QuantityContextError(
+            "chloride_mass requires face-by-layer salinity and face-by-interface "
+            "elevations."
+        )
+    if interfaces.shape[1] != salinity.shape[1] + 1:
+        raise QuantityContextError(
+            "chloride_mass layer and interface counts do not match."
+        )
+    thickness = np.abs(np.diff(interfaces, axis=1))
+    return np.nansum(salinity / 1.80655 * thickness, axis=1)
+
+
+def residence_time(
+    inputs: Mapping[str, _Array],
+    context: QuantityContext,
+    request: QuantityRequest,
+) -> _Array:
+    """Return Matlab-compatible residence time for one tracer."""
+    conservative = np.asarray(inputs["mesh2d_cTR1"], dtype=np.float64)
+    decaying = np.asarray(inputs["mesh2d_dTR1"], dtype=np.float64)
+    if not context.decay_rates_s_1:
+        raise QuantityContextError("A positive RcDecTR1 decay rate is required.")
+    rate = context.decay_rates_s_1[0]
+    tolerance = 1.5e-7
+    conservative = np.where(conservative > 0, conservative, 0.0)
+    decaying = np.where(decaying > 0, decaying, 0.0)
+    near_equal = decaying > conservative - tolerance
+    decaying = np.where(near_equal, conservative, decaying)
+    valid = (conservative > 0) & (decaying > 0) & (decaying < conservative)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        values = np.log(decaying / conservative) / -rate
+    values = np.where(valid, values, 0.0)
+
+    name = request.requested_name.casefold()
+    if name in {"t_surf", "residence_time_surface"}:
+        return values[:, -1]
+    if name in {"t_da", "residence_time_depth_average"}:
+        interfaces = np.asarray(inputs["mesh2d_flowelem_zw"], dtype=np.float64)
+        thickness = np.abs(np.diff(interfaces, axis=1))
+        total = np.sum(thickness, axis=1)
+        return np.divide(
+            np.sum(values * thickness, axis=1),
+            total,
+            out=np.full(total.shape, np.nan, dtype=np.float64),
+            where=total > 0,
+        )
+    return np.max(values, axis=1)
+
+
 def water_level_rate(
     inputs: Mapping[str, _Array],
     context: QuantityContext,
