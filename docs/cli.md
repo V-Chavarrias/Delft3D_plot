@@ -140,14 +140,11 @@ default report format, and the report is written to
 
 ## Process quantities from Python
 
-The source checkout provides `d3dplot process` and `d3dplot run` through the
-internal project runner. The old helper remains as a compatibility wrapper:
+`d3dplot process` and `d3dplot run` take the YAML or JSON project file directly:
 
 ```powershell
 .\.venv\Scripts\python.exe -m d3dplot prepare project.yaml
-.\.venv\Scripts\python.exe -m d3dplot process data_local\maas_sk_initial_final_bed_level.yml
-# equivalent source-checkout helper:
-.\.venv\Scripts\python.exe tools\process_project.py data_local\maas_sk_initial_final_bed_level.yml
+.\.venv\Scripts\python.exe -m d3dplot process project.yaml
 ```
 
 The native runner processes every configured simulation and the built-in

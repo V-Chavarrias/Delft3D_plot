@@ -2,7 +2,7 @@
 
 Python tool to postprocess and plot Delft3D (D-Flow FM / SMT) results. Version 1 covers 2D maps (`map2d`) and river-km statistics (`river_km_statistics`).
 
-> **Status:** foundations in progress. The package skeleton and [synthetic SMT test case generator](tools/synthetic_smt/README.md) are in place; analysis functionality is being implemented according to [the architecture plan](docs/architecture.md).
+> **Status:** v1 is implemented locally (map2d, river-km statistics, M1D, measurements, and the native `prepare`/`process`/`run` pipeline). Delivery is pending the merge of HYDROLIB-core [PR #1278](https://github.com/Deltares/HYDROLIB-core/pull/1278). The [architecture plan](docs/architecture.md) holds the design and status; the [synthetic SMT test case generator](tools/synthetic_smt/README.md) is available for development.
 
 ## Goals
 

@@ -12,6 +12,8 @@ from typer.testing import CliRunner
 
 from d3dplot.cli import app
 from d3dplot.config import load_config
+from d3dplot.execution import project_runner
+from d3dplot.validate.report import ValidationIssue, ValidationReport
 
 runner = CliRunner()
 
@@ -401,3 +403,51 @@ def _write_config(
         encoding="utf-8",
     )
     return configuration
+
+
+@pytest.mark.integration
+def test_run_inspection_failure_writes_diagnostic_and_debug_logs(
+    synthetic_case: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configuration = _write_config(
+        tmp_path,
+        synthetic_case / "simulations" / "r001",
+        ["bed_level"],
+        output_root=tmp_path / "output",
+    )
+    inspection_report = ValidationReport(
+        (
+            ValidationIssue(
+                "V-OUT-002",
+                "error",
+                "synthetic output",
+                "Morphological time has unsupported units",
+                "Check the output metadata.",
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        project_runner,
+        "inspect_simulation",
+        lambda *args, **kwargs: (None, inspection_report),
+    )
+
+    result = runner.invoke(app, ["run", str(configuration), "--serial"])
+
+    assert result.exit_code == 1, result.output
+    logs_root = tmp_path / "output" / "d3dplot"
+    diagnostic_paths = tuple((logs_root / "logs").glob("d3dplot_*.dia"))
+    assert len(diagnostic_paths) == 1
+    diagnostic_text = diagnostic_paths[0].read_text(encoding="utf-8")
+    assert "Starting simulation discovery:" in diagnostic_text
+    assert "Starting output inspection:" in diagnostic_text
+    assert "V-OUT-002" in diagnostic_text
+    assert "d3dplot stopped" in diagnostic_text
+    validation_reports = tuple((logs_root / "tables").glob("validation_*.txt"))
+    assert len(validation_reports) == 1
+    assert "V-OUT-002" in validation_reports[0].read_text(encoding="utf-8")
+    debug_path = diagnostic_paths[0].with_suffix(".log")
+    assert debug_path.is_file()
+    assert "Starting output inspection:" in debug_path.read_text(encoding="utf-8")
