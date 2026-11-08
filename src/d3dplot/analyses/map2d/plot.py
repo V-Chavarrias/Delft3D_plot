@@ -1345,7 +1345,7 @@ def _figure_path(
     timestamp = time.strftime("%Y%m%dT%H%M%S")
     if time.microsecond:
         timestamp += f".{time.microsecond:06d}"
-    filename = f"{timestamp}_c{color_index + 1}_e{extent_index + 1}.png"
+    filename = f"{timestamp}_e{extent_index + 1}.png"
     prefix: tuple[str, ...] = (series, "map2d", comparison)
     if "_simulation" in comparison or subject == "all_simulations":
         prefix += (quote(subject, safe="-_."),)
@@ -1354,6 +1354,7 @@ def _figure_path(
         OutputArea.FIGURES,
         variable,
         prefix=prefix,
+        suffix=(f"c{color_index + 1}",),
         filename=filename,
     )
 
@@ -1367,7 +1368,7 @@ def _movie_path(
     color_index: int,
     extent_index: int,
 ) -> Path:
-    filename = f"movie_c{color_index + 1}_e{extent_index + 1}.mp4"
+    filename = f"movie_e{extent_index + 1}.mp4"
     parts: tuple[str, ...] = (series, "map2d", comparison)
     if "_simulation" in comparison or subject == "all_simulations":
         parts += (quote(subject, safe="-_."),)
@@ -1376,6 +1377,7 @@ def _movie_path(
         OutputArea.FIGURES,
         variable,
         prefix=parts,
+        suffix=(f"c{color_index + 1}",),
         filename=filename,
     )
 
