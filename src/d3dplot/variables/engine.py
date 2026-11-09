@@ -116,6 +116,10 @@ class QuantityEngine:
             self._sampling_plans[fingerprint] = plan
         return plan
 
+    def register_sampling_plan(self, sampling: Sampling, plan: SamplingPlan) -> None:
+        """Share a plan prepared outside the engine, e.g. loaded from the cache."""
+        self._sampling_plans[sampling.fingerprint()] = plan
+
 
 class QuantityTimeSession:
     """Resolve requests while retaining raw reads for exactly one map output."""
