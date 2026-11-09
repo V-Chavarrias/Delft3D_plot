@@ -18,10 +18,16 @@ from d3dplot.store import (
     atomic_path,
     fingerprint_artifact,
 )
+from d3dplot.variables.geometry import (
+    GridGeometryError,
+    _read_connectivity,
+    _read_float_array,
+)
 from d3dplot.variables.line_sampling import (
     LineCrossings,
     LinePlan,
     LineSampling,
+    LineTopology,
     compute_line_crossings,
 )
 
@@ -69,6 +75,53 @@ def read_pli_polylines(path: str | Path) -> tuple[Polyline, ...]:
     if not polylines:
         raise LineInputError(f"{source} contains no polyline.")
     return tuple(polylines)
+
+
+def read_line_topology(
+    grid_path: str | Path,
+    *,
+    is_geographic: bool,
+) -> LineTopology:
+    """Read the merged node coordinates and face connectivity of an inspection grid.
+
+    The caller supplies ``is_geographic`` from the CRS used for inspection, because
+    the grid file does not record it reliably. Face-node indices are returned
+    zero-based with ``-1`` as fill, as in the grid geometry reader.
+    """
+    from d3dplot.simulation.partitions import _NETCDF4_READ_LOCK
+
+    source = Path(grid_path)
+    try:
+        with _NETCDF4_READ_LOCK:
+            with netCDF4.Dataset(source, mode="r") as dataset:
+                required = ("mesh2d_node_x", "mesh2d_node_y", "mesh2d_face_nodes")
+                missing = [name for name in required if name not in dataset.variables]
+                if missing:
+                    raise LineInputError(
+                        f"{source} lacks {', '.join(missing)}; re-run inspection."
+                    )
+                node_x = _read_float_array(dataset.variables["mesh2d_node_x"])
+                node_y = _read_float_array(dataset.variables["mesh2d_node_y"])
+                face_nodes = _read_connectivity(dataset.variables["mesh2d_face_nodes"])
+        return LineTopology(
+            node_x=node_x,
+            node_y=node_y,
+            face_nodes=face_nodes,
+            is_geographic=is_geographic,
+        )
+    except LineInputError:
+        raise
+    except (
+        GridGeometryError,
+        IndexError,
+        OSError,
+        RuntimeError,
+        TypeError,
+        ValueError,
+    ) as error:
+        raise LineInputError(
+            f"Could not read line topology from {source}: {error}"
+        ) from error
 
 
 def line_crossings_fingerprint(sampling: LineSampling) -> str:
