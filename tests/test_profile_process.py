@@ -16,6 +16,7 @@ from d3dplot.analyses.profile.process import (
     ProfileProcessError,
     ProfileSelection,
     prepare_profile_line,
+    profile_cache_fingerprint,
     profile_cache_path,
     profile_values_at_time,
     read_profile_cache,
@@ -222,6 +223,54 @@ def test_cache_with_another_fingerprint_or_crossing_count_is_rejected(
         read_profile_cache(path, expected_fingerprint="fp-2", expected_crossings=2)
     with pytest.raises(ProfileProcessError, match="invalid crossing count"):
         read_profile_cache(path, expected_fingerprint="fp-1", expected_crossings=3)
+
+
+@pytest.mark.unit
+def test_stale_profile_cache_is_rebuilt_instead_of_failing(
+    layout: OutputLayout, guard: OutputWriteGuard
+) -> None:
+    line = prepare_profile_line("a", _LINE_XY, _square_topology(2, 2), layout, guard)
+    selection = ProfileSelection(variable="mesh2d_ucx")
+    path = profile_cache_path(
+        layout, selection=selection, line_name="a", time=_TIMES[0]
+    )
+    write_profile_cache(
+        path,
+        guard,
+        values=np.full((2, 3), -999.0),
+        line=line,
+        selection=selection,
+        time=_TIMES[0],
+        fingerprint="stale-input",
+    )
+    layered = np.arange(12, dtype=float).reshape(4, 3)
+    messages: list[str] = []
+
+    values = profile_values_at_time(
+        engine=QuantityEngine(),
+        session=_MemoryMapSession({"mesh2d_ucx": layered}),
+        entry=_entry(0),
+        line=line,
+        selection=selection,
+        layout=layout,
+        guard=guard,
+        input_fingerprint="fresh-input",
+        diagnostic=messages.append,
+    )
+
+    np.testing.assert_allclose(values, layered[[0, 1]])
+    assert any("Rebuilding profile cache" in message for message in messages)
+    restored = read_profile_cache(
+        path,
+        expected_fingerprint=profile_cache_fingerprint(
+            input_fingerprint="fresh-input",
+            selection=selection,
+            line=line,
+            time=_TIMES[0],
+        ),
+        expected_crossings=2,
+    )
+    np.testing.assert_allclose(restored, layered[[0, 1]])
 
 
 @pytest.mark.unit

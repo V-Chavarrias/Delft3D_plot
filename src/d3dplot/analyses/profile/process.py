@@ -282,13 +282,19 @@ def profile_values_at_time(
         time=entry.time,
     )
     if path.is_file():
-        if diagnostic is not None:
-            diagnostic(f"Reused profile cache {path.name}.")
-        return read_profile_cache(
-            path,
-            expected_fingerprint=fingerprint,
-            expected_crossings=line.n_crossings,
-        )
+        try:
+            cached = read_profile_cache(
+                path,
+                expected_fingerprint=fingerprint,
+                expected_crossings=line.n_crossings,
+            )
+        except ProfileProcessError as error:
+            if diagnostic is not None:
+                diagnostic(f"Rebuilding profile cache {path.name}: {error}")
+        else:
+            if diagnostic is not None:
+                diagnostic(f"Reused profile cache {path.name}.")
+            return cached
     values = read_profile_values(
         engine,
         session,
