@@ -15,6 +15,7 @@ from d3dplot import __version__
 from d3dplot.analyses.profile.process import (
     ProfileProcessError,
     ProfileSelection,
+    ProfileTimeReader,
     prepare_profile_line,
     profile_cache_fingerprint,
     profile_cache_path,
@@ -27,7 +28,6 @@ from d3dplot.analyses.profile.process import (
 from d3dplot.simulation.map_reader import MapReadResult
 from d3dplot.simulation.time_axis import TimeEntry
 from d3dplot.store import OutputLayout, OutputWriteGuard, initialize_output_root
-from d3dplot.variables.context import QuantityContext
 from d3dplot.variables.engine import QuantityEngine
 from d3dplot.variables.line_crossings_cache import Polyline
 from d3dplot.variables.line_sampling import LineTopology
@@ -153,16 +153,12 @@ def test_section_values_keep_the_layer_axis(
     topology = _square_topology(2, 2)
     line = prepare_profile_line("a", _LINE_XY, topology, layout, guard)
     layered = np.arange(12, dtype=float).reshape(4, 3)
-    engine = QuantityEngine()
-    session = _MemoryMapSession({"mesh2d_ucx": layered})
-
     values = read_profile_values(
-        engine,
-        session,
-        _entry(0),
+        ProfileTimeReader(
+            QuantityEngine(), _MemoryMapSession({"mesh2d_ucx": layered}), _entry(0)
+        ),
         line,
         ProfileSelection(variable="mesh2d_ucx"),
-        QuantityContext(),
     )
 
     assert values.shape == (2, 3)
@@ -247,9 +243,9 @@ def test_stale_profile_cache_is_rebuilt_instead_of_failing(
     messages: list[str] = []
 
     values = profile_values_at_time(
-        engine=QuantityEngine(),
-        session=_MemoryMapSession({"mesh2d_ucx": layered}),
-        entry=_entry(0),
+        reader=ProfileTimeReader(
+            QuantityEngine(), _MemoryMapSession({"mesh2d_ucx": layered}), _entry(0)
+        ),
         line=line,
         selection=selection,
         layout=layout,
@@ -291,17 +287,19 @@ def test_crossings_are_computed_once_for_every_time_and_variable(
     engine = QuantityEngine()
     messages: list[str] = []
     for local_index in range(len(_TIMES)):
-        session = _MemoryMapSession(
-            {"mesh2d_s1": faces * (local_index + 1), "mesh2d_ucx": other}
+        reader = ProfileTimeReader(
+            engine,
+            _MemoryMapSession(
+                {"mesh2d_s1": faces * (local_index + 1), "mesh2d_ucx": other}
+            ),
+            _entry(local_index),
         )
         for variable, expected in (
             ("mesh2d_s1", faces[[0, 1]] * (local_index + 1)),
             ("mesh2d_ucx", other[[0, 1]]),
         ):
             values = profile_values_at_time(
-                engine=engine,
-                session=session,
-                entry=_entry(local_index),
+                reader=reader,
                 line=line,
                 selection=ProfileSelection(variable=variable),
                 layout=layout,
@@ -314,9 +312,11 @@ def test_crossings_are_computed_once_for_every_time_and_variable(
     assert not any(message.startswith("Reused") for message in messages)
     # A session with different data proves the slice is read back from the cache.
     cached = profile_values_at_time(
-        engine=engine,
-        session=_MemoryMapSession({"mesh2d_s1": faces * 100.0, "mesh2d_ucx": other}),
-        entry=_entry(0),
+        reader=ProfileTimeReader(
+            engine,
+            _MemoryMapSession({"mesh2d_s1": faces * 100.0, "mesh2d_ucx": other}),
+            _entry(0),
+        ),
         line=line,
         selection=ProfileSelection(variable="mesh2d_s1"),
         layout=layout,

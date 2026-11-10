@@ -25,7 +25,11 @@ from d3dplot.store import (
 )
 from d3dplot.store.paths import OutputArea, build_quantity_output_path
 from d3dplot.variables.context import QuantityContext, QuantityRequest
-from d3dplot.variables.engine import QuantityEngine, QuantityReaderSession
+from d3dplot.variables.engine import (
+    QuantityEngine,
+    QuantityReaderSession,
+    QuantityTimeSession,
+)
 from d3dplot.variables.line_crossings_cache import Polyline, prepare_line_plan
 from d3dplot.variables.line_sampling import LinePlan, LineSampling, LineTopology
 from d3dplot.variables.registry import get_variable_spec
@@ -123,19 +127,52 @@ def prepare_profile_line(
     return ProfileLine(name=name, sampling=sampling, plan=plan)
 
 
+class ProfileTimeReader:
+    """Samples profile quantities at one time, sharing one per-time session.
+
+    The quantity session opens on first use, so a time whose slices are all
+    cached never touches the model output.
+    """
+
+    def __init__(
+        self,
+        engine: QuantityEngine,
+        session: QuantityReaderSession,
+        entry: TimeEntry,
+        context: QuantityContext | None = None,
+    ) -> None:
+        self._engine = engine
+        self._session = session
+        self._entry = entry
+        self._context = QuantityContext() if context is None else context
+        self._quantities: QuantityTimeSession | None = None
+
+    @property
+    def entry(self) -> TimeEntry:
+        return self._entry
+
+    def quantities(self) -> QuantityTimeSession:
+        """Return the per-time session, opening it on the first call."""
+        if self._quantities is None:
+            self._quantities = self._engine.at_time(
+                self._session, self._entry, self._context
+            )
+        return self._quantities
+
+    def register(self, line: ProfileLine) -> None:
+        """Share the line's sampling plan with the engine before sampling."""
+        self._engine.register_sampling_plan(line.sampling, line.plan)
+
+
 def read_profile_values(
-    engine: QuantityEngine,
-    session: QuantityReaderSession,
-    entry: TimeEntry,
+    reader: ProfileTimeReader,
     line: ProfileLine,
     selection: ProfileSelection,
-    context: QuantityContext,
 ) -> np.ndarray:
     """Sample one quantity along a line at one time, keeping any layer axis."""
-    engine.register_sampling_plan(line.sampling, line.plan)
-    quantity = engine.at_time(session, entry, context)
+    reader.register(line)
     values = np.asarray(
-        quantity.get(
+        reader.quantities().get(
             QuantityRequest(
                 requested_name=selection.variable,
                 layers=selection.layers,
@@ -197,6 +234,39 @@ def profile_cache_path(
     )
 
 
+def write_values_cache(
+    path: Path,
+    guard: OutputWriteGuard,
+    *,
+    values: np.ndarray,
+    distance_m: np.ndarray,
+    fingerprint: str,
+    second_dimension: str,
+    attributes: dict[str, str],
+) -> None:
+    """Write one atomic, fingerprinted crossing table (float32 on disk, D26)."""
+    data = np.asarray(values, dtype=np.float64)
+    if data.ndim not in (1, 2) or data.shape[0] != distance_m.shape[0]:
+        raise ProfileProcessError(
+            "Profile cache values must have one row per crossing of the line."
+        )
+    with atomic_path(path, guard) as temporary:
+        with netCDF4.Dataset(temporary, mode="w", format="NETCDF4") as dataset:
+            dataset.createDimension("crossing", data.shape[0])
+            distance = dataset.createVariable("distance_m", "f8", ("crossing",))
+            distance[:] = distance_m
+            if data.ndim == 1:
+                dimensions: tuple[str, ...] = ("crossing",)
+            else:
+                dataset.createDimension(second_dimension, data.shape[1])
+                dimensions = ("crossing", second_dimension)
+            values_variable = dataset.createVariable("values", "f4", dimensions)
+            values_variable[:] = data.astype(np.float32)
+            dataset.setncattr("d3dplot_fingerprint", fingerprint)
+            for key, value in attributes.items():
+                dataset.setncattr(key, value)
+
+
 def write_profile_cache(
     path: Path,
     guard: OutputWriteGuard,
@@ -208,28 +278,20 @@ def write_profile_cache(
     fingerprint: str,
 ) -> None:
     """Write one atomic, fingerprinted profile slice (float32 on disk, D26)."""
-    data = np.asarray(values, dtype=np.float64)
-    if data.ndim not in (1, 2) or data.shape[0] != line.n_crossings:
-        raise ProfileProcessError(
-            "Profile cache values must have one row per crossing of the line."
-        )
-    with atomic_path(path, guard) as temporary:
-        with netCDF4.Dataset(temporary, mode="w", format="NETCDF4") as dataset:
-            dataset.createDimension("crossing", data.shape[0])
-            distance = dataset.createVariable("distance_m", "f8", ("crossing",))
-            distance[:] = line.distance_m
-            if data.ndim == 1:
-                dimensions: tuple[str, ...] = ("crossing",)
-            else:
-                dataset.createDimension("layer", data.shape[1])
-                dimensions = ("crossing", "layer")
-            values_variable = dataset.createVariable("values", "f4", dimensions)
-            values_variable[:] = data.astype(np.float32)
-            dataset.setncattr("d3dplot_fingerprint", fingerprint)
-            dataset.setncattr("variable", selection.variable)
-            dataset.setncattr("line", line.name)
-            dataset.setncattr("time", time.isoformat())
-            dataset.setncattr("selection", json.dumps(selection.parameters()))
+    write_values_cache(
+        path,
+        guard,
+        values=values,
+        distance_m=line.distance_m,
+        fingerprint=fingerprint,
+        second_dimension="layer",
+        attributes={
+            "variable": selection.variable,
+            "line": line.name,
+            "time": time.isoformat(),
+            "selection": json.dumps(selection.parameters()),
+        },
+    )
 
 
 def read_profile_cache(
@@ -257,75 +319,157 @@ def read_profile_cache(
 
 def profile_values_at_time(
     *,
-    engine: QuantityEngine,
-    session: QuantityReaderSession,
-    entry: TimeEntry,
+    reader: ProfileTimeReader,
     line: ProfileLine,
     selection: ProfileSelection,
     layout: OutputLayout,
     guard: OutputWriteGuard,
     input_fingerprint: str,
-    context: QuantityContext | None = None,
     diagnostic: Callable[[str], None] | None = None,
 ) -> np.ndarray:
     """Return one sampled slice, reusing its cache file when the fingerprint matches."""
+    time = reader.entry.time
     fingerprint = profile_cache_fingerprint(
         input_fingerprint=input_fingerprint,
         selection=selection,
         line=line,
-        time=entry.time,
+        time=time,
     )
     path = profile_cache_path(
         layout,
         selection=selection,
         line_name=line.name,
-        time=entry.time,
+        time=time,
     )
-    if path.is_file():
-        try:
-            cached = read_profile_cache(
-                path,
-                expected_fingerprint=fingerprint,
-                expected_crossings=line.n_crossings,
-            )
-        except ProfileProcessError as error:
-            if diagnostic is not None:
-                diagnostic(f"Rebuilding profile cache {path.name}: {error}")
-        else:
-            if diagnostic is not None:
-                diagnostic(f"Reused profile cache {path.name}.")
-            return cached
-    values = read_profile_values(
-        engine,
-        session,
-        entry,
-        line,
-        selection,
-        QuantityContext() if context is None else context,
-    )
+    cached = _reuse_cache(path, fingerprint, line.n_crossings, diagnostic)
+    if cached is not None:
+        return cached
+    values = read_profile_values(reader, line, selection)
     write_profile_cache(
         path,
         guard,
         values=values,
         line=line,
         selection=selection,
-        time=entry.time,
+        time=time,
         fingerprint=fingerprint,
     )
     return values
+
+
+def _reuse_cache(
+    path: Path,
+    fingerprint: str,
+    expected_crossings: int,
+    diagnostic: Callable[[str], None] | None,
+) -> np.ndarray | None:
+    """Return a verified cache file, or None when it is missing or stale."""
+    if not path.is_file():
+        return None
+    try:
+        cached = read_profile_cache(
+            path,
+            expected_fingerprint=fingerprint,
+            expected_crossings=expected_crossings,
+        )
+    except ProfileProcessError as error:
+        if diagnostic is not None:
+            diagnostic(f"Rebuilding profile cache {path.name}: {error}")
+        return None
+    if diagnostic is not None:
+        diagnostic(f"Reused profile cache {path.name}.")
+    return cached
+
+
+def interfaces_cache_fingerprint(
+    *,
+    input_fingerprint: str,
+    line: ProfileLine,
+    time: datetime,
+) -> str:
+    """Build the identity of the vertical interfaces cached for one line and time."""
+    return fingerprint_artifact(
+        kind="profile_interfaces",
+        schema_version=CACHE_SCHEMA_VERSION,
+        tool_version="d3dplot",
+        algorithm_version=_PROFILE_CACHE_ALGORITHM_VERSION,
+        parameters={"line": line.name},
+        inputs=[input_fingerprint, line.sampling.fingerprint()],
+        time=time.isoformat(),
+    )
+
+
+def interfaces_cache_path(
+    layout: OutputLayout,
+    *,
+    line_name: str,
+    time: datetime,
+) -> Path:
+    """Return one guarded per-time cache path for the vertical interfaces."""
+    filename = format_hydrodynamic_timestamp(time)
+    return build_quantity_output_path(
+        layout,
+        OutputArea.CACHE_DATA,
+        "vertical_interfaces",
+        prefix=("profile-interfaces",),
+        suffix=(line_name,),
+        filename=f"{filename}.nc",
+    )
+
+
+def profile_interfaces_at_time(
+    *,
+    reader: ProfileTimeReader,
+    line: ProfileLine,
+    layout: OutputLayout,
+    guard: OutputWriteGuard,
+    input_fingerprint: str,
+    diagnostic: Callable[[str], None] | None = None,
+) -> np.ndarray:
+    """Return the vertical interfaces at the crossing faces, shape (crossings, n+1)."""
+    time = reader.entry.time
+    fingerprint = interfaces_cache_fingerprint(
+        input_fingerprint=input_fingerprint,
+        line=line,
+        time=time,
+    )
+    path = interfaces_cache_path(layout, line_name=line.name, time=time)
+    cached = _reuse_cache(path, fingerprint, line.n_crossings, diagnostic)
+    if cached is not None:
+        return cached
+    reader.register(line)
+    all_interfaces: np.ndarray = np.asarray(
+        reader.quantities().vertical_interfaces(), dtype=np.float64
+    )
+    interfaces: np.ndarray = all_interfaces[line.plan.crossings.face_index]
+    write_values_cache(
+        path,
+        guard,
+        values=interfaces,
+        distance_m=line.distance_m,
+        fingerprint=fingerprint,
+        second_dimension="interface",
+        attributes={"line": line.name, "time": time.isoformat()},
+    )
+    return interfaces
 
 
 __all__ = [
     "ProfileLine",
     "ProfileProcessError",
     "ProfileSelection",
+    "ProfileTimeReader",
     "VerticalSelection",
+    "interfaces_cache_fingerprint",
+    "interfaces_cache_path",
     "prepare_profile_line",
     "profile_cache_fingerprint",
     "profile_cache_path",
+    "profile_interfaces_at_time",
     "profile_values_at_time",
     "read_profile_cache",
     "read_profile_values",
     "select_polyline",
     "write_profile_cache",
+    "write_values_cache",
 ]
