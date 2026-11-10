@@ -51,6 +51,40 @@ def test_profile_config_rejects_unknown_view() -> None:
 
 
 @pytest.mark.unit
+def test_profile_config_rejects_difference_comparisons() -> None:
+    with pytest.raises(ValidationError, match="'value' comparison"):
+        _config(comparisons=["value", "difference_time"])
+
+
+@pytest.mark.unit
+def test_section_view_requires_all_layers() -> None:
+    with pytest.raises(ValidationError, match="vertical: all"):
+        _config(views=["section"], vertical="top")
+
+
+@pytest.mark.unit
+def test_space_time_and_section_reject_several_fractions_without_sum() -> None:
+    with pytest.raises(ValidationError, match="one fraction or sum_fractions"):
+        _config(views=["space_time"], fractions=[1, 2])
+    with pytest.raises(ValidationError, match="one fraction or sum_fractions"):
+        _config(views=["section"], fractions=[1, 2])
+
+
+@pytest.mark.unit
+def test_space_time_accepts_several_fractions_when_summed() -> None:
+    config = _config(views=["space_time"], fractions=[1, 2], sum_fractions=True)
+
+    assert config.views == ["space_time"]
+
+
+@pytest.mark.unit
+def test_profile_view_accepts_several_fractions_as_separate_series() -> None:
+    config = _config(views=["profile"], fractions=[1, 2])
+
+    assert config.fractions == [1, 2]
+
+
+@pytest.mark.unit
 def test_profile_line_names_and_polyline_names_must_be_trimmed() -> None:
     with pytest.raises(ValidationError, match="trimmed"):
         _line(" a ")

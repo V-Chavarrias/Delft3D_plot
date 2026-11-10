@@ -54,6 +54,8 @@ class ProfileSelection:
     vertical: VerticalSelection = "all"
     elevation: float | None = None
     z_range: tuple[float, float] | None = None
+    fractions: tuple[int, ...] | None = None
+    sum_fractions: bool = False
 
     def parameters(self) -> dict[str, Any]:
         """Return the canonical description used in fingerprints and file names."""
@@ -63,6 +65,8 @@ class ProfileSelection:
             "vertical": self.vertical,
             "elevation": self.elevation,
             "z_range": None if self.z_range is None else list(self.z_range),
+            "fractions": None if self.fractions is None else list(self.fractions),
+            "sum_fractions": self.sum_fractions,
         }
 
     def label(self) -> str:
@@ -179,6 +183,8 @@ def read_profile_values(
                 vertical=selection.vertical,
                 elevation=selection.elevation,
                 z_range=selection.z_range,
+                fractions=selection.fractions,
+                sum_fractions=selection.sum_fractions,
                 sampling=line.sampling,
             )
         ),

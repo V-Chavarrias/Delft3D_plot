@@ -69,5 +69,26 @@ class ProfileConfig(AnalysisConfigBase):
             raise ValueError("Profile line names must be unique.")
         return self
 
+    @model_validator(mode="after")
+    def validate_profile_options(self) -> ProfileConfig:
+        if self.comparisons != ["value"]:
+            raise ValueError(
+                "Profile analysis supports only the 'value' comparison for now."
+            )
+        if "section" in self.views and self.vertical != "all":
+            raise ValueError("The 'section' view requires vertical: all.")
+        single_fraction_views = {"space_time", "section"} & set(self.views)
+        if (
+            single_fraction_views
+            and not self.sum_fractions
+            and isinstance(self.fractions, list)
+            and len(self.fractions) > 1
+        ):
+            raise ValueError(
+                "The 'space_time' and 'section' views need one fraction or "
+                "sum_fractions: true."
+            )
+        return self
+
 
 __all__ = ["ProfileConfig", "ProfileLineConfig", "ProfileView"]
