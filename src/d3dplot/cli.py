@@ -18,7 +18,7 @@ import typer
 import yaml
 
 from d3dplot import __version__
-from d3dplot.analyses.m1d.stage import plot_m1d_stage
+from d3dplot.analyses.map1d.stage import plot_map1d_stage
 from d3dplot.analyses.map2d.plot import Map2DPlotError
 from d3dplot.analyses.registry import builtin_analysis_names
 from d3dplot.analyses.river_km_statistics.measurements import (
@@ -1325,8 +1325,8 @@ def _run_plot_stage(
                         f"reused={len(river_km_result.reused_paths)}."
                     )
                 if diagnostic_log is not None:
-                    diagnostic_log.info("Starting M1D plotting stage.")
-                m1d_result = plot_m1d_stage(
+                    diagnostic_log.info("Starting map1d plotting stage.")
+                map1d_result = plot_map1d_stage(
                     replayable_config,
                     analysis_name=analysis_name,
                     simulation_label=simulation_label,
@@ -1336,9 +1336,9 @@ def _run_plot_stage(
                 )
                 if diagnostic_log is not None:
                     diagnostic_log.info(
-                        "Finished M1D plotting stage: "
-                        f"written={len(m1d_result.output_paths)}; "
-                        f"reused={len(m1d_result.reused_paths)}."
+                        "Finished map1d plotting stage: "
+                        f"written={len(map1d_result.output_paths)}; "
+                        f"reused={len(map1d_result.reused_paths)}."
                     )
                 if diagnostic_log is not None:
                     diagnostic_log.info("Starting PRF plotting stage.")
@@ -1356,19 +1356,19 @@ def _run_plot_stage(
                     )
             else:
                 river_km_result = None
-                m1d_result = None
+                map1d_result = None
                 profile_result = None
             result = PlotStageResult(
                 output_paths=(
                     map_result.output_paths
                     + (() if river_km_result is None else river_km_result.output_paths)
-                    + (() if m1d_result is None else m1d_result.output_paths)
+                    + (() if map1d_result is None else map1d_result.output_paths)
                     + (() if profile_result is None else profile_result.output_paths)
                 ),
                 reused_paths=(
                     map_result.reused_paths
                     + (() if river_km_result is None else river_km_result.reused_paths)
-                    + (() if m1d_result is None else m1d_result.reused_paths)
+                    + (() if map1d_result is None else map1d_result.reused_paths)
                     + (() if profile_result is None else profile_result.reused_paths)
                 ),
                 movie_paths=map_result.movie_paths,
@@ -1376,7 +1376,7 @@ def _run_plot_stage(
                 messages=(
                     map_result.messages
                     + (() if river_km_result is None else river_km_result.messages)
-                    + (() if m1d_result is None else m1d_result.messages)
+                    + (() if map1d_result is None else map1d_result.messages)
                 ),
             )
             if diagnostic_log is not None:
@@ -1483,7 +1483,7 @@ def init(
         typer.Option(
             "--analyses",
             help=(
-                "Comma-separated built-in analyses: m1d, map2d, "
+                "Comma-separated built-in analyses: map1d, map2d, "
                 "river_km_statistics, profile."
             ),
         ),
@@ -2102,7 +2102,7 @@ def _starter_config(
                 }
             ]
             analysis["river_km"] = {"file": "path/to/river_km.ldb"}
-        elif name == "m1d":
+        elif name == "map1d":
             analysis.update(
                 {
                     "branches": [["replace_with_branch"]],

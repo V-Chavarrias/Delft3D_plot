@@ -1,4 +1,4 @@
-# M1D testcase translated from c:\projects\00_codes\VI-184_sre_convert\main_plot_01.m.
+# map1d testcase translated from c:\projects\00_codes\VI-184_sre_convert\main_plot_01.m.
 # The simulation input is read-only; all d3dplot output is local.
 simulations:
   - path: 'p:\11212812-008-riverlab-2026\06_simulations\03\r003'
@@ -7,11 +7,11 @@ reference_simulation: RTC
 language: en
 series: "01"
 output:
-  root: './data_local/m1d_riverlab_r003_output'
+  root: './data_local/map1d_riverlab_r003_output'
   forbidden_roots:
     - 'p:\'
 analyses:
-  - analysis: m1d
+  - analysis: map1d
     variables: [h, bed_level]
     branches:
       - [NRHBR, NRHBR2, WL, WLds]

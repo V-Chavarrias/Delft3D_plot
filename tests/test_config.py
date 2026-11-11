@@ -13,7 +13,7 @@ import yaml
 from pydantic import ValidationError
 
 from d3dplot.analyses import AnalysisPlugin
-from d3dplot.analyses.m1d.config import M1DConfig
+from d3dplot.analyses.map1d.config import Map1DConfig
 from d3dplot.analyses.map2d.config import Map2DConfig
 from d3dplot.analyses.registry import (
     builtin_analysis_names,
@@ -197,8 +197,8 @@ def test_defaults_and_global_figure_inheritance() -> None:
 
 
 @pytest.mark.unit
-def test_m1d_configuration_validates_branch_metadata() -> None:
-    config = M1DConfig.model_validate(
+def test_map1d_configuration_validates_branch_metadata() -> None:
+    config = Map1DConfig.model_validate(
         {
             "variables": ["h"],
             "branches": [
@@ -211,12 +211,12 @@ def test_m1d_configuration_validates_branch_metadata() -> None:
             "comparisons": ["value", "difference_time"],
         }
     )
-    assert config.analysis == "m1d"
+    assert config.analysis == "map1d"
     assert config.variables == ["h"]
     assert config.branch_names == ["w", "k"]
 
     with pytest.raises(ValueError, match="equal lengths"):
-        M1DConfig.model_validate(
+        Map1DConfig.model_validate(
             {
                 "variables": ["h"],
                 "branches": [["A"], ["B"]],
@@ -228,11 +228,12 @@ def test_m1d_configuration_validates_branch_metadata() -> None:
 @pytest.mark.unit
 def test_builtin_analysis_registry_is_stable() -> None:
     assert builtin_analysis_names() == (
-        "m1d",
+        "map1d",
         "map2d",
+        "profile",
         "river_km_statistics",
     )
-    assert is_builtin_analysis("m1d")
+    assert is_builtin_analysis("map1d")
     assert not is_builtin_analysis("unknown")
 
 
@@ -240,7 +241,7 @@ def test_builtin_analysis_registry_is_stable() -> None:
 def test_plugin_analysis_config_is_validated_and_exported(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    class PluginConfig(M1DConfig):
+    class PluginConfig(Map1DConfig):
         analysis: Literal["test_plugin"] = "test_plugin"
         plugin_option: int = 3
 

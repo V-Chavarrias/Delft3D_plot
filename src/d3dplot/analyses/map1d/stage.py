@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""M1D plotting stage for one-dimensional D-Flow FM map files."""
+"""map1d plotting stage for one-dimensional D-Flow FM map files."""
 
 from __future__ import annotations
 
@@ -15,23 +15,23 @@ from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
 from d3dplot import __version__
-from d3dplot.analyses.m1d.config import M1DConfig
-from d3dplot.analyses.m1d.plot import (
+from d3dplot.analyses.map1d.config import Map1DConfig
+from d3dplot.analyses.map1d.plot import (
     comparison_values,
     create_all_times_view,
     create_profile_view,
     create_space_time_view,
 )
-from d3dplot.analyses.m1d.process import (
-    M1DChain,
-    M1DGrid,
-    M1DProcessError,
-    m1d_cache_fingerprint,
-    m1d_cache_path,
-    read_m1d_cache,
-    read_m1d_quantity_series,
-    read_m1d_river_km_coordinates,
-    write_m1d_cache,
+from d3dplot.analyses.map1d.process import (
+    Map1DChain,
+    Map1DGrid,
+    Map1DProcessError,
+    map1d_cache_fingerprint,
+    map1d_cache_path,
+    read_map1d_cache,
+    read_map1d_quantity_series,
+    read_map1d_river_km_coordinates,
+    write_map1d_cache,
 )
 from d3dplot.analyses.river_km_statistics.measurements import (
     ProfileMeasurement,
@@ -58,8 +58,8 @@ DiagnosticSink = Callable[[str], None]
 
 
 @dataclass(frozen=True, slots=True)
-class M1DStageResult:
-    """Figures and processed quantity caches produced by the M1D stage."""
+class Map1DStageResult:
+    """Figures and processed quantity caches produced by the map1d stage."""
 
     output_paths: tuple[Path, ...]
     reused_paths: tuple[Path, ...]
@@ -68,15 +68,15 @@ class M1DStageResult:
     reused_cache_paths: tuple[Path, ...] = ()
 
 
-def plot_m1d_stage(
+def plot_map1d_stage(
     project: ProjectConfig,
     *,
     analysis_name: str | None = None,
     simulation_label: str | None = None,
     diagnostic: DiagnosticSink | None = None,
-) -> M1DStageResult:
-    """Render configured M1D views from one-dimensional map output."""
-    return _run_m1d_stage(
+) -> Map1DStageResult:
+    """Render configured map1d views from one-dimensional map output."""
+    return _run_map1d_stage(
         project,
         analysis_name=analysis_name,
         simulation_label=simulation_label,
@@ -85,15 +85,15 @@ def plot_m1d_stage(
     )
 
 
-def process_m1d_stage(
+def process_map1d_stage(
     project: ProjectConfig,
     *,
     analysis_name: str | None = None,
     simulation_label: str | None = None,
     diagnostic: DiagnosticSink | None = None,
-) -> M1DStageResult:
-    """Build configured M1D quantity caches without rendering figures."""
-    return _run_m1d_stage(
+) -> Map1DStageResult:
+    """Build configured map1d quantity caches without rendering figures."""
+    return _run_map1d_stage(
         project,
         analysis_name=analysis_name,
         simulation_label=simulation_label,
@@ -102,21 +102,21 @@ def process_m1d_stage(
     )
 
 
-def _run_m1d_stage(
+def _run_map1d_stage(
     project: ProjectConfig,
     *,
     analysis_name: str | None,
     simulation_label: str | None,
     diagnostic: DiagnosticSink | None,
     render_figures: bool,
-) -> M1DStageResult:
+) -> Map1DStageResult:
     outputs: list[Path] = []
     reused: list[Path] = []
     messages: list[str] = []
     cache_paths: list[Path] = []
     reused_cache_paths: list[Path] = []
     for analysis_index, configured in enumerate(project.analyses):
-        if not isinstance(configured, M1DConfig):
+        if not isinstance(configured, Map1DConfig):
             continue
         if analysis_name is not None and analysis_name != configured.analysis:
             continue
@@ -136,7 +136,7 @@ def _run_m1d_stage(
             messages.extend(result.messages)
             cache_paths.extend(result.cache_paths)
             reused_cache_paths.extend(result.reused_cache_paths)
-    return M1DStageResult(
+    return Map1DStageResult(
         tuple(outputs),
         tuple(reused),
         tuple(messages),
@@ -148,14 +148,14 @@ def _run_m1d_stage(
 def _plot_analysis(
     project: ProjectConfig,
     simulation: SimulationConfig,
-    analysis: M1DConfig,
+    analysis: Map1DConfig,
     analysis_index: int,
     *,
     diagnostic: DiagnosticSink | None,
     render_figures: bool,
-) -> M1DStageResult:
+) -> Map1DStageResult:
     map_path, fallback_message = _map_path_for_simulation(simulation)
-    grid = M1DGrid.from_map(map_path)
+    grid = Map1DGrid.from_map(map_path)
     times = _read_times(map_path)
     indices = _select_time_indices(times, analysis)
     selected_times = tuple(times[index] for index in indices)
@@ -216,7 +216,7 @@ def _plot_analysis(
             x_values = None
             x_label = "Distance (m)"
             if analysis.river_km is not None and render_figures:
-                x_values = read_m1d_river_km_coordinates(
+                x_values = read_map1d_river_km_coordinates(
                     chain,
                     analysis.river_km.file,
                     tolerance_m=analysis.river_km.tolerance_m,
@@ -236,7 +236,7 @@ def _plot_analysis(
             if cache_message is not None:
                 messages.append(cache_message)
             time_cache_paths = tuple(
-                m1d_cache_path(
+                map1d_cache_path(
                     layout,
                     variable=variable,
                     chain_name=chain.name,
@@ -245,14 +245,14 @@ def _plot_analysis(
                 for time in selected_times
             )
             if cache_message is not None and cache_message.startswith(
-                "Reused M1D cache:"
+                "Reused map1d cache:"
             ):
                 reused_cache_paths.extend(time_cache_paths)
             else:
                 cache_paths.extend(time_cache_paths)
             if not render_figures:
                 messages.append(
-                    f"M1D processed {simulation.label}/{chain_name}/{variable}."
+                    f"map1d processed {simulation.label}/{chain_name}/{variable}."
                 )
                 if diagnostic is not None:
                     diagnostic(messages[-1])
@@ -277,7 +277,7 @@ def _plot_analysis(
                     )
                     if reference_fallback is not None:
                         messages.append(reference_fallback)
-                    reference_grid = M1DGrid.from_map(reference_path)
+                    reference_grid = Map1DGrid.from_map(reference_path)
                     reference_times = _read_times(reference_path)
                     reference_indices = _match_time_indices(
                         selected_times,
@@ -297,8 +297,8 @@ def _plot_analysis(
                         reference_chain.offsets_m,
                         equal_nan=False,
                     ):
-                        raise M1DProcessError(
-                            f"M1D comparison chain coordinates differ for "
+                        raise Map1DProcessError(
+                            f"map1d comparison chain coordinates differ for "
                             f"{chain_name!r}."
                         )
                     reference_layout = OutputLayout.for_simulation(
@@ -343,7 +343,7 @@ def _plot_analysis(
                 for limit_index, (x_limits, y_limits) in enumerate(
                     _axis_limit_pairs(style, variable, comparison)
                 ):
-                    _render_m1d_views(
+                    _render_map1d_views(
                         project=project,
                         analysis=analysis,
                         simulation=simulation,
@@ -370,11 +370,11 @@ def _plot_analysis(
                         reused=reused,
                     )
             messages.append(
-                f"M1D processed {simulation.label}/{chain_name}/{variable}."
+                f"map1d processed {simulation.label}/{chain_name}/{variable}."
             )
             if diagnostic is not None:
                 diagnostic(messages[-1])
-    return M1DStageResult(
+    return Map1DStageResult(
         tuple(outputs),
         tuple(reused),
         tuple(messages),
@@ -383,14 +383,14 @@ def _plot_analysis(
     )
 
 
-def _render_m1d_views(
+def _render_map1d_views(
     *,
     project: ProjectConfig,
-    analysis: M1DConfig,
+    analysis: Map1DConfig,
     simulation: SimulationConfig,
     analysis_index: int,
     variable: str,
-    chain: M1DChain,
+    chain: Map1DChain,
     chain_name: str,
     chain_title: str,
     selected_times: tuple[datetime, ...],
@@ -559,14 +559,14 @@ def _read_or_process_series(
     layout: OutputLayout,
     guard: OutputWriteGuard,
     variable: str,
-    chain: M1DChain,
+    chain: Map1DChain,
     indices: tuple[int, ...],
     times: tuple[datetime, ...],
     input_fingerprint: str,
     policy: str,
 ) -> tuple[np.ndarray, str | None]:
     cache_paths = tuple(
-        m1d_cache_path(
+        map1d_cache_path(
             layout,
             variable=variable,
             chain_name=chain.name,
@@ -575,7 +575,7 @@ def _read_or_process_series(
         for time in times
     )
     expected = tuple(
-        m1d_cache_fingerprint(
+        map1d_cache_fingerprint(
             input_fingerprint=input_fingerprint,
             variable=variable,
             chain=chain,
@@ -584,18 +584,18 @@ def _read_or_process_series(
         for time in times
     )
     if policy not in {"if_changed", "never", "always"}:
-        raise M1DProcessError(f"Unsupported M1D reprocess policy: {policy!r}.")
+        raise Map1DProcessError(f"Unsupported map1d reprocess policy: {policy!r}.")
     cache_exists = all(path.is_file() for path in cache_paths)
     if policy == "never" and not cache_exists:
-        raise M1DProcessError(
-            f"M1D cache is incomplete for {variable}/{chain.name} and "
+        raise Map1DProcessError(
+            f"map1d cache is incomplete for {variable}/{chain.name} and "
             "reprocess is 'never'."
         )
     if cache_exists and policy != "always":
         try:
             values = np.stack(
                 tuple(
-                    read_m1d_cache(
+                    read_map1d_cache(
                         path,
                         expected_fingerprint=fingerprint,
                         expected_size=chain.indices.size,
@@ -604,11 +604,11 @@ def _read_or_process_series(
                 ),
                 axis=0,
             )
-            return values, f"Reused M1D cache: {variable}/{chain.name}."
-        except M1DProcessError:
+            return values, f"Reused map1d cache: {variable}/{chain.name}."
+        except Map1DProcessError:
             pass
 
-    values = read_m1d_quantity_series(map_path, variable, chain, indices)
+    values = read_map1d_quantity_series(map_path, variable, chain, indices)
     for row, path, time, fingerprint in zip(
         values,
         cache_paths,
@@ -616,7 +616,7 @@ def _read_or_process_series(
         expected,
         strict=True,
     ):
-        write_m1d_cache(
+        write_map1d_cache(
             path,
             guard,
             values=row,
@@ -625,20 +625,20 @@ def _read_or_process_series(
             time=time,
             fingerprint=fingerprint,
         )
-    return values, f"Built M1D cache: {variable}/{chain.name}."
+    return values, f"Built map1d cache: {variable}/{chain.name}."
 
 
 def _read_times(path: Path) -> tuple[datetime, ...]:
     with netCDF4.Dataset(path, mode="r") as dataset:
         if "time" not in dataset.variables:
-            raise M1DProcessError(f"M1D map has no time variable: {path}.")
+            raise Map1DProcessError(f"map1d map has no time variable: {path}.")
         variable = dataset.variables["time"]
         units = str(getattr(variable, "units", ""))
         calendar = str(getattr(variable, "calendar", "standard"))
         values = np.asarray(variable[:], dtype=np.float64)
     decoded = tuple(decode_cf_time(value, units, calendar, 0.0) for value in values)
     if any(value is None for value in decoded):
-        raise M1DProcessError(f"M1D map contains undecodable time values: {path}.")
+        raise Map1DProcessError(f"map1d map contains undecodable time values: {path}.")
     return tuple(value for value in decoded if value is not None)
 
 
@@ -655,13 +655,13 @@ def _map_path_for_simulation(
     else:
         map_files = tuple(sorted(simulation.path.rglob("*_map.nc")))
         fallback_message = (
-            "M1D used the single discovered map file because general simulation "
+            "map1d used the single discovered map file because general simulation "
             "discovery reported model-input issues: "
             + "; ".join(issue.code for issue in report.issues)
         )
     if len(map_files) != 1:
-        raise M1DProcessError(
-            "M1D currently requires exactly one unpartitioned map file; "
+        raise Map1DProcessError(
+            "map1d currently requires exactly one unpartitioned map file; "
             f"found {len(map_files)} for {simulation.label!r}."
         )
     return map_files[0], fallback_message
@@ -673,11 +673,11 @@ def _reference_simulation(project: ProjectConfig) -> SimulationConfig:
         for simulation in project.simulations:
             if simulation.label == reference:
                 return simulation
-        raise M1DProcessError(f"Unknown reference simulation {reference!r}.")
+        raise Map1DProcessError(f"Unknown reference simulation {reference!r}.")
     try:
         return project.simulations[reference]
     except IndexError as error:
-        raise M1DProcessError(
+        raise Map1DProcessError(
             f"Reference simulation index {reference} is outside the configured list."
         ) from error
 
@@ -700,8 +700,8 @@ def _axis_limit_pairs(
     y_values = _axis_limit_values(y_configured, variable, comparison)
     count = max(len(x_values), len(y_values))
     if len(x_values) not in {1, count} or len(y_values) not in {1, count}:
-        raise M1DProcessError(
-            "M1D x_limits and y_limits must have equal row counts or one "
+        raise Map1DProcessError(
+            "map1d x_limits and y_limits must have equal row counts or one "
             "must contain a single broadcast row."
         )
     return tuple(
@@ -731,8 +731,8 @@ def _axis_limit_values(
             comparison_limits = variable_limits.get(comparison)
             if isinstance(comparison_limits, list) and comparison_limits:
                 return [(pair[0], pair[1]) for pair in comparison_limits]
-    raise M1DProcessError(
-        f"Unsupported M1D axis limits for variable {variable!r} and "
+    raise Map1DProcessError(
+        f"Unsupported map1d axis limits for variable {variable!r} and "
         f"comparison {comparison!r}."
     )
 
@@ -742,7 +742,7 @@ def _match_time_indices(
     candidates: tuple[datetime, ...],
 ) -> tuple[int, ...]:
     if not candidates:
-        raise M1DProcessError("Reference M1D simulation has no time outputs.")
+        raise Map1DProcessError("Reference map1d simulation has no time outputs.")
     indices = tuple(
         min(
             range(len(candidates)),
@@ -755,7 +755,7 @@ def _match_time_indices(
 
 def _select_time_indices(
     times: tuple[datetime, ...],
-    analysis: M1DConfig,
+    analysis: Map1DConfig,
 ) -> tuple[int, ...]:
     selected = analysis.times.at
     if selected == "all":
@@ -765,20 +765,22 @@ def _select_time_indices(
     if hasattr(selected, "indices"):
         indices = tuple(index - 1 for index in selected.indices)
         if any(index < 0 or index >= len(times) for index in indices):
-            raise M1DProcessError("M1D time index is outside the available outputs.")
+            raise Map1DProcessError(
+                "map1d time index is outside the available outputs."
+            )
         return indices
     if isinstance(selected, list):
         result: list[int] = []
         for requested in selected:
             if not isinstance(requested, datetime):
-                raise M1DProcessError(
-                    "M1D explicit time selection must use datetimes or indices."
+                raise Map1DProcessError(
+                    "map1d explicit time selection must use datetimes or indices."
                 )
             result.append(
                 min(range(len(times)), key=lambda index: abs(times[index] - requested))
             )
         return tuple(dict.fromkeys(result))
-    raise M1DProcessError("M1D time range selection is not implemented yet.")
+    raise Map1DProcessError("map1d time range selection is not implemented yet.")
 
 
 def _location_for_variable(path: Path, variable: str) -> str:
@@ -819,7 +821,7 @@ def _figure_path(
         layout,
         OutputArea.FIGURES,
         variable,
-        prefix=(f"analysis-{analysis_index}-m1d", simulation.label),
+        prefix=(f"analysis-{analysis_index}-map1d", simulation.label),
         suffix=(
             chain_name,
             quote(comparison, safe="-_."),
@@ -833,7 +835,7 @@ def _finalize(
     figure: Figure,
     axes: Axes,
     project: ProjectConfig,
-    analysis: M1DConfig,
+    analysis: Map1DConfig,
     simulation: SimulationConfig,
     variable: str,
     comparison: str,
@@ -845,7 +847,7 @@ def _finalize(
     hooks: list[str],
 ) -> None:
     context = FigureContext(
-        analysis="m1d",
+        analysis="map1d",
         view=view_name,
         comparison=comparison,
         variable=variable,

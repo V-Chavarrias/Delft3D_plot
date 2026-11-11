@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Tests for M1D branch-chain geometry and raw reads."""
+"""Tests for map1d branch-chain geometry and raw reads."""
 
 from __future__ import annotations
 
@@ -10,23 +10,23 @@ import netCDF4
 import numpy as np
 import pytest
 
-from d3dplot.analyses.m1d.plot import (
+from d3dplot.analyses.map1d.plot import (
     comparison_values,
     create_all_times_view,
     create_profile_view,
     create_space_time_view,
 )
-from d3dplot.analyses.m1d.process import (
-    M1DGrid,
-    M1DMapSession,
-    m1d_cache_fingerprint,
-    m1d_cache_path,
-    read_m1d_cache,
-    read_m1d_quantity_series,
-    read_m1d_river_km_coordinates,
-    write_m1d_cache,
+from d3dplot.analyses.map1d.process import (
+    Map1DGrid,
+    Map1DMapSession,
+    map1d_cache_fingerprint,
+    map1d_cache_path,
+    read_map1d_cache,
+    read_map1d_quantity_series,
+    read_map1d_river_km_coordinates,
+    write_map1d_cache,
 )
-from d3dplot.analyses.m1d.stage import _axis_limit_pairs, _figure_path
+from d3dplot.analyses.map1d.stage import _axis_limit_pairs, _figure_path
 from d3dplot.config import load_config
 from d3dplot.config.figure import FigureConfig
 from d3dplot.config.project import SimulationConfig
@@ -35,7 +35,7 @@ from d3dplot.store import OutputLayout, initialize_output_root
 from d3dplot.variables.registry import get_variable_spec
 
 
-def _write_m1d_map(path: Path) -> None:
+def _write_map1d_map(path: Path) -> None:
     with netCDF4.Dataset(path, mode="w") as dataset:
         dataset.createDimension("branch", 2)
         dataset.createDimension("branch_name", 8)
@@ -76,11 +76,11 @@ def _write_m1d_map(path: Path) -> None:
 
 
 @pytest.mark.unit
-def test_m1d_branch_chain_preserves_order_and_offsets(tmp_path: Path) -> None:
-    path = tmp_path / "m1d_map.nc"
-    _write_m1d_map(path)
+def test_map1d_branch_chain_preserves_order_and_offsets(tmp_path: Path) -> None:
+    path = tmp_path / "map1d_map.nc"
+    _write_map1d_map(path)
 
-    grid = M1DGrid.from_map(path)
+    grid = Map1DGrid.from_map(path)
     chain = grid.chain("ab", ["A", "B"])
 
     np.testing.assert_array_equal(chain.indices, [0, 1, 2, 4])
@@ -89,12 +89,12 @@ def test_m1d_branch_chain_preserves_order_and_offsets(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
-def test_m1d_map_session_reads_alias_quantity_at_time(tmp_path: Path) -> None:
-    path = tmp_path / "m1d_map.nc"
-    _write_m1d_map(path)
+def test_map1d_map_session_reads_alias_quantity_at_time(tmp_path: Path) -> None:
+    path = tmp_path / "map1d_map.nc"
+    _write_map1d_map(path)
 
     with netCDF4.Dataset(path, mode="r") as dataset:
-        session = M1DMapSession(
+        session = Map1DMapSession(
             dataset,
             time_index=1,
             indices=np.asarray([0, 2, 4], dtype=np.int64),
@@ -108,53 +108,53 @@ def test_m1d_map_session_reads_alias_quantity_at_time(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
-def test_m1d_quantity_series_uses_quantity_engine(tmp_path: Path) -> None:
-    path = tmp_path / "m1d_map.nc"
-    _write_m1d_map(path)
-    grid = M1DGrid.from_map(path)
+def test_map1d_quantity_series_uses_quantity_engine(tmp_path: Path) -> None:
+    path = tmp_path / "map1d_map.nc"
+    _write_map1d_map(path)
+    grid = Map1DGrid.from_map(path)
     chain = grid.chain("a", ["A"])
 
-    values = read_m1d_quantity_series(path, "h", chain, (0, 1))
+    values = read_map1d_quantity_series(path, "h", chain, (0, 1))
 
     np.testing.assert_allclose(values, [[1, 2, 3], [6, 7, 8]])
 
 
 @pytest.mark.unit
-def test_m1d_quantity_series_reads_raw_edge_variable(tmp_path: Path) -> None:
-    path = tmp_path / "m1d_map.nc"
-    _write_m1d_map(path)
-    grid = M1DGrid.from_map(path)
+def test_map1d_quantity_series_reads_raw_edge_variable(tmp_path: Path) -> None:
+    path = tmp_path / "map1d_map.nc"
+    _write_map1d_map(path)
+    grid = Map1DGrid.from_map(path)
     chain = grid.chain("a", ["A"], location="edge")
 
-    values = read_m1d_quantity_series(path, "mesh1d_q1", chain, (0, 1))
+    values = read_map1d_quantity_series(path, "mesh1d_q1", chain, (0, 1))
 
     np.testing.assert_allclose(values, [[10, 20], [40, 50]])
 
 
 @pytest.mark.unit
-def test_m1d_quantity_series_reads_bed_level_over_time(tmp_path: Path) -> None:
-    path = tmp_path / "m1d_map.nc"
-    _write_m1d_map(path)
-    grid = M1DGrid.from_map(path)
+def test_map1d_quantity_series_reads_bed_level_over_time(tmp_path: Path) -> None:
+    path = tmp_path / "map1d_map.nc"
+    _write_map1d_map(path)
+    grid = Map1DGrid.from_map(path)
     chain = grid.chain("a", ["A"])
 
-    values = read_m1d_quantity_series(path, "bed_level", chain, (0, 1))
+    values = read_map1d_quantity_series(path, "bed_level", chain, (0, 1))
 
     np.testing.assert_allclose(values, [[100, 101, 102], [100, 101, 102]])
 
 
 @pytest.mark.unit
-def test_m1d_river_km_coordinates_use_nearest_branch_points(tmp_path: Path) -> None:
+def test_map1d_river_km_coordinates_use_nearest_branch_points(tmp_path: Path) -> None:
     path = tmp_path / "river_km.csv"
     path.write_text(
         "x,y,label,km\n0,0,river_A,10\n10,0,river_A,11\n20,0,river_A,12\n",
         encoding="utf-8",
     )
-    map_path = tmp_path / "m1d_map.nc"
-    _write_m1d_map(map_path)
-    chain = M1DGrid.from_map(map_path).chain("a", ["A"])
+    map_path = tmp_path / "map1d_map.nc"
+    _write_map1d_map(map_path)
+    chain = Map1DGrid.from_map(map_path).chain("a", ["A"])
 
-    coordinates = read_m1d_river_km_coordinates(
+    coordinates = read_map1d_river_km_coordinates(
         chain,
         path,
         tolerance_m=0.1,
@@ -164,13 +164,13 @@ def test_m1d_river_km_coordinates_use_nearest_branch_points(tmp_path: Path) -> N
 
 
 @pytest.mark.unit
-def test_m1d_yaml_testcase_loads() -> None:
+def test_map1d_yaml_testcase_loads() -> None:
     config = load_config(
-        Path(__file__).parents[1] / "examples" / "m1d_riverlab_r003.yml"
+        Path(__file__).parents[1] / "examples" / "map1d_riverlab_r003.yml"
     )
 
     analysis = config.analyses[0]
-    assert analysis.analysis == "m1d"
+    assert analysis.analysis == "map1d"
     assert analysis.variables == ["h", "bed_level"]
     assert analysis.views == ["space_time"]
 
@@ -180,7 +180,7 @@ def test_m1d_yaml_testcase_loads() -> None:
     ("variable", "canonical_name"),
     (("h", "water_depth"), ("bed_level", "bed_level")),
 )
-def test_m1d_output_paths_use_canonical_variable_names(
+def test_map1d_output_paths_use_canonical_variable_names(
     tmp_path: Path,
     variable: str,
     canonical_name: str,
@@ -199,7 +199,7 @@ def test_m1d_output_paths_use_canonical_variable_names(
         "value",
         time,
     )
-    cache_path = m1d_cache_path(
+    cache_path = map1d_cache_path(
         layout,
         variable=variable,
         chain_name="w",
@@ -212,7 +212,7 @@ def test_m1d_output_paths_use_canonical_variable_names(
 
 
 @pytest.mark.unit
-def test_m1d_axis_limit_sets_are_pairwise() -> None:
+def test_map1d_axis_limit_sets_are_pairwise() -> None:
     limits = _axis_limit_pairs(
         FigureConfig(
             x_limits=[(0, 10), (20, 30)],
@@ -238,10 +238,10 @@ def test_cache_timestamp_format_omits_zero_fraction() -> None:
 
 
 @pytest.mark.unit
-def test_m1d_plot_views_use_shared_templates(tmp_path: Path) -> None:
-    path = tmp_path / "m1d_map.nc"
-    _write_m1d_map(path)
-    grid = M1DGrid.from_map(path)
+def test_map1d_plot_views_use_shared_templates(tmp_path: Path) -> None:
+    path = tmp_path / "map1d_map.nc"
+    _write_map1d_map(path)
+    grid = Map1DGrid.from_map(path)
     chain = grid.chain("a", ["A"])
     values = np.asarray([[1, 2, 3], [4, 5, 6]], dtype=np.float64)
     times = (
@@ -295,32 +295,32 @@ def test_m1d_plot_views_use_shared_templates(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
-def test_m1d_cache_round_trip_is_guarded(tmp_path: Path) -> None:
-    path = tmp_path / "m1d_map.nc"
-    _write_m1d_map(path)
-    grid = M1DGrid.from_map(path)
+def test_map1d_cache_round_trip_is_guarded(tmp_path: Path) -> None:
+    path = tmp_path / "map1d_map.nc"
+    _write_map1d_map(path)
+    grid = Map1DGrid.from_map(path)
     chain = grid.chain("a", ["A"])
     layout = OutputLayout(tmp_path / "output")
     guard = initialize_output_root(layout, tool_version="test", forbidden_roots=())
-    cache_path = m1d_cache_path(
+    cache_path = map1d_cache_path(
         layout,
         variable="h",
         chain_name=chain.name,
         time=datetime(2021, 1, 1, tzinfo=UTC),
     )
     time = datetime(2021, 1, 1, tzinfo=UTC)
-    assert m1d_cache_fingerprint(
+    assert map1d_cache_fingerprint(
         input_fingerprint="input",
         variable="h",
         chain=chain,
         time=time,
-    ) == m1d_cache_fingerprint(
+    ) == map1d_cache_fingerprint(
         input_fingerprint="input",
         variable="water_depth",
         chain=chain,
         time=time,
     )
-    write_m1d_cache(
+    write_map1d_cache(
         cache_path,
         guard,
         values=np.asarray([1.0, 2.0, 3.0]),
@@ -330,7 +330,7 @@ def test_m1d_cache_round_trip_is_guarded(tmp_path: Path) -> None:
         fingerprint="fingerprint",
     )
 
-    values = read_m1d_cache(
+    values = read_map1d_cache(
         cache_path,
         expected_fingerprint="fingerprint",
         expected_size=3,

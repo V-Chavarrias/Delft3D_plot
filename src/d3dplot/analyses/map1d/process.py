@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""M1D branch-chain geometry and quantity reading."""
+"""map1d branch-chain geometry and quantity reading."""
 
 from __future__ import annotations
 
@@ -32,15 +32,15 @@ from d3dplot.variables.registry import (
 )
 
 
-class M1DProcessError(ValueError):
-    """An M1D grid or quantity cannot be processed."""
+class Map1DProcessError(ValueError):
+    """A map1d grid or quantity cannot be processed."""
 
 
-_M1D_CACHE_ALGORITHM_VERSION = "1"
+_MAP1D_CACHE_ALGORITHM_VERSION = "1"
 
 
 @dataclass(frozen=True, slots=True)
-class M1DChain:
+class Map1DChain:
     """Ordered one-dimensional coordinates and source indices for one branch chain."""
 
     name: str
@@ -53,7 +53,7 @@ class M1DChain:
 
 
 @dataclass(frozen=True, slots=True)
-class M1DGrid:
+class Map1DGrid:
     """Static network and mesh metadata from a D-Flow FM 1D map file."""
 
     branch_ids: tuple[str, ...]
@@ -68,7 +68,7 @@ class M1DGrid:
     edge_y: np.ndarray
 
     @classmethod
-    def from_map(cls, path: str | Path) -> M1DGrid:
+    def from_map(cls, path: str | Path) -> Map1DGrid:
         """Read static 1D network metadata without loading time-varying fields."""
         try:
             with netCDF4.Dataset(path, mode="r") as dataset:
@@ -86,8 +86,9 @@ class M1DGrid:
                 }
                 missing = required.difference(dataset.variables)
                 if missing:
-                    raise M1DProcessError(
-                        "M1D map is missing variable(s): " + ", ".join(sorted(missing))
+                    raise Map1DProcessError(
+                        "map1d map is missing variable(s): "
+                        + ", ".join(sorted(missing))
                     )
                 branch_ids = _decode_strings(
                     dataset.variables["network1d_branch_id"][:]
@@ -120,17 +121,21 @@ class M1DGrid:
                 edge_y = np.asarray(
                     dataset.variables["mesh1d_edge_y"][:], dtype=np.float64
                 )
-        except M1DProcessError:
+        except Map1DProcessError:
             raise
         except (OSError, RuntimeError, TypeError, ValueError) as error:
-            raise M1DProcessError(f"Could not read M1D map {path}: {error}") from error
+            raise Map1DProcessError(
+                f"Could not read map1d map {path}: {error}"
+            ) from error
 
         if not branch_ids or any(not value for value in branch_ids):
-            raise M1DProcessError(
-                "M1D map contains an empty network branch identifier."
+            raise Map1DProcessError(
+                "map1d map contains an empty network branch identifier."
             )
         if edge_lengths.ndim != 1 or edge_lengths.size != len(branch_ids):
-            raise M1DProcessError("M1D branch lengths do not match branch identifiers.")
+            raise Map1DProcessError(
+                "map1d branch lengths do not match branch identifiers."
+            )
         _validate_geometry_arrays(
             node_branch,
             node_offset,
@@ -166,21 +171,21 @@ class M1DGrid:
         branches: tuple[str, ...] | list[str],
         *,
         location: str = "node",
-    ) -> M1DChain:
+    ) -> Map1DChain:
         """Build an ordered chain from network branch identifiers."""
         if location not in {"node", "edge"}:
-            raise M1DProcessError(f"Unsupported M1D location: {location!r}.")
+            raise Map1DProcessError(f"Unsupported map1d location: {location!r}.")
         requested = tuple(branches)
         if not requested or any(not branch.strip() for branch in requested):
-            raise M1DProcessError("M1D branch chains must not be empty.")
+            raise Map1DProcessError("map1d branch chains must not be empty.")
         lookup = {
             branch.casefold(): index for index, branch in enumerate(self.branch_ids)
         }
         try:
             branch_indices = tuple(lookup[branch.casefold()] for branch in requested)
         except KeyError as error:
-            raise M1DProcessError(
-                f"Unknown M1D network branch {error.args[0]!r}; "
+            raise Map1DProcessError(
+                f"Unknown map1d network branch {error.args[0]!r}; "
                 f"available branches: {', '.join(self.branch_ids)}."
             ) from error
 
@@ -204,8 +209,9 @@ class M1DGrid:
             local = np.flatnonzero(branch_values == branch_index)
             local = local[np.argsort(offsets[local], kind="stable")]
             if local.size == 0:
-                raise M1DProcessError(
-                    f"M1D branch {self.branch_ids[branch_index]!r} has no {location}s."
+                raise Map1DProcessError(
+                    f"map1d branch {self.branch_ids[branch_index]!r} has no "
+                    f"{location}s."
                 )
             selected_indices.extend(int(value) for value in local)
             selected_offsets.extend(
@@ -218,7 +224,7 @@ class M1DGrid:
         indices = np.asarray(selected_indices, dtype=np.int64)
         offsets_array = np.asarray(selected_offsets, dtype=np.float64)
         keep = np.r_[True, np.diff(offsets_array) > 0]
-        return M1DChain(
+        return Map1DChain(
             name=name,
             branch_ids=requested,
             indices=indices[keep],
@@ -230,7 +236,7 @@ class M1DGrid:
 
 
 @dataclass(frozen=True, slots=True)
-class M1DMapSession:
+class Map1DMapSession:
     """Read one selected time from a 1D map while reusing its open dataset."""
 
     dataset: Any
@@ -258,8 +264,8 @@ class M1DMapSession:
             None,
         )
         if candidate is None:
-            raise M1DProcessError(
-                f"Quantity {spec.name!r} is not available in the M1D map."
+            raise Map1DProcessError(
+                f"Quantity {spec.name!r} is not available in the map1d map."
             )
         variable = self.dataset.variables[candidate]
         dimensions = tuple(variable.dimensions)
@@ -272,27 +278,27 @@ class M1DMapSession:
             values = np.asarray(variable[:], dtype=np.float64)
         if self.indices is not None and values.ndim == 1:
             if np.any(self.indices < 0) or np.any(self.indices >= values.size):
-                raise M1DProcessError(
-                    f"M1D source indices exceed {spec.name!r} values."
+                raise Map1DProcessError(
+                    f"map1d source indices exceed {spec.name!r} values."
                 )
             values = values[self.indices]
         return MapReadResult(values=values, edge_orientation=None, issues=())
 
 
-def read_m1d_quantity_series(
+def read_map1d_quantity_series(
     path: str | Path,
     variable: str,
-    chain: M1DChain,
+    chain: Map1DChain,
     time_indices: tuple[int, ...],
 ) -> np.ndarray:
     """Read one quantity along a chain for selected map-time indices."""
     if not time_indices:
-        raise M1DProcessError("M1D quantity reading needs at least one time index.")
+        raise Map1DProcessError("map1d quantity reading needs at least one time index.")
     engine = QuantityEngine(load_plugins=False)
     values: list[np.ndarray] = []
     with netCDF4.Dataset(path, mode="r") as dataset:
         for time_index in time_indices:
-            session = M1DMapSession(
+            session = Map1DMapSession(
                 dataset,
                 time_index=time_index,
                 indices=chain.indices,
@@ -309,14 +315,14 @@ def read_m1d_quantity_series(
             values.append(np.asarray(quantity.get(variable), dtype=np.float64))
     result = np.stack(values, axis=0)
     if result.ndim != 2 or result.shape[1] != chain.indices.size:
-        raise M1DProcessError(
-            f"M1D quantity {variable!r} did not return one value per chain point."
+        raise Map1DProcessError(
+            f"map1d quantity {variable!r} did not return one value per chain point."
         )
     return result
 
 
-def read_m1d_river_km_coordinates(
-    chain: M1DChain,
+def read_map1d_river_km_coordinates(
+    chain: Map1DChain,
     path: str | Path,
     *,
     tolerance_m: float,
@@ -340,26 +346,26 @@ def read_m1d_river_km_coordinates(
     nearest_distances = distances[np.arange(chain_coordinates.shape[0]), nearest]
     if np.any(nearest_distances > tolerance_m):
         maximum = float(np.max(nearest_distances))
-        raise M1DProcessError(
-            f"M1D chain {chain.name!r} has coordinates farther than "
+        raise Map1DProcessError(
+            f"map1d chain {chain.name!r} has coordinates farther than "
             f"{tolerance_m:g} m from the river-km file (maximum {maximum:g} m)."
         )
     return np.asarray([candidates[index].km for index in nearest], dtype=np.float64)
 
 
-def m1d_cache_fingerprint(
+def map1d_cache_fingerprint(
     *,
     input_fingerprint: str,
     variable: str,
-    chain: M1DChain,
+    chain: Map1DChain,
     time: datetime,
 ) -> str:
-    """Build the identity of one persisted M1D time slice."""
+    """Build the identity of one persisted map1d time slice."""
     return fingerprint_artifact(
-        kind="m1d",
+        kind="map1d",
         schema_version=CACHE_SCHEMA_VERSION,
         tool_version="d3dplot",
-        algorithm_version=_M1D_CACHE_ALGORITHM_VERSION,
+        algorithm_version=_MAP1D_CACHE_ALGORITHM_VERSION,
         parameters={
             "variable": get_variable_spec(variable).name,
             "chain": chain.name,
@@ -371,39 +377,39 @@ def m1d_cache_fingerprint(
     )
 
 
-def m1d_cache_path(
+def map1d_cache_path(
     layout: OutputLayout,
     *,
     variable: str,
     chain_name: str,
     time: datetime,
 ) -> Path:
-    """Return one guarded per-time M1D cache path."""
+    """Return one guarded per-time map1d cache path."""
     filename = format_hydrodynamic_timestamp(time)
     return build_quantity_output_path(
         layout,
         OutputArea.CACHE_DATA,
         variable,
-        prefix=("m1d",),
+        prefix=("map1d",),
         suffix=(chain_name,),
         filename=f"{filename}.nc",
     )
 
 
-def write_m1d_cache(
+def write_map1d_cache(
     path: Path,
     guard: OutputWriteGuard,
     *,
     values: np.ndarray,
-    chain: M1DChain,
+    chain: Map1DChain,
     variable: str,
     time: datetime,
     fingerprint: str,
 ) -> None:
-    """Write one atomic, fingerprinted M1D time slice."""
+    """Write one atomic, fingerprinted map1d time slice."""
     data = np.asarray(values, dtype=np.float64)
     if data.ndim != 1 or data.size != chain.indices.size:
-        raise M1DProcessError("M1D cache values must match the chain coordinates.")
+        raise Map1DProcessError("map1d cache values must match the chain coordinates.")
     with atomic_path(path, guard) as temporary:
         with netCDF4.Dataset(temporary, mode="w", format="NETCDF4") as dataset:
             dataset.createDimension("point", data.size)
@@ -422,24 +428,26 @@ def write_m1d_cache(
             dataset.setncattr("location", chain.location)
 
 
-def read_m1d_cache(
+def read_map1d_cache(
     path: Path,
     *,
     expected_fingerprint: str,
     expected_size: int,
 ) -> np.ndarray:
-    """Read and verify one persisted M1D time slice."""
+    """Read and verify one persisted map1d time slice."""
     try:
         with netCDF4.Dataset(path, mode="r") as dataset:
             if dataset.getncattr("d3dplot_fingerprint") != expected_fingerprint:
-                raise M1DProcessError(f"M1D cache fingerprint changed: {path}.")
+                raise Map1DProcessError(f"map1d cache fingerprint changed: {path}.")
             values = np.asarray(dataset.variables["values"][:], dtype=np.float64)
-    except M1DProcessError:
+    except Map1DProcessError:
         raise
     except (KeyError, OSError, RuntimeError, TypeError, ValueError) as error:
-        raise M1DProcessError(f"Could not read M1D cache {path}: {error}") from error
+        raise Map1DProcessError(
+            f"Could not read map1d cache {path}: {error}"
+        ) from error
     if values.shape != (expected_size,):
-        raise M1DProcessError(f"M1D cache has invalid point count: {path}.")
+        raise Map1DProcessError(f"map1d cache has invalid point count: {path}.")
     return values
 
 
@@ -471,14 +479,18 @@ def _validate_geometry_arrays(
     if not (branch.ndim == offsets.ndim == x_values.ndim == y_values.ndim == 1) or not (
         branch.size == offsets.size == x_values.size == y_values.size
     ):
-        raise M1DProcessError(
-            f"M1D {location} geometry arrays have inconsistent shapes."
+        raise Map1DProcessError(
+            f"map1d {location} geometry arrays have inconsistent shapes."
         )
     if np.any((branch < 0) | (branch >= branch_count)):
-        raise M1DProcessError(f"M1D {location} geometry contains an unknown branch.")
+        raise Map1DProcessError(
+            f"map1d {location} geometry contains an unknown branch."
+        )
     if (
         not np.isfinite(offsets).all()
         or not np.isfinite(x_values).all()
         or not np.isfinite(y_values).all()
     ):
-        raise M1DProcessError(f"M1D {location} geometry contains non-finite values.")
+        raise Map1DProcessError(
+            f"map1d {location} geometry contains non-finite values."
+        )

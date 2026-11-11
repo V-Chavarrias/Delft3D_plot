@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Public configuration models and serialization helpers."""
 
-from d3dplot.analyses.m1d.config import M1DConfig, M1DRiverKmConfig
+from d3dplot.analyses.map1d.config import Map1DConfig, Map1DRiverKmConfig
 from d3dplot.analyses.map2d.config import Map2DConfig
 from d3dplot.analyses.profile.config import ProfileConfig
 from d3dplot.analyses.river_km_statistics.config import RiverKmStatisticsConfig
@@ -38,8 +38,8 @@ __all__ = [
     "FigureConfig",
     "Fractions",
     "LabelsConfig",
-    "M1DConfig",
-    "M1DRiverKmConfig",
+    "Map1DConfig",
+    "Map1DRiverKmConfig",
     "Map2DConfig",
     "MapViewConfig",
     "OutputConfig",

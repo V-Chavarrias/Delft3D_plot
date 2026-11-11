@@ -148,7 +148,7 @@ default report format, and the report is written to
 ```
 
 The native runner processes every configured simulation and the built-in
-`map2d`, `river_km_statistics`, and `m1d` analyses. It writes guarded caches
+`map1d`, `map2d`, and `river_km_statistics` analyses. It writes guarded caches
 beneath `output.root`, supports `vertical: all` or explicit
 `vertical.layers`, and honours `reprocess`, `execution.executor`,
 `execution.workers`, and `execution.shard`. Use `--shard i/N` for

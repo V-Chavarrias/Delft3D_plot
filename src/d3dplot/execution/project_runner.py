@@ -11,9 +11,9 @@ from pathlib import Path
 from typing import Literal
 
 from d3dplot import __version__
-from d3dplot.analyses.m1d.config import M1DConfig
-from d3dplot.analyses.m1d.process import M1DProcessError
-from d3dplot.analyses.m1d.stage import process_m1d_stage
+from d3dplot.analyses.map1d.config import Map1DConfig
+from d3dplot.analyses.map1d.process import Map1DProcessError
+from d3dplot.analyses.map1d.stage import process_map1d_stage
 from d3dplot.analyses.map2d.config import VELOCITY_COMPONENT_VARIABLES, Map2DConfig
 from d3dplot.analyses.map2d.process import (
     Map2DProcessError,
@@ -440,18 +440,18 @@ def run_project(
         for item in selected_analyses
         if isinstance(item[1], (Map2DConfig, RiverKmStatisticsConfig))
     )
-    m1d_analyses = tuple(
-        item for item in selected_analyses if isinstance(item[1], M1DConfig)
+    map1d_analyses = tuple(
+        item for item in selected_analyses if isinstance(item[1], Map1DConfig)
     )
     profile_analyses = tuple(
         (index, analysis)
         for index, analysis in selected_analyses
         if isinstance(analysis, ProfileConfig)
     )
-    if effective_shard is not None and m1d_analyses:
+    if effective_shard is not None and map1d_analyses:
         raise ProjectStageUnavailable(
-            "M1D quantity processing does not support task sharding; "
-            "remove M1D from the sharded project or run without --shard."
+            "map1d quantity processing does not support task sharding; "
+            "remove map1d from the sharded project or run without --shard."
         )
     if effective_shard is not None and profile_analyses:
         raise ProjectStageUnavailable(
@@ -489,33 +489,34 @@ def run_project(
             )
             simulation_failed = False
 
-            if m1d_analyses:
+            if map1d_analyses:
                 try:
-                    m1d_result = process_m1d_stage(
+                    map1d_result = process_map1d_stage(
                         project,
                         analysis_name=analysis_name,
                         simulation_label=simulation_config.label,
                         diagnostic=diagnostics.info,
                     )
                 except (
-                    M1DProcessError,
+                    Map1DProcessError,
                     OSError,
                     OutputWriteError,
                     ValueError,
                 ) as error:
                     diagnostics.error(
-                        f"M1D processing failed for {simulation_config.label}: {error}"
+                        f"map1d processing failed for {simulation_config.label}: "
+                        f"{error}"
                     )
                     simulation_failed = True
                 else:
-                    output_paths.extend(str(path) for path in m1d_result.cache_paths)
+                    output_paths.extend(str(path) for path in map1d_result.cache_paths)
                     reused_paths.extend(
-                        str(path) for path in m1d_result.reused_cache_paths
+                        str(path) for path in map1d_result.reused_cache_paths
                     )
                     diagnostics.info(
-                        f"M1D processing finished: "
-                        f"built={len(m1d_result.cache_paths)}; "
-                        f"reused={len(m1d_result.reused_cache_paths)}."
+                        f"map1d processing finished: "
+                        f"built={len(map1d_result.cache_paths)}; "
+                        f"reused={len(map1d_result.reused_cache_paths)}."
                     )
 
             if not map_analyses and not profile_analyses:
