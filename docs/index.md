@@ -1,6 +1,6 @@
 # Delft3D_plot
 
-Python tools to postprocess and plot D-Flow FM and SMT results. The project is
+Python tools to postprocess and plot D-Flow FM, SMT and Delft3D 4 trim results. The project is
 being implemented in phases; this site documents the commands and analyses
 available in the current package, including known workflow limitations.
 

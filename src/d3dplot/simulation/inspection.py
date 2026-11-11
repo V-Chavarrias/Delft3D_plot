@@ -21,6 +21,7 @@ from typing import Any, Literal, Protocol, TypeAlias, cast
 
 from d3dplot import __version__
 from d3dplot.config.selections import TimesConfig
+from d3dplot.simulation.d3d4 import write_topology
 from d3dplot.simulation.discover import (
     _MAX_DISCOVERY_WORKERS,
     _MIN_SUBRUNS_FOR_PARALLEL,
@@ -259,6 +260,13 @@ class _InspectionFailure(Exception):
         self.issue = issue
 
 
+def _model_output_inputs(subrun: SubRun) -> tuple[Path, ...]:
+    """Files defining a sub-run's output; a D3D4 topology derives from them."""
+    if subrun.d3d4_run is not None:
+        return (subrun.d3d4_run.def_path, subrun.d3d4_run.data_path)
+    return tuple(subrun.map_files)
+
+
 def inspect_simulation(
     simulation: Simulation,
     layout: OutputLayout,
@@ -295,7 +303,7 @@ def inspect_simulation(
         input_fingerprints = [
             fingerprint_model_output(path)
             for subrun in simulation.subruns
-            for path in subrun.map_files
+            for path in _model_output_inputs(subrun)
         ]
     except (OSError, RuntimeError, ValueError) as error:
         issues.append(
@@ -370,6 +378,27 @@ def inspect_simulation(
             )
         )
         return None, ValidationReport(tuple(issues))
+
+    for subrun in simulation.subruns:
+        if subrun.d3d4_run is None:
+            continue
+        topology = subrun.map_files[0]
+        if topology.exists():
+            continue
+        try:
+            write_topology(subrun.d3d4_run, subrun.mdu, topology, guard)
+        except (KeyError, OSError, OutputWriteError, ValueError) as error:
+            issues.append(
+                _issue(
+                    "V-OUT-002",
+                    "error",
+                    subrun.d3d4_run.data_path,
+                    f"Could not build the D3D4 mesh cache: {error}",
+                    "Check that the trim-<name>.def and trim-<name>.dat files "
+                    "are readable and complete.",
+                )
+            )
+            return None, ValidationReport(tuple(issues))
 
     try:
         cache_reused, cache_problem = _cache_is_current(

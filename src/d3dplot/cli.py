@@ -363,6 +363,7 @@ def _validate_project(
         simulation, discovery_report = discover_simulation(
             simulation_config.path,
             check_map_headers=config.check_map_headers,
+            output_layout=OutputLayout.for_simulation(simulation_config, config.output),
         )
         issues.extend(discovery_report.issues)
         if diagnostics is not None:
@@ -570,6 +571,9 @@ def status(
             simulation, discovery_report = discover_simulation(
                 simulation_config.path,
                 check_map_headers=project.check_map_headers,
+                output_layout=OutputLayout.for_simulation(
+                    simulation_config, project.output
+                ),
             )
             if simulation is None:
                 status_result, status_report = inspect_simulation_status(
@@ -665,6 +669,7 @@ def _inspect_project(
         simulation, discovery_report = discover_simulation(
             simulation_config.path,
             check_map_headers=config.check_map_headers,
+            output_layout=OutputLayout.for_simulation(simulation_config, config.output),
         )
         issues.extend(discovery_report.issues)
         if diagnostics is not None:

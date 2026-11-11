@@ -43,7 +43,7 @@ from d3dplot.config.project import ProjectConfig, SimulationConfig
 from d3dplot.plotting.finalize import FigureContext, finalize_figure
 from d3dplot.plotting.time import format_time_label
 from d3dplot.plotting.writers import get_figure_writer
-from d3dplot.simulation.discover import discover_simulation
+from d3dplot.simulation.discover import SimulationKind, discover_simulation
 from d3dplot.simulation.time_utils import decode_cf_time
 from d3dplot.store import (
     OutputLayout,
@@ -647,6 +647,11 @@ def _map_path_for_simulation(
 ) -> tuple[Path, str | None]:
     """Resolve the single 1D map, with an explicit discovery fallback."""
     discovered, report = discover_simulation(simulation.path)
+    if discovered is not None and discovered.kind is SimulationKind.D3D4:
+        raise Map1DProcessError(
+            "map1d supports D-Flow FM simulations only; "
+            f"{simulation.label!r} is a D3D4 run."
+        )
     if discovered is not None and report.is_valid:
         map_files = tuple(
             path for subrun in discovered.subruns for path in subrun.map_files

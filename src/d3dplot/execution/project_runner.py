@@ -166,8 +166,8 @@ def _inspection_for_simulation(
     simulation, discovery_report = discover_simulation(
         simulation_config.path,
         check_map_headers=project.check_map_headers,
+        output_layout=layout,
     )
-    diagnostics.record_validation_issues(discovery_report.issues)
     diagnostics.info(
         "Simulation discovery finished: "
         f"found={simulation is not None}; issues={len(discovery_report.issues)}."

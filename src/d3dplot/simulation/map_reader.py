@@ -11,6 +11,7 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any, Literal, Protocol, TypeAlias, cast
 
+from d3dplot.simulation.d3d4 import D3D4MapDataset, is_morphodynamic
 from d3dplot.simulation.discover import Simulation
 from d3dplot.simulation.partitions import _NETCDF4_READ_LOCK
 from d3dplot.simulation.subrun import SubRun
@@ -121,14 +122,24 @@ class MapReader:
         datasets: list[_NetCDFDataset] = []
         try:
             for path in subrun.map_files:
+                if subrun.d3d4_run is not None and not path.is_file():
+                    raise MapReaderError(
+                        _issue(
+                            "V-OUT-002",
+                            "error",
+                            path,
+                            "The D3D4 topology cache is missing.",
+                            "Run 'd3dplot inspect' on the simulation first; it "
+                            "writes the topology.",
+                        )
+                    )
                 try:
                     with _NETCDF4_READ_LOCK:
-                        dataset = stack.enter_context(
-                            _netcdf4_module().Dataset(path, mode="r")
-                        )
+                        dataset = stack.enter_context(_open_map_dataset(subrun, path))
                 except (
                     EOFError,
                     IndexError,
+                    KeyError,
                     OSError,
                     RuntimeError,
                     TypeError,
@@ -260,7 +271,7 @@ class MapReader:
                 dataset_context = (
                     _session._dataset_context(partition)
                     if _session is not None
-                    else _netcdf4_module().Dataset(path, mode="r")
+                    else _open_map_dataset(subrun, path)
                 )
                 with _NETCDF4_READ_LOCK:
                     with dataset_context as dataset:
@@ -773,3 +784,14 @@ def _issue(
 def _netcdf4_module() -> _NetCDF4Module:
     os.environ.setdefault("HDF5_USE_FILE_LOCKING", "FALSE")
     return cast(_NetCDF4Module, import_module("netCDF4"))
+
+
+def _open_map_dataset(subrun: SubRun, path: Path) -> AbstractContextManager[Any]:
+    """Open a sub-run's map file; a D3D4 topology opens with its trim data attached."""
+    if subrun.d3d4_run is not None:
+        return D3D4MapDataset(
+            path,
+            subrun.d3d4_run,
+            morphodynamic=is_morphodynamic(subrun.mdu),
+        )
+    return _netcdf4_module().Dataset(path, mode="r")

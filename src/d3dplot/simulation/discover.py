@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Discover plain FM and SMT simulation folders."""
+"""Discover plain FM, D3D4 and SMT simulation folders."""
 
 from __future__ import annotations
 
@@ -13,11 +13,14 @@ from functools import partial
 from pathlib import Path
 
 from d3dplot.paths import resolve_path_preserving_drive
+from d3dplot.simulation.d3d4 import D3D4Run, find_d3d4_runs
 from d3dplot.simulation.subrun import (
     SubRun,
+    discover_d3d4_subrun,
     discover_subrun,
     discover_subrun_from_template,
 )
+from d3dplot.store.layout import OutputLayout
 from d3dplot.validate.report import ValidationIssue, ValidationReport
 
 _MAX_DISCOVERY_WORKERS = 64
@@ -29,6 +32,7 @@ class SimulationKind(StrEnum):
 
     FM = "fm"
     SMT = "smt"
+    D3D4 = "d3d4"
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,8 +48,13 @@ def discover_simulation(
     path: Path,
     *,
     check_map_headers: bool = False,
+    output_layout: OutputLayout | None = None,
 ) -> tuple[Simulation | None, ValidationReport]:
-    """Discover one plain-FM or SMT simulation without modifying its inputs."""
+    """Discover one plain-FM, D3D4 or SMT simulation without modifying its inputs.
+
+    ``output_layout`` locates the cached D3D4 topology; it defaults to the
+    simulation's own ``d3dplot`` folder.
+    """
     root = resolve_path_preserving_drive(path)
     if not root.is_dir():
         return None, ValidationReport(
@@ -65,12 +74,13 @@ def discover_simulation(
 
     issues: list[ValidationIssue] = []
     output_dir = root / "output"
+    layout = output_layout or OutputLayout(root / "d3dplot")
+    d3d4_runs: tuple[D3D4Run, ...] = ()
+    subrun_folders: list[tuple[int, Path]] = []
     if (root / "smt.yml").is_file():
         subrun_folders, folder_issue = _integer_subrun_folders(output_dir)
         if folder_issue is not None:
             return None, ValidationReport((folder_issue,))
-    else:
-        subrun_folders = []
 
     if subrun_folders:
         kind = SimulationKind.SMT
@@ -91,21 +101,42 @@ def discover_simulation(
             )
         issues.extend(_check_subrun_numbering(root, subrun_folders))
     else:
-        kind = SimulationKind.FM
-        subrun_folders = [(0, root)]
+        d3d4_runs = find_d3d4_runs(root)
+        if len(d3d4_runs) > 1:
+            # One D3D4 run per folder keeps each topology cache path unambiguous.
+            return None, ValidationReport(
+                (
+                    ValidationIssue(
+                        code="V-SIM-013",
+                        level="error",
+                        location=str(root),
+                        message=(
+                            f"Folder holds {len(d3d4_runs)} D3D4 runs; "
+                            "one D3D4 run per folder is supported."
+                        ),
+                        hint="Move each trim-<name>.def run into its own folder.",
+                    ),
+                )
+            )
+        if d3d4_runs:
+            kind = SimulationKind.D3D4
+        else:
+            kind = SimulationKind.FM
+            subrun_folders = [(0, root)]
 
     subruns: list[SubRun] = []
-    discovered_subruns = (
-        _discover_smt_subruns(
+    if kind is SimulationKind.D3D4:
+        discovered_subruns = [discover_d3d4_subrun(d3d4_runs[0], layout)]
+    elif kind is SimulationKind.SMT:
+        discovered_subruns = _discover_smt_subruns(
             subrun_folders,
             check_map_headers=check_map_headers,
         )
-        if kind is SimulationKind.SMT
-        else _discover_subruns(
+    else:
+        discovered_subruns = _discover_subruns(
             subrun_folders,
             check_map_headers=check_map_headers,
         )
-    )
     for subrun, subrun_issues in discovered_subruns:
         issues.extend(subrun_issues)
         if subrun is not None:

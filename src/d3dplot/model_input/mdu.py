@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import datetime
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,8 +15,10 @@ from hydrolib.core.dflowfm.research.models import (  # type: ignore[import-untyp
 from pydantic import ValidationError
 
 from d3dplot.model_input.errors import ModelInputError
+from d3dplot.model_input.mdf import MDF_HINT, read_mdf
 from d3dplot.paths import resolve_path_preserving_drive
 
+_MDF_HINT = MDF_HINT
 _MDU_HINT = (
     "Check the MDU syntax; if its keywords are valid for a newer kernel, update "
     "HYDROLIB-core or report them upstream."
@@ -92,6 +95,72 @@ class MduInfo:
                 else None
             ),
         )
+
+    @classmethod
+    def from_d3d4_mdf(cls, path: Path) -> MduInfo:
+        """Load the time, output and physics values of a Delft3D 4 MDF file."""
+        mdf_path = resolve_path_preserving_drive(path)
+        values = read_mdf(mdf_path)
+        base_dir = mdf_path.parent
+        return cls(
+            mdu_path=mdf_path,
+            refdate=_mdf_refdate(values, mdf_path),
+            tunit=_mdf_text(values, "Tunit", mdf_path),
+            tstart=_mdf_float(values, "Tstart", mdf_path),
+            tstop=_mdf_float(values, "Tstop", mdf_path),
+            tzone=_mdf_float(values, "Tzone", mdf_path),
+            tzone_explicit="Tzone" in values,
+            output_dir=base_dir,
+            map_file=Path(f"trim-{mdf_path.stem}.dat"),
+            net_file=_mdf_input_file(values, "Filcco", base_dir),
+            mor_file=_mdf_input_file(values, "Filmor", base_dir),
+            sed_file=_mdf_input_file(values, "Filsed", base_dir),
+            gravity=_mdf_float(values, "Ag", mdf_path),
+            water_density=_mdf_float(values, "Rhow", mdf_path),
+        )
+
+
+def _mdf_text(values: Mapping[str, str], key: str, path: Path) -> str:
+    text = values.get(key, "").strip()
+    if not text:
+        raise ModelInputError(
+            path,
+            f"MDF keyword '{key}' is missing or empty.",
+            _MDF_HINT,
+        )
+    return text
+
+
+def _mdf_float(values: Mapping[str, str], key: str, path: Path) -> float:
+    text = _mdf_text(values, key, path)
+    try:
+        return float(text)
+    except ValueError as error:
+        raise ModelInputError(
+            path,
+            f"MDF keyword '{key}' is not a number: {text!r}.",
+            _MDF_HINT,
+        ) from error
+
+
+def _mdf_refdate(values: Mapping[str, str], path: Path) -> int:
+    text = _mdf_text(values, "Itdate", path)
+    try:
+        date = datetime.date.fromisoformat(text)
+    except ValueError as error:
+        raise ModelInputError(
+            path,
+            f"MDF keyword 'Itdate' must be yyyy-mm-dd: {text!r}.",
+            _MDF_HINT,
+        ) from error
+    return date.year * 10000 + date.month * 100 + date.day
+
+
+def _mdf_input_file(values: Mapping[str, str], key: str, base_dir: Path) -> Path | None:
+    text = values.get(key, "").strip()
+    if not text:
+        return None
+    return resolve_path_preserving_drive(base_dir / text)
 
 
 def _resolve_input_file(

@@ -12,9 +12,12 @@ from d3dplot.model_input.dimr import (
     NoDflowFMComponentError,
     resolve_dimr_mdu,
 )
+from d3dplot.model_input.errors import ModelInputError
 from d3dplot.model_input.mdu import MduInfo
 from d3dplot.model_input.reader import ModelInput
+from d3dplot.simulation.d3d4 import D3D4Run, topology_path
 from d3dplot.simulation.partitions import discover_map_files
+from d3dplot.store.layout import OutputLayout
 from d3dplot.validate import validate_model_input
 from d3dplot.validate.report import ValidationIssue
 
@@ -31,6 +34,7 @@ class SubRun:
     map_files: tuple[Path, ...]
     partitioned: bool
     model_input_reused: bool = False
+    d3d4_run: D3D4Run | None = None
 
     @property
     def mdu(self) -> MduInfo:
@@ -75,6 +79,37 @@ def discover_subrun(
             model_input_reused=False,
         ),
         input_report.issues + output_issues,
+    )
+
+
+def discover_d3d4_subrun(
+    run: D3D4Run,
+    layout: OutputLayout,
+    index: int = 0,
+) -> tuple[SubRun | None, tuple[ValidationIssue, ...]]:
+    """Read one D3D4 run's MDF; the map file is its cached topology."""
+    try:
+        mdu = MduInfo.from_d3d4_mdf(run.mdf_path)
+    except ModelInputError as error:
+        return None, (
+            ValidationIssue(
+                code="V-MDU-001",
+                level="error",
+                location=str(error.path),
+                message=error.message,
+                hint=error.hint,
+            ),
+        )
+    return (
+        SubRun(
+            index=index,
+            folder=run.mdf_path.parent,
+            model_input=ModelInput(mdu=mdu, morphology=None, sediment=None),
+            map_files=(topology_path(layout, run, mdu),),
+            partitioned=False,
+            d3d4_run=run,
+        ),
+        (),
     )
 
 
