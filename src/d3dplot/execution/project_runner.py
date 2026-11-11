@@ -20,6 +20,8 @@ from d3dplot.analyses.map2d.process import (
     Map2DProcessResult,
     Map2DTaskProcessor,
 )
+from d3dplot.analyses.profile.config import ProfileConfig
+from d3dplot.analyses.profile.stage import ProfileStageError, process_profile_analysis
 from d3dplot.analyses.river_km_statistics.config import RiverKmStatisticsConfig
 from d3dplot.analyses.river_km_statistics.process import (
     select_time_average_outputs,
@@ -266,6 +268,76 @@ def _selections_for_simulation(
     return selections, policies
 
 
+def _process_profile_analyses(
+    project: ProjectConfig,
+    simulation_config: SimulationConfig,
+    simulation: Simulation,
+    inspection: InspectionResult,
+    layout: OutputLayout,
+    analyses: Sequence[tuple[int, ProfileConfig]],
+    diagnostics: DiagnosticLog,
+    output_paths: list[str],
+    reused_paths: list[str],
+) -> bool:
+    """Process PRF analyses for one simulation; return True if any analysis failed."""
+    guard = initialize_output_root(
+        layout,
+        tool_version=__version__,
+        forbidden_roots=project.output.forbidden_roots,
+    )
+    time_axis = TimeAxis.from_cache(inspection.times_path)
+    time_zone = str(project.time_zone) if project.time_zone is not None else None
+    failed = False
+    for analysis_index, analysis in analyses:
+        analysis_key = f"analysis-{analysis_index}-{analysis.analysis}"
+        selection = time_axis.select(
+            analysis.times,
+            naive_time_zone=time_zone,
+            duplicate_morphological_times=analysis.duplicate_morphological_times,
+            on_corrupt_output=project.on_corrupt_output,
+        )
+        diagnostics.record_time_selection(
+            analysis_key=analysis_key,
+            simulation_label=simulation_config.label,
+            requested=analysis.times.model_dump_json(),
+            result=selection,
+        )
+        diagnostics.record_validation_issues(selection.issues)
+        if not selection.is_valid:
+            diagnostics.error(f"Invalid time selection for {analysis_key}.")
+            failed = True
+            continue
+        try:
+            result = process_profile_analysis(
+                project,
+                simulation_config,
+                simulation,
+                inspection,
+                analysis,
+                analysis_index,
+                selection.entries,
+                layout,
+                guard,
+                render_figures=True,
+                diagnostic=diagnostics.info,
+            )
+        except (ProfileStageError, OSError, OutputWriteError, ValueError) as error:
+            diagnostics.error(
+                f"PRF processing failed for {simulation_config.label}/"
+                f"{analysis_key}: {error}"
+            )
+            failed = True
+            continue
+        output_paths.extend(str(path) for path in result.output_paths)
+        reused_paths.extend(str(path) for path in result.reused_paths)
+        diagnostics.info(
+            f"PRF processing finished: {analysis_key}; "
+            f"figures={len(result.output_paths)}; "
+            f"reused={len(result.reused_paths)}."
+        )
+    return failed
+
+
 def _planning_worker_count(
     executor: ExecutorName,
     workers: int | None,
@@ -309,10 +381,20 @@ def run_project(
     m1d_analyses = tuple(
         item for item in selected_analyses if isinstance(item[1], M1DConfig)
     )
+    profile_analyses = tuple(
+        (index, analysis)
+        for index, analysis in selected_analyses
+        if isinstance(analysis, ProfileConfig)
+    )
     if effective_shard is not None and m1d_analyses:
         raise ProjectStageUnavailable(
             "M1D quantity processing does not support task sharding; "
             "remove M1D from the sharded project or run without --shard."
+        )
+    if effective_shard is not None and profile_analyses:
+        raise ProjectStageUnavailable(
+            "PRF profile processing does not support task sharding; "
+            "remove PRF from the sharded project or run without --shard."
         )
 
     layouts = tuple(
@@ -374,7 +456,7 @@ def run_project(
                         f"reused={len(m1d_result.reused_cache_paths)}."
                     )
 
-            if not map_analyses:
+            if not map_analyses and not profile_analyses:
                 if simulation_failed:
                     failed_simulations.append(simulation_config.label)
                 continue
@@ -397,6 +479,24 @@ def run_project(
                 failed_simulations.append(simulation_config.label)
                 continue
             simulation, inspection = inspected
+
+            if profile_analyses and _process_profile_analyses(
+                project,
+                simulation_config,
+                simulation,
+                inspection,
+                layout,
+                profile_analyses,
+                diagnostics,
+                output_paths,
+                reused_paths,
+            ):
+                simulation_failed = True
+
+            if not map_analyses:
+                if simulation_failed:
+                    failed_simulations.append(simulation_config.label)
+                continue
 
             try:
                 selections, policies = _selections_for_simulation(

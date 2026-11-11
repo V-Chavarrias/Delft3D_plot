@@ -3,6 +3,7 @@
 
 from d3dplot.analyses.m1d.config import M1DConfig, M1DRiverKmConfig
 from d3dplot.analyses.map2d.config import Map2DConfig
+from d3dplot.analyses.profile.config import ProfileConfig
 from d3dplot.analyses.river_km_statistics.config import RiverKmStatisticsConfig
 from d3dplot.config.figure import FigureConfig, MapViewConfig
 from d3dplot.config.io import (
@@ -43,6 +44,7 @@ __all__ = [
     "MapViewConfig",
     "OutputConfig",
     "PathsConfig",
+    "ProfileConfig",
     "ProjectConfig",
     "RiverKmStatisticsConfig",
     "SimulationConfig",
