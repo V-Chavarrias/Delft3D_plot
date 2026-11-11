@@ -4,16 +4,25 @@
 from __future__ import annotations
 
 import sys
+from importlib import import_module
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pytest
 
+from d3dplot import __version__
+from d3dplot.analyses.profile import process as profile_process
 from d3dplot.analyses.profile.config import ProfileConfig
 from d3dplot.analyses.profile.stage import ProfileStageError, profile_selections
 from d3dplot.config.project import ProjectConfig
-from d3dplot.execution.project_runner import run_project
+from d3dplot.execution.diagnostics import DiagnosticLog
+from d3dplot.execution.project_runner import (
+    ProfilePlotResult,
+    plot_profile_analyses,
+    run_project,
+)
+from d3dplot.store import OutputLayout
 
 
 def _profile_config(**options: Any) -> ProfileConfig:
@@ -79,10 +88,10 @@ def _synthetic_centreline_pli(tmp_path: Path) -> Path:
     if tools_directory not in sys.path:
         sys.path.insert(0, tools_directory)
 
-    from mesh import make_centreline
-    from params import Params
+    mesh = import_module("mesh")
+    params = import_module("params")
 
-    centreline = make_centreline(Params())
+    centreline = mesh.make_centreline(params.Params())
     x, y = centreline.xy(5_000.0, np.array([-300.0, 300.0]))
     path = tmp_path / "section.pli"
     lines = [
@@ -123,10 +132,41 @@ def _project(
     )
 
 
+def _plot_profiles(project: ProjectConfig) -> ProfilePlotResult:
+    layouts = [
+        OutputLayout.for_simulation(simulation, project.output)
+        for simulation in project.simulations
+    ]
+    with DiagnosticLog.for_project(
+        layouts,
+        tool_version=__version__,
+        command_line=("pytest",),
+        forbidden_roots=project.output.forbidden_roots,
+    ) as diagnostics:
+        return plot_profile_analyses(project, diagnostics=diagnostics)
+
+
 @pytest.mark.integration
-def test_profile_run_writes_cache_and_figure_for_synthetic_case(
+def test_profile_process_writes_caches_without_figures(
     synthetic_case: Path,
     tmp_path: Path,
+) -> None:
+    pli_path = _synthetic_centreline_pli(tmp_path)
+    output_root = tmp_path / "output"
+    project = _project(synthetic_case, output_root, pli_path, {"views": ["profile"]})
+
+    result = run_project(project, executor="serial")
+
+    assert result.failed_simulations == ()
+    assert result.output_paths == ()
+    assert list(output_root.rglob("*.png")) == []
+
+
+@pytest.mark.integration
+def test_profile_plot_renders_figures_from_the_process_caches(
+    synthetic_case: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     pli_path = _synthetic_centreline_pli(tmp_path)
     project = _project(
@@ -135,13 +175,17 @@ def test_profile_run_writes_cache_and_figure_for_synthetic_case(
         pli_path,
         {"views": ["profile"]},
     )
+    run_project(project, executor="serial")
 
-    result = run_project(project, executor="serial")
+    def fail_on_sub_run_read(*args: object, **kwargs: object) -> None:
+        raise AssertionError("the plot stage should read the profile caches only")
 
-    assert result.failed_simulations == ()
-    figures = [path for path in result.output_paths if path.endswith(".png")]
-    assert figures, "the profile run should render at least one figure"
-    assert all(Path(path).is_file() for path in result.output_paths)
+    monkeypatch.setattr(profile_process, "read_profile_values", fail_on_sub_run_read)
+    result = _plot_profiles(project)
+
+    figures = [path for path in result.output_paths if path.suffix == ".png"]
+    assert figures, "the plot stage should render at least one figure"
+    assert all(path.is_file() for path in result.output_paths)
 
 
 @pytest.mark.integration
@@ -157,26 +201,27 @@ def test_profile_bed_level_shows_the_channel_and_space_time_view(
         {"variables": ["bed_level"], "views": ["profile", "space_time"]},
     )
 
-    result = run_project(project, executor="serial")
+    run_result = run_project(project, executor="serial")
+    result = _plot_profiles(project)
 
-    assert result.failed_simulations == ()
+    assert run_result.failed_simulations == ()
     profile_figures = [
         path
         for path in result.output_paths
-        if "profile" in Path(path).parts and path.endswith(".png")
+        if "profile" in path.parts and path.suffix == ".png"
     ]
     space_time_figures = [
         path
         for path in result.output_paths
-        if "space_time" in Path(path).parts and path.endswith(".png")
+        if "space_time" in path.parts and path.suffix == ".png"
     ]
     assert profile_figures
     assert len(space_time_figures) == 1
-    assert all(Path(path).is_file() for path in result.output_paths)
+    assert all(path.is_file() for path in result.output_paths)
 
 
 @pytest.mark.integration
-def test_second_profile_run_with_replot_never_reuses_figures(
+def test_second_profile_plot_with_replot_never_reuses_figures(
     synthetic_case: Path,
     tmp_path: Path,
 ) -> None:
@@ -189,10 +234,13 @@ def test_second_profile_run_with_replot_never_reuses_figures(
         {"views": ["profile"], "replot": "never"},
     )
 
-    first = run_project(project, executor="serial")
-    second = run_project(project, executor="serial")
+    run_project(project, executor="serial")
+    first = _plot_profiles(project)
+    second_run = run_project(project, executor="serial")
+    second = _plot_profiles(project)
 
     assert first.output_paths
-    assert second.failed_simulations == ()
+    assert second_run.failed_simulations == ()
+    assert second_run.output_paths == ()
     assert second.output_paths == ()
     assert set(second.reused_paths) == set(first.output_paths)

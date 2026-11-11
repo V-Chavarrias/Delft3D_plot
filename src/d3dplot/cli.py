@@ -46,6 +46,7 @@ from d3dplot.execution.project import (
     ensure_executable_analyses,
     run_native_project,
 )
+from d3dplot.execution.project_runner import plot_profile_analyses
 from d3dplot.execution.slurm import render_slurm_script
 from d3dplot.paths import resolve_path_preserving_drive
 from d3dplot.plotting.stage import (
@@ -1339,19 +1340,36 @@ def _run_plot_stage(
                         f"written={len(m1d_result.output_paths)}; "
                         f"reused={len(m1d_result.reused_paths)}."
                     )
+                if diagnostic_log is not None:
+                    diagnostic_log.info("Starting PRF plotting stage.")
+                profile_result = plot_profile_analyses(
+                    replayable_config,
+                    analysis_name=analysis_name,
+                    simulation_label=simulation_label,
+                    diagnostics=diagnostic_log,
+                )
+                if diagnostic_log is not None:
+                    diagnostic_log.info(
+                        "Finished PRF plotting stage: "
+                        f"written={len(profile_result.output_paths)}; "
+                        f"reused={len(profile_result.reused_paths)}."
+                    )
             else:
                 river_km_result = None
                 m1d_result = None
+                profile_result = None
             result = PlotStageResult(
                 output_paths=(
                     map_result.output_paths
                     + (() if river_km_result is None else river_km_result.output_paths)
                     + (() if m1d_result is None else m1d_result.output_paths)
+                    + (() if profile_result is None else profile_result.output_paths)
                 ),
                 reused_paths=(
                     map_result.reused_paths
                     + (() if river_km_result is None else river_km_result.reused_paths)
                     + (() if m1d_result is None else m1d_result.reused_paths)
+                    + (() if profile_result is None else profile_result.reused_paths)
                 ),
                 movie_paths=map_result.movie_paths,
                 reused_movie_paths=map_result.reused_movie_paths,
@@ -1464,7 +1482,10 @@ def init(
         str,
         typer.Option(
             "--analyses",
-            help="Comma-separated built-in analyses: m1d, map2d, river_km_statistics.",
+            help=(
+                "Comma-separated built-in analyses: m1d, map2d, "
+                "river_km_statistics, profile."
+            ),
         ),
     ] = "map2d",
 ) -> None:
@@ -2088,6 +2109,13 @@ def _starter_config(
                     "branch_names": ["branch"],
                 }
             )
+        elif name == "profile":
+            analysis["lines"] = [
+                {
+                    "name": "replace_with_line_name",
+                    "file": "path/to/line.pli",
+                }
+            ]
         analyses.append(analysis)
     return ProjectConfig.model_validate(
         {"simulations": simulations, "analyses": analyses}

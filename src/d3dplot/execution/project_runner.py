@@ -278,6 +278,8 @@ def _process_profile_analyses(
     diagnostics: DiagnosticLog,
     output_paths: list[str],
     reused_paths: list[str],
+    *,
+    render_figures: bool,
 ) -> bool:
     """Process PRF analyses for one simulation; return True if any analysis failed."""
     guard = initialize_output_root(
@@ -318,7 +320,7 @@ def _process_profile_analyses(
                 selection.entries,
                 layout,
                 guard,
-                render_figures=True,
+                render_figures=render_figures,
                 diagnostic=diagnostics.info,
             )
         except (ProfileStageError, OSError, OutputWriteError, ValueError) as error:
@@ -336,6 +338,66 @@ def _process_profile_analyses(
             f"reused={len(result.reused_paths)}."
         )
     return failed
+
+
+@dataclass(frozen=True, slots=True)
+class ProfilePlotResult:
+    """Figures written or reused by the PRF plot stage."""
+
+    output_paths: tuple[Path, ...]
+    reused_paths: tuple[Path, ...]
+
+
+def plot_profile_analyses(
+    project: ProjectConfig,
+    *,
+    analysis_name: str | None = None,
+    simulation_label: str | None = None,
+    diagnostics: DiagnosticLog | None,
+) -> ProfilePlotResult:
+    """Render PRF figures from the profile caches written by the process stage."""
+    analyses = tuple(
+        (index, analysis)
+        for index, analysis in enumerate(project.analyses)
+        if isinstance(analysis, ProfileConfig)
+        and (analysis_name is None or analysis.analysis == analysis_name)
+    )
+    if not analyses:
+        return ProfilePlotResult((), ())
+    if diagnostics is None:
+        raise ValueError("PRF plotting requires a diagnostics log.")
+    output_paths: list[str] = []
+    reused_paths: list[str] = []
+    for simulation_config in project.simulations:
+        if simulation_label is not None and simulation_config.label != simulation_label:
+            continue
+        layout = OutputLayout.for_simulation(simulation_config, project.output)
+        inspected, _ = _inspection_for_simulation(
+            project, simulation_config, layout, diagnostics
+        )
+        if inspected is None:
+            raise ValueError(
+                f"PRF plotting needs a valid output inspection for "
+                f"{simulation_config.label}."
+            )
+        simulation, inspection = inspected
+        if _process_profile_analyses(
+            project,
+            simulation_config,
+            simulation,
+            inspection,
+            layout,
+            analyses,
+            diagnostics,
+            output_paths,
+            reused_paths,
+            render_figures=True,
+        ):
+            raise ValueError("PRF plotting failed; see the diagnostics log.")
+    return ProfilePlotResult(
+        tuple(Path(path) for path in output_paths),
+        tuple(Path(path) for path in reused_paths),
+    )
 
 
 def _planning_worker_count(
@@ -490,6 +552,7 @@ def run_project(
                 diagnostics,
                 output_paths,
                 reused_paths,
+                render_figures=False,
             ):
                 simulation_failed = True
 
