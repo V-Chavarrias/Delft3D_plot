@@ -74,7 +74,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: testpypi
-      url: https://test.pypi.org/project/delft3d-plot/
+      url: https://test.pypi.org/project/d3dplot/
     permissions:
       id-token: write
     steps:
@@ -94,7 +94,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/project/delft3d-plot/
+      url: https://pypi.org/project/d3dplot/
     permissions:
       id-token: write
     steps:

@@ -9,7 +9,7 @@ met.** d3dplot has no HYDROLIB-core release dependency ([upstream status](./upst
 
 1. Create GitHub environments named `testpypi` and `pypi`. Add required
    reviewers or other protection rules appropriate for publishing.
-2. Configure a Trusted Publisher for the `delft3d-plot` project on TestPyPI:
+2. Configure a Trusted Publisher for the `d3dplot` project on TestPyPI:
    GitHub owner/repository `V-Chavarrias/Delft3D_plot`, workflow
    `.github/workflows/release.yml`, environment `testpypi`.
 3. Configure the corresponding Trusted Publisher on PyPI with the same

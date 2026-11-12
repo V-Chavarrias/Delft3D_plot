@@ -5,6 +5,6 @@ from importlib.metadata import version
 
 from d3dplot.config import ProjectConfig, load_config
 
-__version__ = version("delft3d-plot")
+__version__ = version("d3dplot")
 
 __all__ = ["ProjectConfig", "__version__", "load_config"]

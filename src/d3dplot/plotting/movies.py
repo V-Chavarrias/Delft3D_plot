@@ -51,7 +51,7 @@ def write_mp4(
         raise MovieWriterError(
             "V-ENV-001",
             "MP4 export requires the optional movie dependencies; "
-            "install delft3d-plot[movies].",
+            "install d3dplot[movies].",
         ) from error
 
     with atomic_path(output_path, guard, temporary_suffix=".mp4") as temporary:
@@ -67,7 +67,7 @@ def write_mp4(
         except (ImportError, RuntimeError) as error:
             raise MovieWriterError(
                 "V-ENV-001",
-                "Could not initialize the MP4 encoder; install delft3d-plot[movies].",
+                "Could not initialize the MP4 encoder; install d3dplot[movies].",
             ) from error
 
         try:

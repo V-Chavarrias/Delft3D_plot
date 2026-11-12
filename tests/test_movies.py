@@ -101,7 +101,7 @@ def test_write_mp4_reports_missing_optional_dependency(
     monkeypatch.setattr(movies, "import_module", missing_dependency)
     output = layout.figures / "series" / "subject" / "map.mp4"
 
-    with pytest.raises(MovieWriterError, match="delft3d-plot\\[movies\\]") as error:
+    with pytest.raises(MovieWriterError, match="d3dplot\\[movies\\]") as error:
         write_mp4((frame,), output, 1.0, "fingerprint", guard)
 
     assert error.value.code == "V-ENV-001"

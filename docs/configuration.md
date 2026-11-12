@@ -84,7 +84,7 @@ fields explicitly set there.
 Set `movie: {duration_s: 0.5}` on a `map2d` analysis to write one MP4 for each
 subject, variable, comparison, extent, and colour-limit set. Frames are ordered
 by hydrodynamic time, and `duration_s` is the duration of each frame. MP4
-encoding requires the optional `movies` extra (`delft3d-plot[movies]`).
+encoding requires the optional `movies` extra (`d3dplot[movies]`).
 
 `language` selects English (`en`), Dutch (`nl`), or Spanish (`es`) labels.
 `labels.vertical_datum` controls the datum shown for reference elevations, and

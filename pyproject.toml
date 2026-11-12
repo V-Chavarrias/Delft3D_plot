@@ -3,7 +3,7 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
-name = "delft3d-plot"
+name = "d3dplot"
 version = "0.2.0rc0"
 description = "Postprocess and plot D-Flow FM and SMT simulation results."
 readme = "README.md"

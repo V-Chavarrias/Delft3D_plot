@@ -9,7 +9,7 @@ and SMT simulations. The built-in analyses are `map1d`, `map2d`, and
 After a release is available, install the package with:
 
 ```powershell
-python -m pip install delft3d-plot
+python -m pip install d3dplot
 ```
 
 For the unreleased source checkout, follow the development setup in
