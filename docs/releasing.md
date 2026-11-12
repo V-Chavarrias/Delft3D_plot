@@ -34,12 +34,19 @@ the final version.
 2. Use Commitizen to bump the package version and generate its changelog entry.
    For a release candidate, use `uv run cz bump --prerelease rc`; for the final
    release, use the intended version explicitly, for example
-   `uv run cz bump 1.0.0`. Review the generated commit, changelog, and tag.
+   `uv run cz bump 1.0.0`. Commitizen changes `project.version` but not
+   `uv.lock`, so run `uv lock` and amend the bump commit before tagging.
+   Confirm with `uv lock --locked`; CI fails otherwise. Replace the generated
+   changelog section with the curated text, then review the commit and tag.
 3. Push the release commit and its tag. The tag starts the workflow; no package
    is published from a branch or pull request.
 4. For a release candidate, install the package from TestPyPI in a clean
    environment and verify its import and CLI before proceeding. The final-tag
    workflow also publishes to TestPyPI before attempting PyPI publication.
+   TestPyPI never accepts a filename it already has, so the TestPyPI step uses
+   `skip-existing`. Do not re-tag a version that was already uploaded from an
+   older commit: a re-run would then publish a build that differs from the tag.
+   Reject any superseded waiting run in the Actions UI rather than approving it.
 5. For a final version, confirm the `pypi` environment approval and check the
    resulting GitHub release and PyPI page.
 
