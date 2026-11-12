@@ -623,7 +623,7 @@ wheels = [
 
 [[package]]
 name = "d3dplot"
-version = "0.2.0rc0"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "dfm-tools" },
