@@ -124,6 +124,6 @@ source = ["d3dplot"]
 name = "cz_conventional_commits"
 version = "0.1.0"
 tag_format = "v$version"
-version_files = ["pyproject.toml:project.version"]
+version_provider = "pep621"
 changelog_file = "CHANGELOG.md"
 update_changelog_on_bump = true
