@@ -13,7 +13,7 @@ Python successor of the Matlab tool `D3D_plot`: postprocessing and plotting of D
 
 ## Reuse before writing code
 
-Use **HYDROLIB-core** for model input (MDU via `ResearchFMModel(path, recurse=False)`, `.pli/.pol/.ldb` via `PolyFile`, DIMR, INI parser) and **dfm_tools / xugrid** for model output (grids, partitions, layers, rasterising). Before writing a reader, parser or geometry helper, search `c:\checkouts\HYDROLIB-core` and `c:\checkouts\dfm_tools`. If something is missing or buggy there, fix it **upstream** (skill `upstream-contribution`) rather than working around it locally; a temporary adapter in `d3dplot` is allowed only with a note in plan §14.
+Model input (MDU, `.pli/.pol/.ldb`, DIMR, `.mor`, `.sed`) is read by d3dplot's own readers in `src/d3dplot/model_input/` and `paths.py` (plan D121–D123). Do not add a HYDROLIB-core dependency. Use **dfm_tools / xugrid** for model output (grids, partitions, layers, rasterising). Before writing a reader, parser or geometry helper, search `c:\checkouts\dfm_tools` and, for the Deltares format reference, `c:\checkouts\HYDROLIB-core`. If something is missing or buggy in dfm_tools, fix it **upstream** (skill `upstream-contribution`) rather than working around it locally; a temporary adapter in `d3dplot` is allowed only with a note in plan §14.
 
 ## Performance is a requirement
 
@@ -50,7 +50,7 @@ User-visible choices (selected times, duplicates, masked corrupt output, reused 
 
 ```powershell
 uv venv .venv --python 3.12
-uv pip install --python .venv\Scripts\python.exe -e c:\checkouts\dfm_tools -e c:\checkouts\HYDROLIB-core -e .[dev]   # .[dev] once pyproject.toml exists (WP 1.1)
+uv pip install --python .venv\Scripts\python.exe -e c:\checkouts\dfm_tools -e .[dev]   # .[dev] once pyproject.toml exists (WP 1.1)
 .venv\Scripts\python.exe -m pytest -m "not requireslocaldata"
 .venv\Scripts\python.exe tools\synthetic_smt\generate.py --out <tmp>   # synthetic SMT test case (plan §13.3)
 ```

@@ -1,6 +1,5 @@
-# Synthetic SMT generator. dfm_tools and HYDROLIB-core can also be installed from local checkouts (pip install -e).
+# Synthetic SMT generator. dfm_tools can also be installed from a local checkout (pip install -e).
 dfm_tools>=0.47
-hydrolib-core>=1.5
 netCDF4
 numpy
 scipy

@@ -16,7 +16,7 @@ uv pip install --python .venv/Scripts/python.exe -r tools/synthetic_smt/requirem
 Options: `--out <folder>`, `--no-variants`, `--no-verify`. The generator refuses to write to the P-drive, and it refuses to replace a folder that it did not create (marker file `.synthetic_smt`).
 
 After generating, the generator runs a self-check (`verify.py`) with the libraries the tool will use:
-* HYDROLIB-core reads the MDU, `dimr_config.xml` and the `.ldb`;
+* minimal standard-library readers check the MDU keys, `dimr_config.xml` and the `.ldb` object count (independent of d3dplot's readers);
 * dfm_tools merges the partitions and reproduces the analytic bed level;
 * rasterio reads the VRT and GeoTIFFs;
 * geopandas reads the shapefiles;

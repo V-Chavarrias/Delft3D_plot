@@ -2,8 +2,8 @@
 
 The release workflow is intentionally inert for publishing until the repository
 variable `D3DPLOT_RELEASES_ENABLED` is set to `true`. **Do not enable it or
-publish a release until WP 0.2 is complete:** the required HYDROLIB-core changes
-are still local and unreleased ([upstream status](./upstream.md)).
+publish a release until the release prerequisites in the architecture plan are
+met.** d3dplot has no HYDROLIB-core release dependency ([upstream status](./upstream.md)).
 
 ## One-time GitHub and PyPI setup
 
@@ -16,9 +16,8 @@ are still local and unreleased ([upstream status](./upstream.md)).
    repository and workflow, and environment `pypi`.
 4. Keep publishing credentials out of GitHub secrets. The workflow uses
    GitHub's OIDC identity token and the PyPA publishing action.
-5. After WP 0.2 is released and the package's HYDROLIB-core minimum is updated
-   to that release, set the repository variable
-   `D3DPLOT_RELEASES_ENABLED` to `true`.
+5. Set the repository variable `D3DPLOT_RELEASES_ENABLED` to `true` when the
+   first release is ready to be published.
 
 The workflow builds an sdist and wheel for every `v*` tag and checks that the
 tag matches `project.version` in `pyproject.toml`. A prerelease tag (for example
@@ -31,8 +30,7 @@ the final version.
 ## Release procedure
 
 1. Confirm CI and the strict documentation build pass on the release commit.
-   Verify all release prerequisites in the architecture plan, especially WP
-   0.2 and the current [upstream contribution status](./upstream.md).
+   Verify all release prerequisites in the architecture plan.
 2. Use Commitizen to bump the package version and generate its changelog entry.
    For a release candidate, use `uv run cz bump --prerelease rc`; for the final
    release, use the intended version explicitly, for example

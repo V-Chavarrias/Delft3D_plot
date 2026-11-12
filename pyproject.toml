@@ -26,7 +26,6 @@ classifiers = [
 dependencies = [
     "dfm_tools>=0.47.0",
     "geopandas>=1.1.0",
-    "hydrolib-core>=1.5.0",
     "matplotlib>=3.10.7",
     "netCDF4>=1.7.5",
     "numpy>=2.0",

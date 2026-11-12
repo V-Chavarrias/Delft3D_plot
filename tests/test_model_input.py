@@ -153,7 +153,7 @@ def test_sediment_reader_supports_diameter_ranges(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
-def test_v_mdu_001_lists_unknown_keywords_and_sections(tmp_path: Path) -> None:
+def test_unknown_keywords_and_sections_are_accepted(tmp_path: Path) -> None:
     mdu_path = tmp_path / "unknown.mdu"
     mdu_path.write_text(
         "[Time]\n"
@@ -166,13 +166,27 @@ def test_v_mdu_001_lists_unknown_keywords_and_sections(tmp_path: Path) -> None:
 
     model_input, report = validate_model_input(mdu_path)
 
-    assert model_input is None
-    assert [issue.code for issue in report.errors] == ["V-MDU-001"]
-    message = report.errors[0].message.casefold()
-    assert "unlistedtimekeyword" in message
-    assert "futuresection" in message
-    assert "unlistedsectionkeyword" in message
-    assert report.errors[0].hint is not None
+    assert model_input is not None
+    assert model_input.mdu.refdate == 20200101
+    assert not report.errors
+
+
+@pytest.mark.unit
+def test_unlisted_entries_are_reported_as_v_mdu_003_info(tmp_path: Path) -> None:
+    mdu_path = tmp_path / "old.mdu"
+    mdu_path.write_text(
+        "[Time]\nRefDate = 20200101\nUnlistedTimeKeyword = 1\n"
+        "[FutureSection]\nFoo = 1\n",
+        encoding="utf-8",
+    )
+
+    model_input, report = validate_model_input(mdu_path)
+
+    assert model_input is not None
+    assert not report.errors
+    assert not report.warnings
+    assert [issue.code for issue in report.issues] == ["V-MDU-003", "V-MDU-003"]
+    assert all(issue.level == "info" for issue in report.issues)
 
 
 @pytest.mark.unit
@@ -227,5 +241,5 @@ def test_dimr_resolution_uses_working_directory_without_loading_mdu(
 
     assert resolve_dimr_mdu(dimr_path) == mdu_path.resolve()
     model_input, report = validate_model_input(mdu_path)
-    assert model_input is None
-    assert [issue.code for issue in report.errors] == ["V-MDU-001"]
+    assert model_input is not None
+    assert not report.errors

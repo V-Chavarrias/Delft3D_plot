@@ -1,11 +1,13 @@
 ---
 name: upstream-contribution
-description: "Workflow to change HYDROLIB-core or dfm_tools (local branch, tests, optional pull request) when d3dplot needs a fix or feature there. Use when a reader, keyword, parser, grid or partition function is missing or wrong in HYDROLIB-core or dfm_tools, e.g. the MDU keyword change of plan section 14.1, merge-plan reader, SMT support, morphological time, zonal statistics, river-km utilities."
-argument-hint: "Which repository and what change, e.g. 'HYDROLIB-core: MDU sediment keywords (plan 14.1)'"
+description: "Workflow to change dfm_tools (or HYDROLIB-core, only as a format reference; d3dplot does not depend on it) when d3dplot needs a fix or feature there. Use when a grid, partition, merge, layer, rasterising or other model-output function is missing or wrong in dfm_tools, e.g. merge-plan reader, SMT support, morphological time, zonal statistics, river-km utilities. Model-input readers are d3dplot's own (plan D121)."
+argument-hint: "Which repository and what change, e.g. 'dfm_tools: merge-plan reader for SMT output'"
 ---
-# Contribute to HYDROLIB-core or dfm_tools
+# Contribute to dfm_tools (or HYDROLIB-core)
 
 The user is a contributor of both repositories. **For now, changes stay local** (no push, no PR) unless the user asks.
+
+Model input is not changed upstream: d3dplot reads MDU, `.pli/.pol/.ldb`, DIMR, `.mor` and `.sed` files with its own readers in `src/d3dplot/model_input/` (plan D121–D123). Use HYDROLIB-core only to look up the Deltares format.
 
 **Branch or `main`?** Creating a *local* branch needs no access rights; access is only needed to push. Use a local feature branch from the start (step 3): `git pull` on `main` keeps working, several changes stay separate, and the PR is ready when access exists. If work was committed on local `main` anyway, move it later:
 ```powershell
@@ -21,7 +23,7 @@ With uncommitted changes, `git switch -c feat/<short_title>` alone moves them to
 | dfm_tools | `c:\checkouts\dfm_tools` | `Deltares/dfm_tools` | pytest markers (`unittest`, `systemtest`, `requireslocaldata`), flake8; `docs/CONTRIBUTING.md` |
 
 ## Procedure
-1. **Check the plan**: the change must be listed in `docs/architecture.md` §14 (HYDROLIB-core MDU keywords: detailed in §14.1). If not, add it there first with the reason (finding, measurement).
+1. **Check the plan**: the change must be listed in `docs/architecture.md` §14. If not, add it there first with the reason (finding, measurement). §14.1 records the Deltares MDU specification pin used by `tools/generate_mdu_keywords.py`.
 2. **Check upstream**: search open issues/PRs of the repository for the topic (avoid duplicates; link related ones).
 3. **Branch** from an up-to-date `main` in the checkout: `git -C <checkout> switch -c feat/<short_title>` (add the issue number once an issue exists). Do not commit on `main`.
 4. **Implement** following the repository's own style and patterns (look at neighbouring code; e.g. `Sediment`/`morfile` in `hydrolib/core/dflowfm/mdu/models.py`). Use the official specifications (e.g. `Deltares/Delft3DFM.File.Specifications` `mdu.json`) for names, types and defaults.

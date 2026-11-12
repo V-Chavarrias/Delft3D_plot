@@ -28,4 +28,14 @@ def validate_model_input(
                 ),
             )
         )
-    return model_input, ValidationReport()
+    return model_input, ValidationReport(
+        tuple(
+            ValidationIssue(
+                code="V-MDU-003",
+                level="info",
+                location=str(path),
+                message=note,
+            )
+            for note in model_input.mdu.keyword_notes
+        )
+    )

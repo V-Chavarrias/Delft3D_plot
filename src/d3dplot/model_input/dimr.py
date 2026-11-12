@@ -3,11 +3,13 @@
 
 from __future__ import annotations
 
+import xml.etree.ElementTree as ET
+from dataclasses import dataclass
 from pathlib import Path
 
-from hydrolib.core.dimr.models import DIMR  # type: ignore[import-untyped]
+from d3dplot.paths import model_text_to_path, resolve_path_preserving_drive
 
-from d3dplot.paths import resolve_path_preserving_drive
+_FM_LIBRARY = "dflowfm"
 
 
 class DimrResolutionError(ValueError):
@@ -22,13 +24,21 @@ class MultipleDflowFMComponentsError(DimrResolutionError):
     """A DIMR configuration has several D-Flow FM components."""
 
 
+@dataclass(frozen=True, slots=True)
+class _DflowFMComponent:
+    name: str
+    working_dir: str
+    input_file: str | None
+
+
 def resolve_dimr_mdu(path: Path) -> Path:
-    """Return the unique ``dflowfm`` component MDU path from a DIMR file."""
+    """Return the unique ``dflowfm`` component MDU path from a DIMR file.
+
+    Only the ``component`` elements are read. ``control``, couplers and global
+    settings are not validated, so DIMR files with obsolete elements still resolve.
+    """
     dimr_path = resolve_path_preserving_drive(path)
-    model = DIMR(dimr_path, recurse=False)
-    fm_components = [
-        component for component in model.component if component.library == "dflowfm"
-    ]
+    fm_components = _read_dflowfm_components(dimr_path)
     if not fm_components:
         raise NoDflowFMComponentError(
             f"DIMR file {dimr_path} has no dflowfm component."
@@ -39,13 +49,45 @@ def resolve_dimr_mdu(path: Path) -> Path:
             f"DIMR file {dimr_path} has multiple dflowfm components: {names}."
         )
 
-    input_file = fm_components[0].filepath
-    if input_file is None:
+    component = fm_components[0]
+    if component.input_file is None:
         raise DimrResolutionError(
-            f"DIMR component {fm_components[0].name!r} in {dimr_path} "
+            f"DIMR component {component.name!r} in {dimr_path} "
             "does not reference an input file."
         )
-    mdu_path = Path(input_file)
+    mdu_path = model_text_to_path(component.working_dir) / model_text_to_path(
+        component.input_file
+    )
     if not mdu_path.is_absolute():
         mdu_path = dimr_path.parent / mdu_path
     return resolve_path_preserving_drive(mdu_path)
+
+
+def _read_dflowfm_components(dimr_path: Path) -> list[_DflowFMComponent]:
+    try:
+        root = ET.parse(dimr_path).getroot()
+    except ET.ParseError as error:
+        raise DimrResolutionError(
+            f"DIMR file {dimr_path} is not well-formed XML: {error}."
+        ) from error
+    return [
+        _DflowFMComponent(
+            name=element.get("name", "").strip(),
+            working_dir=_child_text(element, "workingDir") or ".",
+            input_file=_child_text(element, "inputFile") or None,
+        )
+        for element in root
+        if _local_name(element.tag) == "component"
+        and _child_text(element, "library") == _FM_LIBRARY
+    ]
+
+
+def _local_name(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1]
+
+
+def _child_text(element: ET.Element, name: str) -> str | None:
+    for child in element:
+        if _local_name(child.tag) == name:
+            return (child.text or "").strip()
+    return None

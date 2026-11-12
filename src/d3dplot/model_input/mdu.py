@@ -1,5 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Read-only adapter for D-Flow FM MDU files."""
+"""Read-only reader for D-Flow FM MDU files.
+
+Only the keywords needed for plotting are read. Unknown sections and keywords
+are accepted and ignored; known keywords with unparseable values are errors.
+Defaults follow the D-Flow FM kernel defaults used by HYDROLIB-core.
+"""
 
 from __future__ import annotations
 
@@ -8,21 +13,22 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from hydrolib.core.base.models import FileModel  # type: ignore[import-untyped]
-from hydrolib.core.dflowfm.research.models import (  # type: ignore[import-untyped]
-    ResearchFMModel,
-)
-from pydantic import ValidationError
-
 from d3dplot.model_input.errors import ModelInputError
+from d3dplot.model_input.ini import optional_float, parse_ini_file
 from d3dplot.model_input.mdf import MDF_HINT, read_mdf
-from d3dplot.paths import resolve_path_preserving_drive
+from d3dplot.model_input.mdu_keywords import is_known_section, keyword_spec
+from d3dplot.paths import model_text_to_path, resolve_path_preserving_drive
 
 _MDF_HINT = MDF_HINT
-_MDU_HINT = (
-    "Check the MDU syntax; if its keywords are valid for a newer kernel, update "
-    "HYDROLIB-core or report them upstream."
-)
+_MDU_HINT = "Check the MDU syntax and the values of the keywords named in the message."
+_NON_KEYWORD_ENTRIES = frozenset({"_header", "datablock", "comments"})
+
+_REFDATE_DEFAULT = 20200101
+_TUNIT_DEFAULT = "S"
+_TSTOP_DEFAULT = 86400.0
+_GRAVITY_DEFAULT = 9.81
+_WATER_DENSITY_DEFAULT = 1000.0
+_DATETIME_PLACEHOLDER = "yyyymmddhhmmss"
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,56 +50,58 @@ class MduInfo:
     water_density: float
     tzone_explicit: bool = False
     substance_file: Path | None = None
+    keyword_notes: tuple[str, ...] = ()
 
     @classmethod
     def from_path(cls, path: Path) -> MduInfo:
         """Load an MDU without recursively reading any referenced model files."""
         mdu_path = resolve_path_preserving_drive(path)
-        try:
-            model = ResearchFMModel(mdu_path, recurse=False)
-        except ValidationError as error:
-            raise ModelInputError(
-                mdu_path,
-                _format_validation_error(error),
-                _MDU_HINT,
-            ) from error
-        except (OSError, ValueError) as error:
-            raise ModelInputError(
-                mdu_path,
-                f"HYDROLIB-core could not read the MDU: {error}",
-                _MDU_HINT,
-            ) from error
+        document = parse_ini_file(mdu_path)
+        time = _section(document, "time", mdu_path)
+        output = _section(document, "output", mdu_path)
+        geometry = _section(document, "geometry", mdu_path)
+        sediment = _section(document, "sediment", mdu_path)
+        physics = _section(document, "physics", mdu_path)
+        processes = _section(document, "processes", mdu_path)
 
         base_dir = mdu_path.parent
-        start_datetime = model.time.startdatetime
-        stop_datetime = model.time.stopdatetime
+        start_datetime = _datetime_keyword(time, "startdatetime", mdu_path)
+        stop_datetime = _datetime_keyword(time, "stopdatetime", mdu_path)
         return cls(
             mdu_path=mdu_path,
-            refdate=model.time.refdate,
-            tunit=model.time.tunit,
-            tstart=start_datetime or model.time.tstart,
-            tstop=stop_datetime or model.time.tstop,
-            tzone=model.time.tzone,
-            tzone_explicit="tzone" in model.time.model_fields_set,
+            refdate=_int_keyword(time, "refdate", _REFDATE_DEFAULT, mdu_path),
+            tunit=_text_keyword(time, "tunit", _TUNIT_DEFAULT, mdu_path),
+            tstart=start_datetime or _float_keyword(time, "tstart", 0.0, mdu_path),
+            tstop=stop_datetime
+            or _float_keyword(time, "tstop", _TSTOP_DEFAULT, mdu_path),
+            tzone=_float_keyword(time, "tzone", 0.0, mdu_path),
+            tzone_explicit="tzone" in time,
             output_dir=_resolve_output_dir(
-                model.output.outputdir,
+                _optional_text(output, "outputdir", mdu_path),
                 base_dir=base_dir,
                 default_name=f"DFM_OUTPUT_{mdu_path.stem}",
             ),
             map_file=_output_file_path(
-                model.output.mapfile,
+                _optional_text(output, "mapfile", mdu_path),
                 default_name=f"{mdu_path.stem}_map.nc",
             ),
-            net_file=_resolve_input_file(model.geometry.netfile, base_dir),
-            mor_file=_resolve_input_file(model.sediment.morfile, base_dir),
-            sed_file=_resolve_input_file(model.sediment.sedfile, base_dir),
-            gravity=model.physics.ag,
-            water_density=model.physics.rhomean,
-            substance_file=(
-                _resolve_input_file(model.processes.substancefile, base_dir)
-                if model.processes is not None
-                else None
+            net_file=_resolve_input_file(
+                _optional_text(geometry, "netfile", mdu_path), base_dir
             ),
+            mor_file=_resolve_input_file(
+                _optional_text(sediment, "morfile", mdu_path), base_dir
+            ),
+            sed_file=_resolve_input_file(
+                _optional_text(sediment, "sedfile", mdu_path), base_dir
+            ),
+            gravity=_float_keyword(physics, "ag", _GRAVITY_DEFAULT, mdu_path),
+            water_density=_float_keyword(
+                physics, "rhomean", _WATER_DENSITY_DEFAULT, mdu_path
+            ),
+            substance_file=_resolve_input_file(
+                _optional_text(processes, "substancefile", mdu_path), base_dir
+            ),
+            keyword_notes=_keyword_notes(document),
         )
 
     @classmethod
@@ -160,77 +168,201 @@ def _mdf_input_file(values: Mapping[str, str], key: str, base_dir: Path) -> Path
     text = values.get(key, "").strip()
     if not text:
         return None
-    return resolve_path_preserving_drive(base_dir / text)
+    return resolve_path_preserving_drive(base_dir / model_text_to_path(text))
+
+
+def _section(
+    document: Mapping[str, object],
+    name: str,
+    path: Path,
+) -> Mapping[str, object]:
+    """Return one section; a missing section has no keywords, so defaults apply."""
+    value = document.get(name)
+    if value is None:
+        return {}
+    if isinstance(value, list):
+        raise ModelInputError(
+            path,
+            f"Section [{name}] appears {len(value)} times; it must appear once.",
+            _MDU_HINT,
+        )
+    if not isinstance(value, Mapping):
+        raise ModelInputError(path, f"Section [{name}] is not a mapping.", _MDU_HINT)
+    return value
+
+
+def _keyword_notes(document: Mapping[str, object]) -> tuple[str, ...]:
+    """Return D123 notes for unknown sections, unknown keywords and old keywords.
+
+    The notes are informational: unknown and obsolete entries are accepted.
+    """
+    notes: list[str] = []
+    for section_key, value in document.items():
+        sections = value if isinstance(value, list) else [value]
+        for section in sections:
+            if not isinstance(section, Mapping):
+                continue
+            header = _section_name(section)
+            if not is_known_section(section_key):
+                notes.append(
+                    f"Unknown MDU section [{header}] is accepted and not checked."
+                )
+                continue
+            for key in section:
+                if key in _NON_KEYWORD_ENTRIES:
+                    continue
+                spec = keyword_spec(section_key, key)
+                if spec is None:
+                    notes.append(
+                        f"Unknown MDU keyword [{header}] {key} "
+                        "is accepted and not used."
+                    )
+                elif spec.status in ("deprecated", "obsolete"):
+                    notes.append(
+                        f"MDU keyword [{header}] {key} is {spec.status} "
+                        "and is accepted."
+                    )
+    return tuple(notes)
+
+
+def _raw_keyword(
+    section: Mapping[str, object],
+    name: str,
+    key: str,
+    path: Path,
+) -> str | None:
+    """Return a keyword's text, or None when the keyword is absent or empty."""
+    value = section.get(key)
+    if value is None:
+        return None
+    if isinstance(value, list):
+        raise ModelInputError(
+            path,
+            f"Keyword '{key}' in [{name}] is given more than once.",
+            _MDU_HINT,
+        )
+    if not isinstance(value, str):
+        raise ModelInputError(
+            path,
+            f"Keyword '{key}' in [{name}] must be text.",
+            _MDU_HINT,
+        )
+    return value
+
+
+def _optional_text(section: Mapping[str, object], key: str, path: Path) -> str | None:
+    text = _raw_keyword(section, _section_name(section), key, path)
+    return text or None
+
+
+def _section_name(section: Mapping[str, object]) -> str:
+    header = section.get("_header")
+    return header if isinstance(header, str) else "unknown"
+
+
+def _text_keyword(
+    section: Mapping[str, object],
+    key: str,
+    default: str,
+    path: Path,
+) -> str:
+    text = _raw_keyword(section, _section_name(section), key, path)
+    return default if text is None else text
+
+
+def _int_keyword(
+    section: Mapping[str, object],
+    key: str,
+    default: int,
+    path: Path,
+) -> int:
+    text = _raw_keyword(section, _section_name(section), key, path)
+    if text is None:
+        return default
+    try:
+        return int(text)
+    except ValueError as error:
+        raise ModelInputError(
+            path,
+            f"Keyword '{key}' in [{_section_name(section)}] must be an integer, "
+            f"not {text!r}.",
+            _MDU_HINT,
+        ) from error
+
+
+def _float_keyword(
+    section: Mapping[str, object],
+    key: str,
+    default: float,
+    path: Path,
+) -> float:
+    name = _section_name(section)
+    text = _raw_keyword(section, name, key, path)
+    if text is None:
+        return default
+    parsed = optional_float(text, path=path, field_name=f"Keyword '{key}' in [{name}]")
+    return default if parsed is None else parsed
+
+
+def _datetime_keyword(
+    section: Mapping[str, object],
+    key: str,
+    path: Path,
+) -> str:
+    """Return a yyyymmdd or yyyymmddhhmmss value as written, or "" when absent.
+
+    The literal placeholder ``yyyymmddhhmmss`` is kept as written, as in
+    HYDROLIB-core, so it is returned unchanged.
+    """
+    name = _section_name(section)
+    text = _raw_keyword(section, name, key, path)
+    if text is None:
+        return ""
+    if text == _DATETIME_PLACEHOLDER:
+        return text
+    if len(text) in (8, 14):
+        date_format = "%Y%m%d%H%M%S" if len(text) == 14 else "%Y%m%d"
+        try:
+            datetime.datetime.strptime(text, date_format)
+            return text
+        except ValueError:
+            pass
+    raise ModelInputError(
+        path,
+        f"Keyword '{key}' in [{name}] must be yyyymmdd or yyyymmddhhmmss, "
+        f"not {text!r}.",
+        _MDU_HINT,
+    )
 
 
 def _resolve_input_file(
-    file_model: FileModel | None,
+    file_text: str | None,
     base_dir: Path,
 ) -> Path | None:
-    if file_model is None:
+    if file_text is None:
         return None
-    file_path = file_model.filepath
-    if file_path is None:
-        return None
-    path = Path(file_path)
+    path = model_text_to_path(file_text)
     if not path.is_absolute():
         path = base_dir / path
     return resolve_path_preserving_drive(path)
 
 
 def _resolve_output_dir(
-    value: Path | str | None,
+    value: str | None,
     *,
     base_dir: Path,
     default_name: str,
 ) -> Path:
-    if value is None or not str(value).strip():
+    if value is None:
         path = Path(default_name)
     else:
-        path = Path(value)
+        path = model_text_to_path(value)
     if not path.is_absolute():
         path = base_dir / path
     return resolve_path_preserving_drive(path)
 
 
-def _output_file_path(file_model: FileModel | None, *, default_name: str) -> Path:
-    if file_model is None or file_model.filepath is None:
+def _output_file_path(file_text: str | None, *, default_name: str) -> Path:
+    if file_text is None:
         return Path(default_name)
-    path = Path(file_model.filepath)
-    if not str(path).strip():
-        return Path(default_name)
-    return path
-
-
-def _format_validation_error(error: ValidationError) -> str:
-    details: list[str] = []
-    metadata_keys = {"_header", "datablock", "comments"}
-
-    for detail in error.errors():
-        location_parts = [
-            str(part) for part in detail["loc"] if str(part) != "model.mdu"
-        ]
-        input_value = detail.get("input")
-        if detail["type"] == "extra_forbidden" and isinstance(input_value, Mapping):
-            header = input_value.get("_header")
-            section = (
-                str(header)
-                if isinstance(header, str)
-                else location_parts[-1]
-                if location_parts
-                else "unknown"
-            )
-            keywords = sorted(
-                str(key) for key in input_value if str(key) not in metadata_keys
-            )
-            if keywords:
-                details.append(
-                    f"unknown section [{section}] contains keyword(s): "
-                    f"{', '.join(keywords)}"
-                )
-                continue
-
-        location = ".".join(location_parts) or "MDU"
-        details.append(f"{location}: {detail['msg']}")
-
-    return f"HYDROLIB-core could not read the MDU: {'; '.join(details)}"
+    return model_text_to_path(file_text)

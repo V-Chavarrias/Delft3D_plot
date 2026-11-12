@@ -116,9 +116,9 @@ def test_init_writes_valid_starter_and_refuses_overwrite(
     assert validation.exit_code == 0, validation.output
     payload = json.loads(validation.stdout)
     assert payload["valid"] is True
-    assert {issue["code"] for issue in payload["issues"]} == (
-        SYNTHETIC_EXPECTED_ISSUE_CODES
-    )
+    assert {
+        issue["code"] for issue in payload["issues"] if issue["level"] != "info"
+    } == (SYNTHETIC_EXPECTED_ISSUE_CODES)
 
     overwrite = runner.invoke(
         app,
@@ -217,9 +217,9 @@ def test_validate_accepts_registered_and_present_raw_variables(
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
     assert payload["valid"] is True
-    assert {issue["code"] for issue in payload["issues"]} == (
-        SYNTHETIC_EXPECTED_ISSUE_CODES
-    )
+    assert {
+        issue["code"] for issue in payload["issues"] if issue["level"] != "info"
+    } == (SYNTHETIC_EXPECTED_ISSUE_CODES)
     assert (tmp_path / "generated" / "d3dplot" / "cache" / "merge_plan.nc").is_file()
     validation_reports = tuple(
         (tmp_path / "generated" / "d3dplot" / "tables").glob("validation_*.json")
@@ -227,9 +227,9 @@ def test_validate_accepts_registered_and_present_raw_variables(
     assert len(validation_reports) == 1
     report_payload = json.loads(validation_reports[0].read_text(encoding="utf-8"))
     assert report_payload["valid"] is True
-    assert {issue["code"] for issue in report_payload["issues"]} == (
-        SYNTHETIC_EXPECTED_ISSUE_CODES
-    )
+    assert {
+        issue["code"] for issue in report_payload["issues"] if issue["level"] != "info"
+    } == (SYNTHETIC_EXPECTED_ISSUE_CODES)
     diagnostics = tuple(
         (tmp_path / "generated" / "d3dplot" / "logs").glob("d3dplot_*.dia")
     )
@@ -320,8 +320,9 @@ def test_validate_reports_unknown_variable_suggestions(
     assert result.exit_code == 1
     report = json.loads(result.stdout)
     assert report["valid"] is False
-    assert report["issues"][0]["code"] == "V-VAR-001"
-    assert "bed_level" in report["issues"][0]["message"]
+    errors = [issue for issue in report["issues"] if issue["level"] != "info"]
+    assert errors[0]["code"] == "V-VAR-001"
+    assert "bed_level" in errors[0]["message"]
 
 
 @pytest.mark.integration
@@ -342,7 +343,9 @@ def test_validate_reports_registered_raw_variable_missing_from_map(
 
     assert result.exit_code == 1
     report = json.loads(result.stdout)
-    assert [issue["code"] for issue in report["issues"]] == ["V-VAR-002"]
+    assert [
+        issue["code"] for issue in report["issues"] if issue["level"] != "info"
+    ] == ["V-VAR-002"]
 
 
 @pytest.mark.integration
@@ -363,7 +366,9 @@ def test_validate_rejects_line_quantity_without_sampling(
 
     assert result.exit_code == 1
     report = json.loads(result.stdout)
-    assert [issue["code"] for issue in report["issues"]] == ["V-VAR-006"]
+    assert [
+        issue["code"] for issue in report["issues"] if issue["level"] != "info"
+    ] == ["V-VAR-006"]
 
 
 @pytest.mark.integration

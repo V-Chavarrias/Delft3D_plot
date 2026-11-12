@@ -7,7 +7,7 @@ import json
 from dataclasses import dataclass
 from typing import Literal, TypeAlias
 
-ValidationLevel: TypeAlias = Literal["error", "warning"]
+ValidationLevel: TypeAlias = Literal["error", "warning", "info"]
 
 
 @dataclass(frozen=True, slots=True)

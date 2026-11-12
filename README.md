@@ -2,7 +2,7 @@
 
 Python tool to postprocess and plot Delft3D (D-Flow FM / SMT) results. Version 1 covers 2D maps (`map2d`) and river-km statistics (`river_km_statistics`).
 
-> **Status:** v1 is implemented locally (map2d, river-km statistics, map1d, measurements, and the native `prepare`/`process`/`run` pipeline). Delivery is pending the merge of HYDROLIB-core [PR #1278](https://github.com/Deltares/HYDROLIB-core/pull/1278). The [architecture plan](docs/architecture.md) holds the design and status; the [synthetic SMT test case generator](tools/synthetic_smt/README.md) is available for development.
+> **Status:** v1 is implemented locally (map2d, river-km statistics, map1d, measurements, and the native `prepare`/`process`/`run` pipeline). d3dplot reads model input with its own readers and does not depend on HYDROLIB-core at run time. The [architecture plan](docs/architecture.md) holds the design and status; the [synthetic SMT test case generator](tools/synthetic_smt/README.md) is available for development.
 
 ## Goals
 
@@ -10,7 +10,7 @@ Python tool to postprocess and plot Delft3D (D-Flow FM / SMT) results. Version 1
 - **Process first, plot later**: raw results are processed once into a cache, and figures are made (and remade) from that cache.
 - **Validate all input up front** before any heavy processing starts.
 - Parallel processing and plotting (local process pool; SLURM job arrays on Linux clusters).
-- Reuses [HYDROLIB-core](https://github.com/Deltares/HYDROLIB-core) and [dfm_tools](https://github.com/Deltares/dfm_tools) instead of re-implementing readers.
+- Reads model input with its own readers (no run-time dependency on [HYDROLIB-core](https://github.com/Deltares/HYDROLIB-core)) and reuses [dfm_tools](https://github.com/Deltares/dfm_tools) and xugrid for model output instead of re-implementing them.
 - Runs on Linux and Windows.
 
 The functional reference is the Matlab tool `D3D_plot` in [OpenEarthTools](https://github.com/openearth/matlab-tools/blob/main/applications/vtools/D3D/plot/D3D_plot.m). This is not a one-to-one translation.
@@ -95,7 +95,7 @@ for the cache layout and implementation details.
 checkouts/
 ├─ Delft3D_plot/     (this repository)
 ├─ oet_matlab/       https://github.com/openearth/matlab-tools
-├─ HYDROLIB-core/    https://github.com/Deltares/HYDROLIB-core
+├─ HYDROLIB-core/    https://github.com/Deltares/HYDROLIB-core (reference only)
 └─ dfm_tools/        https://github.com/Deltares/dfm_tools
 ```
 

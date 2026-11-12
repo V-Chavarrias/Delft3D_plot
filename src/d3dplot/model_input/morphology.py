@@ -20,7 +20,7 @@ class MorphologyInfo:
 
 
 def read_morphology(path: Path) -> MorphologyInfo:
-    """Read ``MorFac`` and ``MorStt`` with HYDROLIB-core's INI parser."""
+    """Read ``MorFac`` and ``MorStt`` with the native INI reader."""
     mor_path = resolve_path_preserving_drive(path)
     document = parse_ini_file(mor_path)
     sections = section_mappings(

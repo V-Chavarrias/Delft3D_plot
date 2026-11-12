@@ -53,7 +53,7 @@ class SedimentInfo:
 
 
 def read_sediment(path: Path) -> SedimentInfo:
-    """Read each repeated ``[Sediment]`` section with HYDROLIB-core."""
+    """Read each repeated ``[Sediment]`` section with the native INI reader."""
     sed_path = resolve_path_preserving_drive(path)
     document = parse_ini_file(sed_path)
     sections = section_mappings(

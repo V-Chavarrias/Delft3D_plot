@@ -17,6 +17,7 @@ from matplotlib.collections import LineCollection
 from d3dplot import __version__
 from d3dplot.config.figure import Extent, FigureConfig, MapViewConfig
 from d3dplot.config.project import ProjectConfig
+from d3dplot.model_input.polyline import read_polyline_file
 from d3dplot.river_km.file import (
     RiverKmPoint,
     read_river_km_points,
@@ -393,30 +394,21 @@ def _load_land_boundary(
         return cached, fingerprint
 
     try:
-        from hydrolib.core.dflowfm import PolyFile  # type: ignore[import-untyped]
-
-        poly_file = PolyFile(source)
         x_values: list[float] = []
         y_values: list[float] = []
-        for poly_object in poly_file.objects:
-            if len(poly_object.points) < 2:
-                raise ValueError(
-                    f"polyline {poly_object.metadata.name!r} has fewer than two points"
-                )
-            for point in poly_object.points:
-                x_coord, y_coord = float(point.x), float(point.y)
-                if not (np.isfinite(x_coord) and np.isfinite(y_coord)):
-                    raise ValueError(
-                        f"polyline {poly_object.metadata.name!r} has non-finite points"
-                    )
-                x_values.append(x_coord)
-                y_values.append(y_coord)
+        for block in read_polyline_file(source):
+            if block.xy.shape[0] < 2:
+                raise ValueError(f"polyline {block.name!r} has fewer than two points")
+            if not np.all(np.isfinite(block.xy)):
+                raise ValueError(f"polyline {block.name!r} has non-finite points")
+            x_values.extend(block.xy[:, 0].tolist())
+            y_values.extend(block.xy[:, 1].tolist())
             x_values.append(float("nan"))
             y_values.append(float("nan"))
-    except (ImportError, OSError, RuntimeError, TypeError, ValueError) as error:
+    except ValueError as error:
         raise MapDecorationsError(
             "V-LDB-001",
-            f"Could not read land boundary {source} with HYDROLIB-core: {error}",
+            f"Could not read land boundary {source}: {error}",
         ) from error
 
     if not x_values:

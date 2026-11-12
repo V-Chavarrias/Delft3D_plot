@@ -5,25 +5,25 @@ one work package at a time and keep its handover in §0 current.
 
 ## Environment
 
-The project supports Python 3.11–3.13. From a checkout with sibling
-`dfm_tools` and `HYDROLIB-core` repositories:
+The project supports Python 3.11–3.13. From a checkout with a sibling
+`dfm_tools` repository:
 
 ### Windows PowerShell
 
 ```powershell
 uv venv .venv --python 3.12
-uv pip install --python .venv\Scripts\python.exe -e ..\dfm_tools -e ..\HYDROLIB-core -e '.[dev,docs]'
+uv pip install --python .venv\Scripts\python.exe -e ..\dfm_tools -e '.[dev,docs]'
 ```
 
 ### Linux
 
 ```bash
 uv venv .venv --python 3.12
-uv pip install --python .venv/bin/python -e ../dfm_tools -e ../HYDROLIB-core -e '.[dev,docs]'
+uv pip install --python .venv/bin/python -e ../dfm_tools -e '.[dev,docs]'
 ```
 
-The HYDROLIB-core checkout must include the upstream changes recorded in
-[`docs/upstream.md`](docs/upstream.md) for work that reads morphology MDUs.
+d3dplot does not need a HYDROLIB-core checkout. HYDROLIB-core is installed from
+PyPI as a dependency of `dfm_tools`.
 
 ## Checks
 

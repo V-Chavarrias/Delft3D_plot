@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import csv
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import numpy as np
@@ -11,6 +12,43 @@ import numpy as np
 
 def _ok(msg: str):
     print(f"  [ok] {msg}")
+
+
+# Minimal readers written for this check only. They deliberately do not use
+# d3dplot's readers, so the self-check is independent of the code it verifies.
+def _mdu_values(path: Path) -> dict[tuple[str, str], str]:
+    """Return the MDU keywords as {(section, key): value}, names in lower case."""
+    values: dict[tuple[str, str], str] = {}
+    section = ""
+    for raw in path.read_text(encoding="utf-8-sig").splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1].strip().lower()
+        elif "=" in line:
+            key, value = line.split("=", 1)
+            values[(section, key.strip().lower())] = value.strip()
+    return values
+
+
+def _dimr_first_input_file(path: Path) -> str:
+    """Return the file name of the first <inputFile> in a DIMR configuration."""
+    root = ET.parse(path).getroot()
+    for element in root.iter():
+        if element.tag.rsplit("}", 1)[-1] == "inputFile" and element.text:
+            return Path(element.text.strip()).name
+    raise AssertionError(f"no inputFile in {path}")
+
+
+def _tekal_object_count(path: Path) -> int:
+    """Count Tekal objects: a name line, a 'rows cols' line, then the rows."""
+    lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line]
+    count = 0
+    index = 0
+    while index < len(lines):
+        rows = int(lines[index + 1].split()[0])
+        index += 2 + rows
+        count += 1
+    return count
 
 
 def verify(case: Path):
@@ -26,9 +64,6 @@ def verify(case: Path):
         plain_fm_times,
         subrun_times,
     )
-    from hydrolib.core.dflowfm.mdu.models import FMModel
-    from hydrolib.core.dflowfm.polyfile.models import PolyFile
-    from hydrolib.core.dimr.models import DIMR
     from mesh import make_centreline, make_mesh
     from params import Params
 
@@ -39,18 +74,19 @@ def verify(case: Path):
     plain_run = plain_fm_times(p)
     sim_dir = case / "simulations" / "r001"
 
-    # HYDROLIB-core reads the MDU without referenced files and the DIMR config.
+    # Independent minimal readers check the MDU times, output dir and DIMR config.
     for run in runs:
-        mdu = FMModel(
-            sim_dir / "output" / str(run.index) / "dflowfm.mdu", recurse=False
-        )
+        values = _mdu_values(sim_dir / "output" / str(run.index) / "dflowfm.mdu")
         assert (
-            float(mdu.time.tstart) == run.tstart and float(mdu.time.tstop) == run.tstop
+            float(values[("time", "tstart")]) == run.tstart
+            and float(values[("time", "tstop")]) == run.tstop
         ), "MDU times"
-        assert str(mdu.output.outputdir) == "results", "MDU output dir"
-    dimr = DIMR(sim_dir / "output" / "0" / "dimr_config.xml")
-    assert dimr.component[0].inputFile.name == "dflowfm.mdu"
-    _ok("HYDROLIB-core reads MDU (TStart/TStop/OutputDir) and dimr_config.xml")
+        assert values[("output", "outputdir")] == "results", "MDU output dir"
+    assert (
+        _dimr_first_input_file(sim_dir / "output" / "0" / "dimr_config.xml")
+        == "dflowfm.mdu"
+    )
+    _ok("minimal readers: MDU (TStart/TStop/OutputDir) and dimr_config.xml")
 
     # dfm_tools merges partitions (without ghosts) into the mesh with analytic values.
     sim = p.simulations[0]
@@ -117,11 +153,12 @@ def verify(case: Path):
     assert not (plain_single / "dimr_config.xml").exists()
     assert list(plain_partitioned.glob("*.mdu")) == [plain_partitioned / "dflowfm.mdu"]
     assert list(plain_single.glob("*.mdu")) == [plain_single / "dflowfm.mdu"]
-    mdu_partitioned = FMModel(plain_partitioned / "dflowfm.mdu", recurse=False)
-    assert float(mdu_partitioned.time.tstop) == plain_run.tstop
-    assert mdu_partitioned.output.outputdir == ""
-    dimr = DIMR(plain_partitioned / "dimr_config.xml")
-    assert dimr.component[0].inputFile.name == "dflowfm.mdu"
+    mdu_partitioned = _mdu_values(plain_partitioned / "dflowfm.mdu")
+    assert float(mdu_partitioned[("time", "tstop")]) == plain_run.tstop
+    assert mdu_partitioned.get(("output", "outputdir"), "") == ""
+    assert (
+        _dimr_first_input_file(plain_partitioned / "dimr_config.xml") == "dflowfm.mdu"
+    )
     _ok(
         "plain FM MDUs parse; partitioned run has a root DIMR config; "
         "neither has an SMT manifest"
@@ -139,8 +176,8 @@ def verify(case: Path):
         partition_time = ds["time"][:]
         partition_morft = ds["morft"][:]
         assert "mesh2d_flowelem_domain" in ds.variables
-    single_mdu = FMModel(plain_single / "dflowfm.mdu", recurse=False)
-    assert str(single_mdu.output.outputdir) == "single_output"
+    single_mdu = _mdu_values(plain_single / "dflowfm.mdu")
+    assert single_mdu[("output", "outputdir")] == "single_output"
     single_map = plain_single / "single_output" / "dflowfm_map.nc"
     merged_single = open_partitioned_dataset(str(single_map))
     assert merged_single.sizes["mesh2d_nFaces"] == mesh.n_faces
@@ -165,10 +202,10 @@ def verify(case: Path):
         "with 40 expected map times; 3D FM fields are readable"
     )
 
-    # land boundary: .ldb only, readable by HYDROLIB-core
-    ldb = PolyFile(case / "inputs" / "ldb" / "synthetic.ldb")
-    assert len(ldb.objects) == 3 and not list((case / "inputs" / "ldb").glob("*.mat"))
-    _ok("land boundary .ldb readable by HYDROLIB-core PolyFile (3 polylines)")
+    # land boundary: .ldb only, with 3 polylines
+    ldb_objects = _tekal_object_count(case / "inputs" / "ldb" / "synthetic.ldb")
+    assert ldb_objects == 3 and not list((case / "inputs" / "ldb").glob("*.mat"))
+    _ok("land boundary .ldb has 3 polylines (minimal Tekal count)")
 
     # finished marker only in partition .dia files
     res0 = sim_dir / "output" / "0" / "results"

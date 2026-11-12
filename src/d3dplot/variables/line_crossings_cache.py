@@ -4,13 +4,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
 
 import netCDF4
 import numpy as np
 
 from d3dplot import __version__
+from d3dplot.model_input.errors import ModelInputError
+from d3dplot.model_input.polyline import Polyline, read_polyline_file
 from d3dplot.store import (
     CACHE_SCHEMA_VERSION,
     OutputLayout,
@@ -38,43 +39,28 @@ class LineInputError(ValueError):
     """A polyline file or a cached line-crossing index cannot be used."""
 
 
-@dataclass(frozen=True, slots=True)
-class Polyline:
-    """One named polyline of a .pli file, in model coordinates."""
-
-    name: str
-    xy: np.ndarray
-
-
 def read_pli_polylines(path: str | Path) -> tuple[Polyline, ...]:
-    """Read every polyline object of a .pli file with HYDROLIB-core."""
+    """Read every polyline block of a .pli file."""
     source = Path(path)
     try:
-        from hydrolib.core.dflowfm import PolyFile  # type: ignore[import-untyped]
-
-        objects = PolyFile(source).objects
-    except (ImportError, OSError, RuntimeError, TypeError, ValueError) as error:
+        blocks = read_polyline_file(source)
+    except ModelInputError as error:
         raise LineInputError(
             f"Could not read polyline file {source}: {error}"
         ) from error
 
-    polylines: list[Polyline] = []
-    for index, poly_object in enumerate(objects):
-        name = (poly_object.metadata.name or "").strip() or f"line_{index + 1}"
-        xy = np.array(
-            [(float(point.x), float(point.y)) for point in poly_object.points],
-            dtype=np.float64,
-        ).reshape(-1, 2)
-        if xy.shape[0] < 2:
+    for block in blocks:
+        if block.xy.shape[0] < 2:
             raise LineInputError(
-                f"{source}: polyline {name!r} needs at least two points."
+                f"{source}: polyline {block.name!r} needs at least two points."
             )
-        if not np.all(np.isfinite(xy)):
-            raise LineInputError(f"{source}: polyline {name!r} has non-finite points.")
-        polylines.append(Polyline(name=name, xy=xy))
-    if not polylines:
+        if not np.all(np.isfinite(block.xy)):
+            raise LineInputError(
+                f"{source}: polyline {block.name!r} has non-finite points."
+            )
+    if not blocks:
         raise LineInputError(f"{source} contains no polyline.")
-    return tuple(polylines)
+    return blocks
 
 
 def read_line_topology(

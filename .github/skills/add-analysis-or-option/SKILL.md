@@ -1,6 +1,6 @@
 ---
 name: add-analysis-or-option
-description: "Workflow to add or port an analysis (e.g. HIS, PRF, M1D, GRD from Matlab D3D_plot), a plot view, a variable or a configuration option to d3dplot. Use when implementing a new feature, porting a Matlab tag or flag, adding a variable to the registry, or adding a new figure type. Enforces reuse of HYDROLIB-core/dfm_tools, performance, shared plot blocks, common finalisation and consistent option names."
+description: "Workflow to add or port an analysis (e.g. HIS, PRF, M1D, GRD from Matlab D3D_plot), a plot view, a variable or a configuration option to d3dplot. Use when implementing a new feature, porting a Matlab tag or flag, adding a variable to the registry, or adding a new figure type. Enforces reuse of d3dplot's model-input readers and dfm_tools, performance, shared plot blocks, common finalisation and consistent option names."
 argument-hint: "What to add, e.g. 'HIS analysis' or 'option to mask dry cells in map2d'"
 ---
 # Add an analysis, view, variable or option
@@ -15,7 +15,7 @@ Follow the plan in `docs/architecture.md`. Steps are in order; do not skip the f
 ## 2. Look for existing functionality (reuse)
 Search, in this order, and note what you will reuse:
 1. `src/d3dplot` (views in `plotting/views/`, selections, store, comparisons, measurements, geometry).
-2. HYDROLIB-core (`c:\checkouts\HYDROLIB-core\hydrolib\core`) for any model input file.
+2. d3dplot's model-input readers (`src/d3dplot/model_input/`, plan D121) for any model input file. HYDROLIB-core (`c:\checkouts\HYDROLIB-core\hydrolib\core`) is a format reference only.
 3. dfm_tools / xugrid (`c:\checkouts\dfm_tools\dfm_tools`) for model output, grids, layers, slicing, rasterising.
 If a building block is missing upstream and is general, implement it upstream (skill `upstream-contribution`).
 
