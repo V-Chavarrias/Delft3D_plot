@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "d3dplot"
-version = "0.2.0rc0"
+version = "0.2.0"
 description = "Postprocess and plot D-Flow FM and SMT simulation results."
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
@@ -122,7 +122,6 @@ source = ["d3dplot"]
 
 [tool.commitizen]
 name = "cz_conventional_commits"
-version = "0.1.0"
 tag_format = "v$version"
 version_provider = "pep621"
 changelog_file = "CHANGELOG.md"
