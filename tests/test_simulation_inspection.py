@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import csv
 import math
+import os
 import re
 from contextlib import redirect_stdout
 from dataclasses import replace
@@ -49,7 +50,11 @@ def test_inspection_reports_phases_to_log(synthetic_case: Path, tmp_path: Path) 
 
     assert result is not None, report.to_text()
     assert messages[0].startswith("Inspection started:")
-    assert any("Reading the reference sub-run" in message for message in messages)
+    assert any(message.startswith("Fingerprinted ") for message in messages)
+    assert any(
+        "Reading the model output of the reference sub-run" in message
+        for message in messages
+    )
     assert any(message.startswith("Building the time axis") for message in messages)
     assert messages[-1].startswith("Inspection caches written")
 
@@ -184,6 +189,102 @@ def test_unreadable_cache_file_is_rebuilt_with_warning(
     assert rebuilt is not None, rebuilt_report.to_text()
     assert not rebuilt.cache_reused
     assert "V-OUT-025" in {issue.code for issue in rebuilt_report.warnings}
+
+
+@pytest.mark.integration
+def test_unfinished_output_rebuilds_time_cache(
+    synthetic_case: Path,
+    tmp_path: Path,
+) -> None:
+    simulation_path = tmp_path / "unfinished_output"
+    copytree(synthetic_case / "simulations" / "r001", simulation_path)
+    layout = OutputLayout(tmp_path / "d3dplot")
+
+    initial, initial_report = inspect_simulation(
+        _discover(simulation_path),
+        layout,
+        crs=None,
+        forbidden_roots=(),
+    )
+    assert initial is not None, initial_report.to_text()
+
+    partition_dia = sorted(
+        (simulation_path / "output" / "0" / "results").glob("dflowfm_*.dia")
+    )[0]
+    initial_times = _times_variables(initial.times_path)
+    partition_dia.write_text(
+        partition_dia.read_text(encoding="utf-8").replace(
+            "Computation finished",
+            "Computation running",
+        ),
+        encoding="utf-8",
+    )
+    merge_plan = layout.cache / "merge_plan.nc"
+    merge_plan_mtime = merge_plan.stat().st_mtime_ns
+    messages: list[str] = []
+
+    rebuilt, rebuilt_report = inspect_simulation(
+        _discover(simulation_path),
+        layout,
+        crs=None,
+        forbidden_roots=(),
+        log=messages.append,
+    )
+
+    assert rebuilt is not None, rebuilt_report.to_text()
+    assert not rebuilt.cache_reused
+    assert any(
+        message.startswith("Rebuilding the time cache: ")
+        and "the simulation is not finished" in message
+        for message in messages
+    )
+    assert any("Reusing the grid and merge-plan caches" in m for m in messages)
+    assert any(
+        "Reading the time of the first partition of the reference sub-run" in m
+        for m in messages
+    )
+    assert not any(
+        "Reading the model output of the reference sub-run" in m for m in messages
+    )
+    assert merge_plan.stat().st_mtime_ns == merge_plan_mtime
+    assert _times_variables(rebuilt.times_path) == initial_times
+
+
+@pytest.mark.integration
+def test_output_written_after_time_cache_rebuilds_it(
+    synthetic_case: Path,
+    tmp_path: Path,
+) -> None:
+    simulation_path = tmp_path / "newer_output"
+    copytree(synthetic_case / "simulations" / "r001", simulation_path)
+    layout = OutputLayout(tmp_path / "d3dplot")
+
+    initial, initial_report = inspect_simulation(
+        _discover(simulation_path),
+        layout,
+        crs=None,
+        forbidden_roots=(),
+    )
+    assert initial is not None, initial_report.to_text()
+
+    partition_dia = sorted(
+        (simulation_path / "output" / "0" / "results").glob("dflowfm_*.dia")
+    )[0]
+    later = datetime.now(UTC).timestamp() + 60.0
+    os.utime(partition_dia, (later, later))
+    messages: list[str] = []
+
+    rebuilt, rebuilt_report = inspect_simulation(
+        _discover(simulation_path),
+        layout,
+        crs=None,
+        forbidden_roots=(),
+        log=messages.append,
+    )
+
+    assert rebuilt is not None, rebuilt_report.to_text()
+    assert not rebuilt.cache_reused
+    assert any("written after the time cache" in message for message in messages)
 
 
 @pytest.mark.integration
@@ -637,6 +738,11 @@ def _discover(path: Path) -> Simulation:
     assert simulation is not None
     assert report.is_valid
     return simulation
+
+
+def _times_variables(path: Path) -> dict[str, list[object]]:
+    with netCDF4.Dataset(path) as dataset:
+        return {name: dataset.variables[name][:].tolist() for name in dataset.variables}
 
 
 def _assert_time_axis_matches_expected(

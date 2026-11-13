@@ -683,6 +683,25 @@ def _latest_modified_time(
     return datetime.fromtimestamp(max(timestamps), tz=UTC)
 
 
+def finished_output_time(map_files: Iterable[Path]) -> datetime | None:
+    """Return the latest ``.dia`` write time if every partition has finished.
+
+    Returns ``None`` when no map file is given or any partition's ``.dia`` lacks
+    the finished marker, so the output must not be treated as final.
+    """
+    latest: float | None = None
+    for map_file in map_files:
+        dia_path = _dia_path(map_file)
+        tail = _read_dia_tail(dia_path)
+        if tail is None or _FINISHED_MARKER not in tail:
+            return None
+        modified = dia_path.stat().st_mtime
+        latest = modified if latest is None else max(latest, modified)
+    if latest is None:
+        return None
+    return datetime.fromtimestamp(latest, tz=UTC)
+
+
 def _dflowfm_version(source: str | None) -> str | None:
     if source is None:
         return None

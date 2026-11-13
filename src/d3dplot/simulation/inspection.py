@@ -14,9 +14,10 @@ from datetime import UTC, datetime, timezone
 from hashlib import blake2b
 from importlib import import_module
 from io import StringIO
-from numbers import Integral
+from numbers import Integral, Real
 from pathlib import Path
 from time import perf_counter
+from time import time as wall_clock_seconds
 from typing import Any, Literal, Protocol, TypeAlias, cast
 
 from d3dplot import __version__
@@ -28,6 +29,7 @@ from d3dplot.simulation.discover import (
     Simulation,
 )
 from d3dplot.simulation.partitions import _NETCDF4_READ_LOCK
+from d3dplot.simulation.status import finished_output_time
 from d3dplot.simulation.subrun import SubRun
 from d3dplot.simulation.time_axis import TimeAxis, TimeEntry
 from d3dplot.simulation.time_utils import (
@@ -46,7 +48,6 @@ from d3dplot.store import (
     OutputWriteGuard,
     atomic_path,
     fingerprint_artifact,
-    fingerprint_model_output,
     fingerprint_small_input,
     initialize_output_root,
 )
@@ -56,7 +57,7 @@ _PARTITION_NAME = re.compile(r"(.+)_(\d{4})(_map\.nc)", flags=re.IGNORECASE)
 _TIME_TOLERANCE_S = 1.0
 _COORDINATE_TOLERANCE_M = 0.001
 _CACHE_SCHEMA_VERSION = CACHE_SCHEMA_VERSION
-_ALGORITHM_VERSION = "3"
+_ALGORITHM_VERSION = "4"
 _FACE_DOMAIN = "mesh2d_flowelem_domain"
 _FACE_GLOBALNR = "mesh2d_flowelem_globalnr"
 _FACE_NODES = "mesh2d_face_nodes"
@@ -262,11 +263,11 @@ class _InspectionFailure(Exception):
         self.issue = issue
 
 
-def _model_output_inputs(subrun: SubRun) -> tuple[Path, ...]:
-    """Files defining a sub-run's output; a D3D4 topology derives from them."""
+def _topology_file_inputs(subrun: SubRun) -> tuple[Path, ...]:
+    """Small D3D4 topology files; FM map output is not fingerprinted (D127)."""
     if subrun.d3d4_run is not None:
         return (subrun.d3d4_run.def_path, subrun.d3d4_run.data_path)
-    return tuple(subrun.map_files)
+    return ()
 
 
 def inspect_simulation(
@@ -285,6 +286,7 @@ def inspect_simulation(
 ) -> tuple[InspectionResult | None, ValidationReport]:
     """Build or reuse the grid and time caches for a discovered simulation."""
     started = perf_counter()
+    inspected_at_utc = wall_clock_seconds()
     progress: Callable[[str], None] = log or (lambda _message: None)
     issues: list[ValidationIssue] = []
     if not simulation.subruns:
@@ -310,29 +312,30 @@ def inspect_simulation(
     times_path = layout.cache / "times.nc"
     grid_paths = (layout.cache / _grid_file_name(),)
     progress(
-        f"Fingerprinting the map output of {len(simulation.subruns)} sub-runs "
-        "and the reference MDU."
+        "Fingerprinting the reference MDU and the inspection parameters "
+        "(map output is not fingerprinted, D127)."
     )
     try:
-        input_fingerprints = [
-            fingerprint_model_output(path)
+        topology_fingerprints = {
+            subrun.index: [
+                fingerprint_small_input(path) for path in _topology_file_inputs(subrun)
+            ]
             for subrun in simulation.subruns
-            for path in _model_output_inputs(subrun)
-        ]
+        }
     except (OSError, RuntimeError, ValueError) as error:
         issues.append(
             _issue(
                 "V-OUT-002",
                 "error",
                 simulation.root,
-                f"Could not fingerprint map output: {error}",
-                "Check that every discovered map file is readable.",
+                f"Could not fingerprint topology files: {error}",
+                "Check that every D3D4 topology file is readable.",
             )
         )
         return None, ValidationReport(tuple(issues))
 
     try:
-        input_fingerprints.append(fingerprint_small_input(reference.mdu.mdu_path))
+        reference_mdu_fingerprint = fingerprint_small_input(reference.mdu.mdu_path)
     except (OSError, RuntimeError, ValueError) as error:
         issues.append(
             _issue(
@@ -345,39 +348,57 @@ def inspect_simulation(
         )
         return None, ValidationReport(tuple(issues))
 
+    input_count = sum(len(values) for values in topology_fingerprints.values()) + 1
     progress(
-        f"Fingerprinted {len(input_fingerprints)} inputs (map files and reference "
-        f"MDU) at {perf_counter() - started:.1f} s."
+        f"Fingerprinted {input_count} inputs (reference MDU and topology files) at "
+        f"{perf_counter() - started:.1f} s."
     )
-    parameters: dict[str, object] = {
-        "crs": crs,
-        "time_zone": time_zone,
-        "check_boundary_duplicates": check_boundary_duplicates,
-        "check_corrupt_partitions": check_corrupt_partitions,
-        "grid_strategy": "first_subrun",
-        "reference_subrun": reference_subrun,
-        "subruns": [subrun.index for subrun in simulation.subruns],
-        "partition_count": reference.partition_count,
-        "time_selections": (
-            [
-                {
-                    "times": times.model_dump(mode="json"),
-                    "duplicate_morphological_times": duplicate_policy,
-                }
-                for times, duplicate_policy in time_selections
-            ]
-            if time_selections is not None
-            else None
-        ),
-        "on_corrupt_output": on_corrupt_output,
-    }
-    fingerprint = fingerprint_artifact(
-        kind="inspect",
+    grid_fingerprint = fingerprint_artifact(
+        kind="inspect_grid",
         schema_version=_CACHE_SCHEMA_VERSION,
         tool_version=__version__,
         algorithm_version=_ALGORITHM_VERSION,
-        parameters=parameters,
-        inputs=input_fingerprints,
+        parameters={
+            "crs": crs,
+            "grid_strategy": "first_subrun",
+            "reference_subrun": reference_subrun,
+            "partition_count": reference.partition_count,
+        },
+        inputs=[*topology_fingerprints[reference_subrun], reference_mdu_fingerprint],
+    )
+    time_fingerprint = fingerprint_artifact(
+        kind="inspect_time",
+        schema_version=_CACHE_SCHEMA_VERSION,
+        tool_version=__version__,
+        algorithm_version=_ALGORITHM_VERSION,
+        parameters={
+            "time_zone": time_zone,
+            "check_boundary_duplicates": check_boundary_duplicates,
+            "check_corrupt_partitions": check_corrupt_partitions,
+            "reference_subrun": reference_subrun,
+            "partition_count": reference.partition_count,
+            "subruns": [subrun.index for subrun in simulation.subruns],
+            "time_selections": (
+                [
+                    {
+                        "times": times.model_dump(mode="json"),
+                        "duplicate_morphological_times": duplicate_policy,
+                    }
+                    for times, duplicate_policy in time_selections
+                ]
+                if time_selections is not None
+                else None
+            ),
+            "on_corrupt_output": on_corrupt_output,
+        },
+        inputs=[
+            *(
+                fingerprint
+                for values in topology_fingerprints.values()
+                for fingerprint in values
+            ),
+            reference_mdu_fingerprint,
+        ],
     )
 
     progress(f"Initialising the inspection output root {layout.root}.")
@@ -425,11 +446,14 @@ def inspect_simulation(
 
     progress(f"Checking the inspection cache in {layout.cache}.")
     try:
-        cache_reused, cache_problem = _cache_is_current(
-            merge_plan_path,
-            grid_paths,
-            times_path,
-            fingerprint,
+        grid_reused, grid_problem = _cache_is_current(
+            (merge_plan_path, *grid_paths),
+            grid_fingerprint,
+            guard,
+        )
+        time_reused, time_problem = _cache_is_current(
+            (times_path,),
+            time_fingerprint,
             guard,
         )
     except OutputWriteError as error:
@@ -444,12 +468,17 @@ def inspect_simulation(
         )
         return None, ValidationReport(tuple(issues))
 
-    if cache_problem is not None:
+    for cache_problem, problem_path in (
+        (grid_problem, merge_plan_path),
+        (time_problem, times_path),
+    ):
+        if cache_problem is None:
+            continue
         issues.append(
             ValidationIssue(
                 code="V-OUT-025",
                 level="warning",
-                location=str(merge_plan_path),
+                location=str(problem_path),
                 message=(
                     "An incomplete or unreadable inspection cache will be rebuilt: "
                     f"{cache_problem}"
@@ -458,7 +487,13 @@ def inspect_simulation(
             )
         )
 
-    if cache_reused:
+    if time_reused:
+        stale_reason = _time_cache_stale_reason(times_path, simulation.subruns, guard)
+        if stale_reason is not None:
+            progress(f"Rebuilding the time cache: {stale_reason}.")
+            time_reused = False
+
+    if grid_reused and time_reused:
         progress(
             f"Reusing the current inspection cache in {layout.cache} "
             f"(fingerprint match, {perf_counter() - started:.1f} s)."
@@ -474,16 +509,42 @@ def inspect_simulation(
             ),
             ValidationReport(tuple(issues)),
         )
+    if grid_reused:
+        progress(
+            f"Reusing the grid and merge-plan caches {merge_plan_path} and "
+            f"{grid_paths[0]} (fingerprint match, D127)."
+        )
+    else:
+        progress(
+            "Building the grid and merge-plan caches: missing, or their inputs or "
+            "parameters changed."
+        )
+    if time_reused:
+        progress(f"Reusing the time-quality cache {times_path} (fingerprint match).")
+    else:
+        progress("Building the time-quality cache from the model output.")
 
-    progress(
-        "No current inspection cache; reading model output. Reading the reference "
-        f"sub-run {reference_subrun} ({reference.partition_count} partitions)."
-    )
-    reference_metadata, reference_issues = _inspect_subrun_metadata(
-        reference,
-        check_corrupt_partitions=check_corrupt_partitions,
-        log=progress,
-    )
+    bed_cache: _BedCache | None = {} if check_boundary_duplicates else None
+    if grid_reused and not check_corrupt_partitions:
+        progress(
+            "Reading the time of the first partition of the reference sub-run "
+            f"{reference_subrun} (the grid is reused, so topology is not read)."
+        )
+        reference_metadata, reference_issues = _inspect_subrun_time_candidate(
+            reference,
+            bed_cache=bed_cache,
+            check_mdu_time_bounds=True,
+        )
+    else:
+        progress(
+            "Reading the model output of the reference sub-run "
+            f"{reference_subrun} ({reference.partition_count} partitions)."
+        )
+        reference_metadata, reference_issues = _inspect_subrun_metadata(
+            reference,
+            check_corrupt_partitions=check_corrupt_partitions,
+            log=progress,
+        )
     progress(
         f"Reference sub-run read at {perf_counter() - started:.1f} s; "
         "reading time metadata of the other sub-runs."
@@ -492,185 +553,191 @@ def inspect_simulation(
     if reference_metadata is None:
         return None, ValidationReport(tuple(issues))
 
-    bed_cache: _BedCache | None = {} if check_boundary_duplicates else None
-    (
-        subrun_metadata,
-        time_metadata_issues,
-        fully_inspected_subruns,
-    ) = _inspect_time_metadata_for_selection(
-        simulation,
-        reference_metadata,
-        time_zone=time_zone,
-        time_selections=time_selections,
-        on_corrupt_output=on_corrupt_output,
-        check_corrupt_partitions=check_corrupt_partitions,
-        bed_cache=bed_cache,
-        log=progress,
-    )
-    issues.extend(time_metadata_issues)
-    if subrun_metadata is None or _has_errors(issues):
-        return None, ValidationReport(tuple(issues))
-
-    if not reference_metadata.has_globalnr:
-        issues.append(
-            ValidationIssue(
-                code="V-OUT-023",
-                level="warning",
-                location=str(reference.folder),
-                message=(
-                    "Global face numbers are absent; face centres will be "
-                    "matched to the merged grid within 1 mm."
-                ),
-                hint=(
-                    "Use unique face centres in every partition; ambiguous "
-                    "or missing coordinate matches are errors."
-                ),
-            )
-        )
-
-    progress(
-        f"Building the time axis from {len(subrun_metadata)} sub-runs at "
-        f"{perf_counter() - started:.1f} s."
-    )
-    time_cache, time_issues = _prepare_time_axis(
-        simulation,
-        subrun_metadata,
-        time_zone=time_zone,
-        check_boundary_duplicates=check_boundary_duplicates,
-        # Without corrupt-partition checks every boundary uses the candidate times.
-        boundary_subruns=fully_inspected_subruns if check_corrupt_partitions else None,
-        bed_cache=bed_cache,
-        log=progress,
-    )
-    issues.extend(time_issues)
-    if _has_errors(issues):
-        return None, ValidationReport(tuple(issues))
-    progress("Time axis built and checked; reading the merged grid next.")
-
-    progress(
-        "Building the merged grid from the reference sub-run at "
-        f"{perf_counter() - started:.1f} s."
-    )
-    ugrid: _UgridDataset | None = None
-    try:
-        progress(f"Opening the merged grid of sub-run {reference_subrun}.")
-        ugrid = _open_merged_dataset(reference)
-        plan, grid_dataset = _build_merge_plan(
-            reference,
-            reference_metadata,
-            grid_paths[0].name,
-            ugrid,
-            crs,
-            fingerprint,
-            grid_paths[0],
-            log=progress,
-        )
-        progress(f"Writing the grid cache {grid_paths[0]}.")
-        _write_netcdf(grid_paths[0], grid_dataset, guard)
-    except _InspectionFailure as error:
-        issues.append(error.issue)
-        return None, ValidationReport(tuple(issues))
-    except OutputWriteError as error:
-        issues.append(
-            _issue(
-                "V-OUT-041",
-                "error",
-                grid_paths[0],
-                f"Could not write the grid cache: {error}",
-                "Choose a new or empty writable output root outside forbidden roots.",
-            )
-        )
-        return None, ValidationReport(tuple(issues))
-    except (
-        EOFError,
-        IndexError,
-        OSError,
-        RuntimeError,
-        TypeError,
-        ValueError,
-    ) as error:
-        issues.append(
-            _issue(
-                "V-OUT-002",
-                "error",
-                reference.folder,
-                f"Could not build the merged grid: {error}",
-                "Restore the reference sub-run's readable map output and topology.",
-            )
-        )
-        return None, ValidationReport(tuple(issues))
-    finally:
-        if ugrid is not None:
-            ugrid.close()
-
-    progress(
-        f"Writing the merge-plan cache {merge_plan_path} at "
-        f"{perf_counter() - started:.1f} s."
-    )
-    try:
-        merge_plan_dataset = _merge_plan_dataset(
+    if not time_reused:
+        (
+            subrun_metadata,
+            time_metadata_issues,
+            fully_inspected_subruns,
+        ) = _inspect_time_metadata_for_selection(
             simulation,
             reference_metadata,
-            plan,
-            reference_subrun,
-            fingerprint,
+            time_zone=time_zone,
+            time_selections=time_selections,
+            on_corrupt_output=on_corrupt_output,
+            check_corrupt_partitions=check_corrupt_partitions,
+            bed_cache=bed_cache,
+            log=progress,
         )
-        _write_netcdf(merge_plan_path, merge_plan_dataset, guard)
-    except _InspectionFailure as error:
-        issues.append(error.issue)
-        return None, ValidationReport(tuple(issues))
-    except OutputWriteError as error:
-        issues.append(
-            _issue(
-                "V-OUT-041",
-                "error",
-                merge_plan_path,
-                f"Could not write the merge-plan cache: {error}",
-                "Choose a writable output root outside forbidden roots.",
-            )
-        )
-        return None, ValidationReport(tuple(issues))
-    except (OSError, RuntimeError, TypeError, ValueError) as error:
-        issues.append(
-            _issue(
-                "V-OUT-002",
-                "error",
-                merge_plan_path,
-                f"Could not serialize the merge-plan cache: {error}",
-                "Check the output filesystem and available disk space.",
-            )
-        )
-        return None, ValidationReport(tuple(issues))
+        issues.extend(time_metadata_issues)
+        if subrun_metadata is None or _has_errors(issues):
+            return None, ValidationReport(tuple(issues))
 
-    progress(f"Writing the time-quality cache {times_path}.")
-    try:
-        _write_netcdf(
-            times_path,
-            _time_axis_dataset(time_cache, fingerprint),
-            guard,
+        progress(
+            f"Building the time axis from {len(subrun_metadata)} sub-runs at "
+            f"{perf_counter() - started:.1f} s."
         )
-    except OutputWriteError as error:
-        issues.append(
-            _issue(
-                "V-OUT-041",
-                "error",
-                times_path,
-                f"Could not write the time-quality cache: {error}",
-                "Choose a writable output root outside forbidden roots.",
+        time_cache, time_issues = _prepare_time_axis(
+            simulation,
+            subrun_metadata,
+            time_zone=time_zone,
+            check_boundary_duplicates=check_boundary_duplicates,
+            # Without corrupt-partition checks every boundary uses the candidate times.
+            boundary_subruns=(
+                fully_inspected_subruns if check_corrupt_partitions else None
+            ),
+            bed_cache=bed_cache,
+            log=progress,
+        )
+        issues.extend(time_issues)
+        if _has_errors(issues):
+            return None, ValidationReport(tuple(issues))
+        progress("Time axis built and checked.")
+
+    plan: _MergePlan | None = None
+    if not grid_reused:
+        if not reference_metadata.has_globalnr:
+            issues.append(
+                ValidationIssue(
+                    code="V-OUT-023",
+                    level="warning",
+                    location=str(reference.folder),
+                    message=(
+                        "Global face numbers are absent; face centres will be "
+                        "matched to the merged grid within 1 mm."
+                    ),
+                    hint=(
+                        "Use unique face centres in every partition; ambiguous "
+                        "or missing coordinate matches are errors."
+                    ),
+                )
             )
+        progress(
+            "Building the merged grid from the reference sub-run at "
+            f"{perf_counter() - started:.1f} s."
         )
-        return None, ValidationReport(tuple(issues))
-    except (OSError, RuntimeError, TypeError, ValueError) as error:
-        issues.append(
-            _issue(
-                "V-OUT-002",
-                "error",
-                times_path,
-                f"Could not serialize the time-quality cache: {error}",
-                "Check the output filesystem and available disk space.",
+        ugrid: _UgridDataset | None = None
+        try:
+            progress(f"Opening the merged grid of sub-run {reference_subrun}.")
+            ugrid = _open_merged_dataset(reference)
+            plan, grid_dataset = _build_merge_plan(
+                reference,
+                reference_metadata,
+                grid_paths[0].name,
+                ugrid,
+                crs,
+                grid_fingerprint,
+                grid_paths[0],
+                log=progress,
             )
+            progress(f"Writing the grid cache {grid_paths[0]}.")
+            _write_netcdf(grid_paths[0], grid_dataset, guard)
+        except _InspectionFailure as error:
+            issues.append(error.issue)
+            return None, ValidationReport(tuple(issues))
+        except OutputWriteError as error:
+            issues.append(
+                _issue(
+                    "V-OUT-041",
+                    "error",
+                    grid_paths[0],
+                    f"Could not write the grid cache: {error}",
+                    "Choose a new or empty writable output root outside "
+                    "forbidden roots.",
+                )
+            )
+            return None, ValidationReport(tuple(issues))
+        except (
+            EOFError,
+            IndexError,
+            OSError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+        ) as error:
+            issues.append(
+                _issue(
+                    "V-OUT-002",
+                    "error",
+                    reference.folder,
+                    f"Could not build the merged grid: {error}",
+                    "Restore the reference sub-run's readable map output and topology.",
+                )
+            )
+            return None, ValidationReport(tuple(issues))
+        finally:
+            if ugrid is not None:
+                ugrid.close()
+
+    if plan is not None:
+        progress(
+            f"Writing the merge-plan cache {merge_plan_path} at "
+            f"{perf_counter() - started:.1f} s."
         )
-        return None, ValidationReport(tuple(issues))
+        try:
+            merge_plan_dataset = _merge_plan_dataset(
+                simulation,
+                reference_metadata,
+                plan,
+                reference_subrun,
+                grid_fingerprint,
+            )
+            _write_netcdf(merge_plan_path, merge_plan_dataset, guard)
+        except _InspectionFailure as error:
+            issues.append(error.issue)
+            return None, ValidationReport(tuple(issues))
+        except OutputWriteError as error:
+            issues.append(
+                _issue(
+                    "V-OUT-041",
+                    "error",
+                    merge_plan_path,
+                    f"Could not write the merge-plan cache: {error}",
+                    "Choose a writable output root outside forbidden roots.",
+                )
+            )
+            return None, ValidationReport(tuple(issues))
+        except (OSError, RuntimeError, TypeError, ValueError) as error:
+            issues.append(
+                _issue(
+                    "V-OUT-002",
+                    "error",
+                    merge_plan_path,
+                    f"Could not serialize the merge-plan cache: {error}",
+                    "Check the output filesystem and available disk space.",
+                )
+            )
+            return None, ValidationReport(tuple(issues))
+
+    if not time_reused and time_cache is not None:
+        progress(f"Writing the time-quality cache {times_path}.")
+        try:
+            _write_netcdf(
+                times_path,
+                _time_axis_dataset(time_cache, time_fingerprint, inspected_at_utc),
+                guard,
+            )
+        except OutputWriteError as error:
+            issues.append(
+                _issue(
+                    "V-OUT-041",
+                    "error",
+                    times_path,
+                    f"Could not write the time-quality cache: {error}",
+                    "Choose a writable output root outside forbidden roots.",
+                )
+            )
+            return None, ValidationReport(tuple(issues))
+        except (OSError, RuntimeError, TypeError, ValueError) as error:
+            issues.append(
+                _issue(
+                    "V-OUT-002",
+                    "error",
+                    times_path,
+                    f"Could not serialize the time-quality cache: {error}",
+                    "Check the output filesystem and available disk space.",
+                )
+            )
+            return None, ValidationReport(tuple(issues))
 
     progress(
         f"Inspection caches written; finished at {perf_counter() - started:.1f} s."
@@ -889,6 +956,7 @@ def _inspect_subrun_time_candidate(
     subrun: SubRun,
     *,
     bed_cache: _BedCache | None = None,
+    check_mdu_time_bounds: bool = False,
 ) -> tuple[_SubRunInspection | None, tuple[ValidationIssue, ...]]:
     netcdf4 = _netcdf4_module()
     path = subrun.map_files[0]
@@ -934,7 +1002,7 @@ def _inspect_subrun_time_candidate(
         times=(time_series,) * subrun.partition_count,
         morph_times=(morph_time_series,) * subrun.partition_count,
         issues=[],
-        check_mdu_time_bounds=False,
+        check_mdu_time_bounds=check_mdu_time_bounds,
     )
 
 
@@ -2344,6 +2412,7 @@ def _partition_beds_from_dataset(
 def _time_axis_dataset(
     cache: _TimeAxisCache,
     fingerprint: str,
+    inspected_at_utc: float,
 ) -> _XarrayDataset:
     times = np.asarray(
         [_seconds_since_epoch(record.time) for record in cache.records],
@@ -2386,6 +2455,7 @@ def _time_axis_dataset(
             "source_utc_offset": cache.source_utc_offset,
             "morphology_available": int(cache.morphology_available),
             "d3dplot_fingerprint": fingerprint,
+            "d3dplot_inspected_utc": inspected_at_utc,
             "d3dplot_parameters": '{"kind": "time_axis"}',
             "d3dplot_version": __version__,
             "d3dplot_cache_schema": _CACHE_SCHEMA_VERSION,
@@ -3357,13 +3427,10 @@ def _merge_plan_dataset(
 
 
 def _cache_is_current(
-    merge_plan_path: Path,
-    grid_paths: Sequence[Path],
-    times_path: Path,
+    cache_paths: Sequence[Path],
     fingerprint: str,
     guard: OutputWriteGuard,
 ) -> tuple[bool, str | None]:
-    cache_paths = (merge_plan_path, *grid_paths, times_path)
     existing = tuple(path.exists() for path in cache_paths)
     if not any(existing):
         return False, None
@@ -3397,6 +3464,51 @@ def _cache_is_current(
         if cached_fingerprint != fingerprint or cache_schema != _CACHE_SCHEMA_VERSION:
             return False, None
     return True, None
+
+
+def _time_cache_stale_reason(
+    times_path: Path,
+    subruns: Sequence[SubRun],
+    guard: OutputWriteGuard,
+) -> str | None:
+    """Return why the time cache must be rebuilt, or ``None`` when it is current.
+
+    The time cache of a finished simulation is current when it was written after
+    the last partition ``.dia`` file was written (D127). Map files are not compared.
+    """
+    try:
+        finished_at = finished_output_time(
+            map_file for subrun in subruns for map_file in subrun.map_files
+        )
+    except OSError as error:
+        return f"the simulation output could not be checked ({error})"
+    if finished_at is None:
+        return "the simulation is not finished"
+    try:
+        with (
+            _NETCDF4_READ_LOCK,
+            _netcdf4_module().Dataset(
+                guard.validate_target(times_path),
+                mode="r",
+            ) as dataset,
+        ):
+            inspected_raw = dataset.getncattr("d3dplot_inspected_utc")
+    except (
+        AttributeError,
+        EOFError,
+        IndexError,
+        OSError,
+        OutputWriteError,
+        RuntimeError,
+        TypeError,
+        ValueError,
+    ) as error:
+        return f"the time cache could not be read ({error})"
+    if not isinstance(inspected_raw, Real):
+        return "the time cache has no inspection time"
+    if float(inspected_raw) <= finished_at.timestamp():
+        return "the simulation output was written after the time cache"
+    return None
 
 
 def _write_netcdf(
