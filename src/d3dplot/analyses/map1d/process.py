@@ -22,6 +22,7 @@ from d3dplot.store import (
     OutputWriteGuard,
     atomic_path,
     fingerprint_artifact,
+    fingerprint_small_input,
 )
 from d3dplot.store.paths import OutputArea, build_quantity_output_path
 from d3dplot.variables.context import QuantityContext
@@ -351,6 +352,18 @@ def read_map1d_river_km_coordinates(
             f"{tolerance_m:g} m from the river-km file (maximum {maximum:g} m)."
         )
     return np.asarray([candidates[index].km for index in nearest], dtype=np.float64)
+
+
+def map1d_input_fingerprint(*, map_path: Path, mdu_path: Path | None) -> str:
+    """Identify one 1D map by its path and MDU, without a per-file stat (D128)."""
+    return fingerprint_artifact(
+        kind="map1d_input",
+        schema_version=CACHE_SCHEMA_VERSION,
+        tool_version="d3dplot",
+        algorithm_version=_MAP1D_CACHE_ALGORITHM_VERSION,
+        parameters={"map_path": map_path.as_posix()},
+        inputs=[fingerprint_small_input(mdu_path)] if mdu_path is not None else [],
+    )
 
 
 def map1d_cache_fingerprint(

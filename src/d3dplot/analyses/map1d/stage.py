@@ -28,6 +28,7 @@ from d3dplot.analyses.map1d.process import (
     Map1DProcessError,
     map1d_cache_fingerprint,
     map1d_cache_path,
+    map1d_input_fingerprint,
     read_map1d_cache,
     read_map1d_quantity_series,
     read_map1d_river_km_coordinates,
@@ -48,7 +49,6 @@ from d3dplot.simulation.time_utils import decode_cf_time
 from d3dplot.store import (
     OutputLayout,
     OutputWriteGuard,
-    fingerprint_model_output,
     initialize_output_root,
 )
 from d3dplot.store.paths import OutputArea, build_quantity_output_path
@@ -154,7 +154,7 @@ def _plot_analysis(
     diagnostic: DiagnosticSink | None,
     render_figures: bool,
 ) -> Map1DStageResult:
-    map_path, fallback_message = _map_path_for_simulation(simulation)
+    map_path, mdu_path, fallback_message = _map_path_for_simulation(simulation)
     grid = Map1DGrid.from_map(map_path)
     times = _read_times(map_path)
     indices = _select_time_indices(times, analysis)
@@ -167,7 +167,7 @@ def _plot_analysis(
     )
     style = project.effective_figure(analysis)
     hooks = project.effective_hooks(analysis)
-    input_fingerprint = fingerprint_model_output(map_path)
+    input_fingerprint = map1d_input_fingerprint(map_path=map_path, mdu_path=mdu_path)
     fingerprint = input_fingerprint
     reference = _reference_simulation(project) if render_figures else simulation
     outputs: list[Path] = []
@@ -272,8 +272,8 @@ def _plot_analysis(
                         continue
                     reference_values = values
                 else:
-                    reference_path, reference_fallback = _map_path_for_simulation(
-                        reference
+                    reference_path, reference_mdu, reference_fallback = (
+                        _map_path_for_simulation(reference)
                     )
                     if reference_fallback is not None:
                         messages.append(reference_fallback)
@@ -318,7 +318,9 @@ def _plot_analysis(
                         reference_chain,
                         reference_indices,
                         selected_times,
-                        fingerprint_model_output(reference_path),
+                        map1d_input_fingerprint(
+                            map_path=reference_path, mdu_path=reference_mdu
+                        ),
                         project.reprocess,
                     )
                     if reference_message is not None:
@@ -644,18 +646,22 @@ def _read_times(path: Path) -> tuple[datetime, ...]:
 
 def _map_path_for_simulation(
     simulation: SimulationConfig,
-) -> tuple[Path, str | None]:
-    """Resolve the single 1D map, with an explicit discovery fallback."""
+) -> tuple[Path, Path | None, str | None]:
+    """Resolve the single 1D map and its MDU, with an explicit discovery fallback."""
     discovered, report = discover_simulation(simulation.path)
     if discovered is not None and discovered.kind is SimulationKind.D3D4:
         raise Map1DProcessError(
             "map1d supports D-Flow FM simulations only; "
             f"{simulation.label!r} is a D3D4 run."
         )
+    map_owner: dict[Path, Path | None] = {}
     if discovered is not None and report.is_valid:
-        map_files = tuple(
-            path for subrun in discovered.subruns for path in subrun.map_files
-        )
+        map_owner = {
+            path: subrun.mdu.mdu_path
+            for subrun in discovered.subruns
+            for path in subrun.map_files
+        }
+        map_files = tuple(map_owner)
         fallback_message = None
     else:
         map_files = tuple(sorted(simulation.path.rglob("*_map.nc")))
@@ -669,7 +675,7 @@ def _map_path_for_simulation(
             "map1d currently requires exactly one unpartitioned map file; "
             f"found {len(map_files)} for {simulation.label!r}."
         )
-    return map_files[0], fallback_message
+    return map_files[0], map_owner.get(map_files[0]), fallback_message
 
 
 def _reference_simulation(project: ProjectConfig) -> SimulationConfig:

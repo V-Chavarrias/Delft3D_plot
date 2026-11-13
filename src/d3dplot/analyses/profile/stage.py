@@ -54,7 +54,6 @@ from d3dplot.store import (
     OutputLayout,
     OutputWriteGuard,
     fingerprint_artifact,
-    fingerprint_model_output,
     fingerprint_small_input,
 )
 from d3dplot.store.paths import OutputArea, build_quantity_output_path
@@ -626,7 +625,7 @@ class _ProfileRun:
         cached = self._input_fingerprints.get(subrun.index)
         if cached is not None:
             return cached
-        inputs = [fingerprint_model_output(path) for path in subrun.map_files]
+        inputs: list[str] = []
         inputs.extend(
             fingerprint_small_input(path)
             for path in (

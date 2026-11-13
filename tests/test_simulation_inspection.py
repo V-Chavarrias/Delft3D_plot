@@ -288,6 +288,90 @@ def test_output_written_after_time_cache_rebuilds_it(
 
 
 @pytest.mark.integration
+def test_running_simulation_reuses_time_cache_for_cached_times(
+    synthetic_case: Path,
+    tmp_path: Path,
+) -> None:
+    simulation_path = tmp_path / "running_cached_times"
+    copytree(synthetic_case / "simulations" / "r001", simulation_path)
+    layout = OutputLayout(tmp_path / "d3dplot")
+    initial, initial_report = inspect_simulation(
+        _discover(simulation_path),
+        layout,
+        crs=None,
+        forbidden_roots=(),
+    )
+    assert initial is not None, initial_report.to_text()
+    entries = TimeAxis.from_cache(initial.times_path).entries
+    assert len(entries) >= 2
+    _mark_running(simulation_path)
+    messages: list[str] = []
+
+    reused, reused_report = inspect_simulation(
+        _discover(simulation_path),
+        layout,
+        crs=None,
+        forbidden_roots=(),
+        time_selections=[
+            (TimesConfig(at=[entries[0].time.isoformat()]), "first"),
+        ],
+        log=messages.append,
+    )
+
+    assert reused is not None, reused_report.to_text()
+    assert reused.cache_reused
+    assert not any(
+        message.startswith("Rebuilding the time cache") for message in messages
+    )
+    assert messages[-1].startswith("Reusing the current inspection cache")
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("at", "reason"),
+    [
+        ("all", "all or the last time is requested"),
+        ("last", "all or the last time is requested"),
+        (["2100-01-01T00:00:00+00:00"], "a requested time is not in the time cache"),
+    ],
+)
+def test_running_simulation_rebuilds_time_cache_for_unresolved_request(
+    synthetic_case: Path,
+    tmp_path: Path,
+    at: str | list[str],
+    reason: str,
+) -> None:
+    simulation_path = tmp_path / "running_unresolved"
+    copytree(synthetic_case / "simulations" / "r001", simulation_path)
+    layout = OutputLayout(tmp_path / "d3dplot")
+    initial, initial_report = inspect_simulation(
+        _discover(simulation_path),
+        layout,
+        crs=None,
+        forbidden_roots=(),
+    )
+    assert initial is not None, initial_report.to_text()
+    _mark_running(simulation_path)
+    messages: list[str] = []
+
+    rebuilt, rebuilt_report = inspect_simulation(
+        _discover(simulation_path),
+        layout,
+        crs=None,
+        forbidden_roots=(),
+        time_selections=[(TimesConfig(at=at), "first")],
+        log=messages.append,
+    )
+
+    assert rebuilt is not None, rebuilt_report.to_text()
+    assert not rebuilt.cache_reused
+    assert any(
+        message.startswith("Rebuilding the time cache: ") and reason in message
+        for message in messages
+    )
+
+
+@pytest.mark.integration
 def test_elapsed_morphological_seconds_use_map_time_origin(
     synthetic_case: Path,
     tmp_path: Path,
@@ -730,6 +814,19 @@ def test_first_subrun_grid_is_reused_without_topology_rescan(
     assert "V-OUT-021" not in {issue.code for issue in report.warnings}
     with netCDF4.Dataset(result.merge_plan_path) as dataset:
         assert dataset.getncattr("topology_strategy") == "first_subrun"
+
+
+def _mark_running(simulation_path: Path) -> None:
+    partition_dia = sorted(
+        (simulation_path / "output" / "0" / "results").glob("dflowfm_*.dia")
+    )[0]
+    partition_dia.write_text(
+        partition_dia.read_text(encoding="utf-8").replace(
+            "Computation finished",
+            "Computation running",
+        ),
+        encoding="utf-8",
+    )
 
 
 def _discover(path: Path) -> Simulation:

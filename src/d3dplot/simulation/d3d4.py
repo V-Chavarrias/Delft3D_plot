@@ -24,7 +24,6 @@ from d3dplot.simulation.nefis import NefisFile
 from d3dplot.store.atomic import atomic_path
 from d3dplot.store.fingerprint import (
     fingerprint_artifact,
-    fingerprint_model_output,
     fingerprint_small_input,
 )
 from d3dplot.store.guard import OutputWriteGuard
@@ -97,8 +96,8 @@ def topology_path(layout: OutputLayout, run: D3D4Run, mdu: MduInfo) -> Path:
         algorithm_version=_TOPOLOGY_ALGORITHM_VERSION,
         parameters={"morphodynamic": is_morphodynamic(mdu)},
         inputs=[
-            fingerprint_model_output(run.def_path),
-            fingerprint_model_output(run.data_path),
+            fingerprint_small_input(run.def_path),
+            fingerprint_small_input(run.data_path),
             fingerprint_small_input(run.mdf_path),
         ],
     )

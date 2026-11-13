@@ -92,6 +92,7 @@ class TimeSelectionResult:
     matches: tuple[TimeMatch, ...] = ()
     unmatched_reference_entries: tuple[TimeEntry, ...] = ()
     unmatched_local_entries: tuple[TimeEntry, ...] = ()
+    requested_times: tuple[datetime, ...] = ()
 
     @property
     def is_valid(self) -> bool:
@@ -413,7 +414,20 @@ class TimeAxis:
             entries=tuple(selected),
             duplicates=tuple(duplicates),
             issues=tuple(issues),
+            requested_times=tuple(requested_times or ()),
         )
+
+    def covers(self, requested_time: datetime, axis: TimeAxisName) -> bool:
+        """Whether ``requested_time`` lies within the cached span of ``axis``."""
+        candidates, _ = self._candidates(axis)
+        if not candidates:
+            return False
+        times = [
+            candidate_time
+            for entry in candidates
+            if (candidate_time := _axis_time(entry, axis)) is not None
+        ]
+        return bool(times) and min(times) <= requested_time <= max(times)
 
     def match(
         self,

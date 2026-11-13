@@ -45,7 +45,6 @@ from d3dplot.store import (
     atomic_path,
     canonical_json,
     fingerprint_artifact,
-    fingerprint_model_output,
     fingerprint_small_input,
 )
 from d3dplot.store.paths import (
@@ -975,7 +974,7 @@ class Map2DTaskProcessor:
         if cached is not None:
             return cached
 
-        fingerprints = [fingerprint_model_output(path) for path in subrun.map_files]
+        fingerprints: list[str] = []
         model_input_paths = (
             subrun.mdu.mdu_path,
             subrun.mdu.mor_file,

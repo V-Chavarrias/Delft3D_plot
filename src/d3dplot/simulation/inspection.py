@@ -21,7 +21,7 @@ from time import time as wall_clock_seconds
 from typing import Any, Literal, Protocol, TypeAlias, cast
 
 from d3dplot import __version__
-from d3dplot.config.selections import TimesConfig
+from d3dplot.config.selections import IndicesSelection, TimesConfig
 from d3dplot.simulation.d3d4 import write_topology
 from d3dplot.simulation.discover import (
     _MAX_DISCOVERY_WORKERS,
@@ -378,6 +378,7 @@ def inspect_simulation(
             "reference_subrun": reference_subrun,
             "partition_count": reference.partition_count,
             "subruns": [subrun.index for subrun in simulation.subruns],
+            # Selections shape the cache only when every partition is read (D128).
             "time_selections": (
                 [
                     {
@@ -386,7 +387,7 @@ def inspect_simulation(
                     }
                     for times, duplicate_policy in time_selections
                 ]
-                if time_selections is not None
+                if check_corrupt_partitions and time_selections is not None
                 else None
             ),
             "on_corrupt_output": on_corrupt_output,
@@ -488,7 +489,14 @@ def inspect_simulation(
         )
 
     if time_reused:
-        stale_reason = _time_cache_stale_reason(times_path, simulation.subruns, guard)
+        stale_reason = _time_cache_stale_reason(
+            times_path,
+            simulation.subruns,
+            guard,
+            time_selections=time_selections,
+            time_zone=time_zone,
+            on_corrupt_output=on_corrupt_output,
+        )
         if stale_reason is not None:
             progress(f"Rebuilding the time cache: {stale_reason}.")
             time_reused = False
@@ -3470,11 +3478,17 @@ def _time_cache_stale_reason(
     times_path: Path,
     subruns: Sequence[SubRun],
     guard: OutputWriteGuard,
+    *,
+    time_selections: Sequence[tuple[TimesConfig, Literal["first", "last"]]] | None,
+    time_zone: str | None,
+    on_corrupt_output: Literal["mask", "error", "skip"],
 ) -> str | None:
     """Return why the time cache must be rebuilt, or ``None`` when it is current.
 
-    The time cache of a finished simulation is current when it was written after
-    the last partition ``.dia`` file was written (D127). Map files are not compared.
+    A finished simulation's time cache is current when it was written after the
+    last partition ``.dia`` file was written (D127). A running simulation uses
+    the rule of ``_running_time_cache_stale_reason`` (D128). Map files are not
+    compared.
     """
     try:
         finished_at = finished_output_time(
@@ -3483,7 +3497,13 @@ def _time_cache_stale_reason(
     except OSError as error:
         return f"the simulation output could not be checked ({error})"
     if finished_at is None:
-        return "the simulation is not finished"
+        return _running_time_cache_stale_reason(
+            times_path,
+            time_selections,
+            time_zone=time_zone,
+            on_corrupt_output=on_corrupt_output,
+            guard=guard,
+        )
     try:
         with (
             _NETCDF4_READ_LOCK,
@@ -3508,6 +3528,51 @@ def _time_cache_stale_reason(
         return "the time cache has no inspection time"
     if float(inspected_raw) <= finished_at.timestamp():
         return "the simulation output was written after the time cache"
+    return None
+
+
+def _running_time_cache_stale_reason(
+    times_path: Path,
+    time_selections: Sequence[tuple[TimesConfig, Literal["first", "last"]]] | None,
+    *,
+    time_zone: str | None,
+    on_corrupt_output: Literal["mask", "error", "skip"],
+    guard: OutputWriteGuard,
+) -> str | None:
+    """Return why a running simulation's time cache must be rebuilt, or ``None``.
+
+    The cache holds the outputs written up to its build. It is reused only when
+    every requested selection resolves from it. All times, the last time, and
+    Inf entries need outputs that may have been written since, so they always
+    rebuild (D128). Rewriting an existing time record is not considered.
+    """
+    if not time_selections:
+        return "the simulation is not finished and all times are requested"
+    for times, _ in time_selections:
+        if isinstance(times.at, str) or (
+            isinstance(times.at, IndicesSelection) and times.at.include_last
+        ):
+            return (
+                "the simulation is not finished and all or the last time is requested"
+            )
+    try:
+        axis = TimeAxis.from_cache(guard.validate_target(times_path))
+    except (OSError, OutputWriteError, ValueError) as error:
+        return f"the time cache could not be read ({error})"
+    for times, duplicate_policy in time_selections:
+        result = axis.select(
+            times,
+            naive_time_zone=time_zone,
+            duplicate_morphological_times=duplicate_policy,
+            on_corrupt_output=on_corrupt_output,
+        )
+        if not result.is_valid or not result.entries:
+            return "a requested time is not in the time cache"
+        if not all(
+            axis.covers(requested_time, times.axis)
+            for requested_time in result.requested_times
+        ):
+            return "a requested time is not in the time cache"
     return None
 
 
