@@ -6,8 +6,8 @@ from __future__ import annotations
 import os
 import re
 from collections import Counter
-from collections.abc import Mapping, Sequence
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import AbstractContextManager, redirect_stdout
 from dataclasses import dataclass
 from datetime import UTC, datetime, timezone
@@ -66,6 +66,8 @@ _MORPH_TIME = "morft"
 
 # NumPy stubs require Python 3.12; the package still supports Python 3.11.
 _Array: TypeAlias = Any
+_PartitionBed: TypeAlias = tuple[_Array, _Array, bool]
+_BedCache: TypeAlias = dict[tuple[int, int], dict[int, _PartitionBed | None]]
 _XarrayDataset: TypeAlias = Any
 _XarrayDataArray: TypeAlias = Any
 np: Any = import_module("numpy")
@@ -274,13 +276,16 @@ def inspect_simulation(
     crs: str | None = None,
     time_zone: str | None = None,
     check_boundary_duplicates: bool = True,
+    check_corrupt_partitions: bool = False,
     forbidden_roots: Sequence[str | Path] = (),
     time_selections: Sequence[tuple[TimesConfig, Literal["first", "last"]]]
     | None = None,
     on_corrupt_output: Literal["mask", "error", "skip"] = "mask",
+    log: Callable[[str], None] | None = None,
 ) -> tuple[InspectionResult | None, ValidationReport]:
     """Build or reuse the grid and time caches for a discovered simulation."""
     started = perf_counter()
+    progress: Callable[[str], None] = log or (lambda _message: None)
     issues: list[ValidationIssue] = []
     if not simulation.subruns:
         issues.append(
@@ -296,9 +301,18 @@ def inspect_simulation(
 
     reference = simulation.subruns[0]
     reference_subrun = reference.index
+    progress(
+        f"Inspection started: {len(simulation.subruns)} sub-runs, "
+        f"{reference.partition_count} partitions in the reference sub-run "
+        f"{reference_subrun}."
+    )
     merge_plan_path = layout.cache / "merge_plan.nc"
     times_path = layout.cache / "times.nc"
     grid_paths = (layout.cache / _grid_file_name(),)
+    progress(
+        f"Fingerprinting the map output of {len(simulation.subruns)} sub-runs "
+        "and the reference MDU."
+    )
     try:
         input_fingerprints = [
             fingerprint_model_output(path)
@@ -331,10 +345,15 @@ def inspect_simulation(
         )
         return None, ValidationReport(tuple(issues))
 
+    progress(
+        f"Fingerprinted {len(input_fingerprints)} inputs (map files and reference "
+        f"MDU) at {perf_counter() - started:.1f} s."
+    )
     parameters: dict[str, object] = {
         "crs": crs,
         "time_zone": time_zone,
         "check_boundary_duplicates": check_boundary_duplicates,
+        "check_corrupt_partitions": check_corrupt_partitions,
         "grid_strategy": "first_subrun",
         "reference_subrun": reference_subrun,
         "subruns": [subrun.index for subrun in simulation.subruns],
@@ -361,6 +380,7 @@ def inspect_simulation(
         inputs=input_fingerprints,
     )
 
+    progress(f"Initialising the inspection output root {layout.root}.")
     try:
         guard = initialize_output_root(
             layout,
@@ -385,6 +405,9 @@ def inspect_simulation(
         topology = subrun.map_files[0]
         if topology.exists():
             continue
+        progress(
+            f"Writing the D3D4 topology cache of sub-run {subrun.index}: {topology}."
+        )
         try:
             write_topology(subrun.d3d4_run, subrun.mdu, topology, guard)
         except (KeyError, OSError, OutputWriteError, ValueError) as error:
@@ -400,6 +423,7 @@ def inspect_simulation(
             )
             return None, ValidationReport(tuple(issues))
 
+    progress(f"Checking the inspection cache in {layout.cache}.")
     try:
         cache_reused, cache_problem = _cache_is_current(
             merge_plan_path,
@@ -435,6 +459,10 @@ def inspect_simulation(
         )
 
     if cache_reused:
+        progress(
+            f"Reusing the current inspection cache in {layout.cache} "
+            f"(fingerprint match, {perf_counter() - started:.1f} s)."
+        )
         return (
             InspectionResult(
                 merge_plan_path=merge_plan_path,
@@ -447,11 +475,24 @@ def inspect_simulation(
             ValidationReport(tuple(issues)),
         )
 
-    reference_metadata, reference_issues = _inspect_subrun_metadata(reference)
+    progress(
+        "No current inspection cache; reading model output. Reading the reference "
+        f"sub-run {reference_subrun} ({reference.partition_count} partitions)."
+    )
+    reference_metadata, reference_issues = _inspect_subrun_metadata(
+        reference,
+        check_corrupt_partitions=check_corrupt_partitions,
+        log=progress,
+    )
+    progress(
+        f"Reference sub-run read at {perf_counter() - started:.1f} s; "
+        "reading time metadata of the other sub-runs."
+    )
     issues.extend(reference_issues)
     if reference_metadata is None:
         return None, ValidationReport(tuple(issues))
 
+    bed_cache: _BedCache | None = {} if check_boundary_duplicates else None
     (
         subrun_metadata,
         time_metadata_issues,
@@ -462,6 +503,9 @@ def inspect_simulation(
         time_zone=time_zone,
         time_selections=time_selections,
         on_corrupt_output=on_corrupt_output,
+        check_corrupt_partitions=check_corrupt_partitions,
+        bed_cache=bed_cache,
+        log=progress,
     )
     issues.extend(time_metadata_issues)
     if subrun_metadata is None or _has_errors(issues):
@@ -484,19 +528,32 @@ def inspect_simulation(
             )
         )
 
+    progress(
+        f"Building the time axis from {len(subrun_metadata)} sub-runs at "
+        f"{perf_counter() - started:.1f} s."
+    )
     time_cache, time_issues = _prepare_time_axis(
         simulation,
         subrun_metadata,
         time_zone=time_zone,
         check_boundary_duplicates=check_boundary_duplicates,
-        boundary_subruns=fully_inspected_subruns,
+        # Without corrupt-partition checks every boundary uses the candidate times.
+        boundary_subruns=fully_inspected_subruns if check_corrupt_partitions else None,
+        bed_cache=bed_cache,
+        log=progress,
     )
     issues.extend(time_issues)
     if _has_errors(issues):
         return None, ValidationReport(tuple(issues))
+    progress("Time axis built and checked; reading the merged grid next.")
 
+    progress(
+        "Building the merged grid from the reference sub-run at "
+        f"{perf_counter() - started:.1f} s."
+    )
     ugrid: _UgridDataset | None = None
     try:
+        progress(f"Opening the merged grid of sub-run {reference_subrun}.")
         ugrid = _open_merged_dataset(reference)
         plan, grid_dataset = _build_merge_plan(
             reference,
@@ -506,7 +563,9 @@ def inspect_simulation(
             crs,
             fingerprint,
             grid_paths[0],
+            log=progress,
         )
+        progress(f"Writing the grid cache {grid_paths[0]}.")
         _write_netcdf(grid_paths[0], grid_dataset, guard)
     except _InspectionFailure as error:
         issues.append(error.issue)
@@ -544,6 +603,10 @@ def inspect_simulation(
         if ugrid is not None:
             ugrid.close()
 
+    progress(
+        f"Writing the merge-plan cache {merge_plan_path} at "
+        f"{perf_counter() - started:.1f} s."
+    )
     try:
         merge_plan_dataset = _merge_plan_dataset(
             simulation,
@@ -579,6 +642,7 @@ def inspect_simulation(
         )
         return None, ValidationReport(tuple(issues))
 
+    progress(f"Writing the time-quality cache {times_path}.")
     try:
         _write_netcdf(
             times_path,
@@ -608,6 +672,9 @@ def inspect_simulation(
         )
         return None, ValidationReport(tuple(issues))
 
+    progress(
+        f"Inspection caches written; finished at {perf_counter() - started:.1f} s."
+    )
     return (
         InspectionResult(
             merge_plan_path=merge_plan_path,
@@ -621,6 +688,10 @@ def inspect_simulation(
     )
 
 
+def _progress_share(done: int, total: int) -> str:
+    return f"{done} of {total}, {100 * done / total:.0f}%"
+
+
 def _inspect_time_metadata_for_selection(
     simulation: Simulation,
     reference_metadata: _SubRunInspection,
@@ -628,18 +699,41 @@ def _inspect_time_metadata_for_selection(
     time_zone: str | None,
     time_selections: Sequence[tuple[TimesConfig, Literal["first", "last"]]] | None,
     on_corrupt_output: Literal["mask", "error", "skip"],
+    check_corrupt_partitions: bool = False,
+    bed_cache: _BedCache | None = None,
+    log: Callable[[str], None] | None = None,
 ) -> tuple[
     list[_SubRunInspection] | None,
     tuple[ValidationIssue, ...],
     frozenset[int],
 ]:
     subruns = simulation.subruns[1:]
+    progress: Callable[[str], None] = log or (lambda _message: None)
     metadata_by_index = {simulation.subruns[0].index: reference_metadata}
     fully_inspected = {simulation.subruns[0].index}
     issues: list[ValidationIssue] = []
-    optimize = bool(time_selections) and all(
-        times.at == "last" for times, _ in time_selections or ()
-    )
+
+    if not check_corrupt_partitions:
+        progress(
+            "Reading the time of the first partition of "
+            f"{len(subruns)} sub-runs (corrupt-partition checks are off)."
+        )
+        for position, subrun in enumerate(subruns, start=1):
+            progress(
+                f"Reading the time of sub-run {subrun.index}: "
+                f"{_progress_share(position, len(subruns))}."
+            )
+            candidate, candidate_issues = _inspect_subrun_time_candidate(
+                subrun,
+                bed_cache=bed_cache,
+            )
+            issues.extend(candidate_issues)
+            if candidate is None:
+                progress(f"Time of sub-run {subrun.index} could not be read.")
+                return None, tuple(issues), frozenset(fully_inspected)
+            metadata_by_index[subrun.index] = candidate
+        ordered = [metadata_by_index[subrun.index] for subrun in simulation.subruns]
+        return ordered, tuple(issues), frozenset(fully_inspected)
 
     def inspect_full(indices: set[int]) -> None:
         targets = tuple(
@@ -647,6 +741,11 @@ def _inspect_time_metadata_for_selection(
             for subrun in subruns
             if subrun.index in indices and subrun.index not in fully_inspected
         )
+        if targets:
+            progress(
+                "Reading time metadata of sub-runs "
+                f"{[subrun.index for subrun in targets]}."
+            )
         candidates = {
             subrun.index: metadata_by_index[subrun.index]
             for subrun in targets
@@ -654,7 +753,11 @@ def _inspect_time_metadata_for_selection(
         }
         for subrun, (metadata, subrun_issues) in zip(
             targets,
-            _inspect_subruns_time_metadata(targets, candidates=candidates),
+            _inspect_subruns_time_metadata(
+                targets,
+                candidates=candidates,
+                log=progress,
+            ),
             strict=True,
         ):
             fully_inspected.add(subrun.index)
@@ -662,9 +765,13 @@ def _inspect_time_metadata_for_selection(
             if metadata is not None:
                 metadata_by_index[subrun.index] = metadata
 
-    if not optimize:
+    if not time_selections:
         inspect_full({subrun.index for subrun in subruns})
     else:
+        progress(
+            "Reading time candidates of "
+            f"{len(subruns)} sub-runs to select the output times."
+        )
         suspect_subruns: set[int] = set()
         for subrun in subruns:
             candidate, _ = _inspect_subrun_time_candidate(subrun)
@@ -672,6 +779,10 @@ def _inspect_time_metadata_for_selection(
                 suspect_subruns.add(subrun.index)
             else:
                 metadata_by_index[subrun.index] = candidate
+        progress(
+            f"{len(suspect_subruns)} sub-runs need full time metadata "
+            "(unreadable or corrupt candidates)."
+        )
         inspect_full(suspect_subruns)
 
         while len(metadata_by_index) == len(simulation.subruns):
@@ -692,6 +803,10 @@ def _inspect_time_metadata_for_selection(
                 )
             )
             if selected is None:
+                progress(
+                    "The time selection cannot be resolved from the candidates; "
+                    "reading full time metadata of all sub-runs."
+                )
                 inspect_full({subrun.index for subrun in subruns})
                 break
 
@@ -706,6 +821,10 @@ def _inspect_time_metadata_for_selection(
             pending = required - fully_inspected
             if not pending:
                 break
+            progress(
+                "Selected sub-runs and their neighbours need full time metadata: "
+                f"{len(pending)} more sub-runs."
+            )
             inspect_full(pending)
 
     if len(metadata_by_index) != len(simulation.subruns):
@@ -718,7 +837,11 @@ def _inspect_subruns_time_metadata(
     subruns: Sequence[SubRun],
     *,
     candidates: Mapping[int, _SubRunInspection] | None = None,
+    log: Callable[[str], None] | None = None,
 ) -> tuple[tuple[_SubRunInspection | None, tuple[ValidationIssue, ...]], ...]:
+    progress: Callable[[str], None] = log or (lambda _message: None)
+    total = len(subruns)
+
     def inspect(
         subrun: SubRun,
     ) -> tuple[_SubRunInspection | None, tuple[ValidationIssue, ...]]:
@@ -730,19 +853,42 @@ def _inspect_subruns_time_metadata(
             candidate=candidate,
         )
 
-    if len(subruns) < _MIN_SUBRUNS_FOR_PARALLEL:
-        return tuple(inspect(subrun) for subrun in subruns)
+    if total < _MIN_SUBRUNS_FOR_PARALLEL:
+        results: list[tuple[_SubRunInspection | None, tuple[ValidationIssue, ...]]] = []
+        for subrun in subruns:
+            results.append(inspect(subrun))
+            progress(
+                f"Time metadata of sub-run {subrun.index} read "
+                f"({len(results)} of {total})."
+            )
+        return tuple(results)
 
-    worker_count = min(_MAX_DISCOVERY_WORKERS, len(subruns))
+    worker_count = min(_MAX_DISCOVERY_WORKERS, total)
+    results_by_position: dict[
+        int, tuple[_SubRunInspection | None, tuple[ValidationIssue, ...]]
+    ] = {}
     with ThreadPoolExecutor(
         max_workers=worker_count,
         thread_name_prefix="d3dplot-time-scan",
     ) as executor:
-        return tuple(executor.map(inspect, subruns))
+        positions = {
+            executor.submit(inspect, subrun): position
+            for position, subrun in enumerate(subruns)
+        }
+        for done, future in enumerate(as_completed(positions), start=1):
+            position = positions[future]
+            results_by_position[position] = future.result()
+            progress(
+                f"Time metadata of sub-run {subruns[position].index} read "
+                f"({done} of {total})."
+            )
+    return tuple(results_by_position[position] for position in range(total))
 
 
 def _inspect_subrun_time_candidate(
     subrun: SubRun,
+    *,
+    bed_cache: _BedCache | None = None,
 ) -> tuple[_SubRunInspection | None, tuple[ValidationIssue, ...]]:
     netcdf4 = _netcdf4_module()
     path = subrun.map_files[0]
@@ -750,6 +896,8 @@ def _inspect_subrun_time_candidate(
         with _NETCDF4_READ_LOCK, netcdf4.Dataset(path, mode="r") as dataset:
             time_series = _read_numeric_series(dataset, _TIME)
             morph_time_series = _read_numeric_series(dataset, _MORPH_TIME)
+            if bed_cache is not None and time_series is not None:
+                _prefetch_boundary_beds(dataset, subrun, time_series, bed_cache)
     except (
         EOFError,
         IndexError,
@@ -852,7 +1000,11 @@ def _inspect_subrun_time_metadata(
 
 def _inspect_subrun_metadata(
     subrun: SubRun,
+    *,
+    check_corrupt_partitions: bool = True,
+    log: Callable[[str], None] | None = None,
 ) -> tuple[_SubRunInspection | None, tuple[ValidationIssue, ...]]:
+    progress: Callable[[str], None] = log or (lambda _message: None)
     netcdf4 = _netcdf4_module()
     issues: list[ValidationIssue] = []
     signatures: list[str] = []
@@ -862,8 +1014,16 @@ def _inspect_subrun_metadata(
     globalnr_presence: list[bool] = []
     times: list[_NumericSeries | None] = []
     morph_times: list[_NumericSeries | None] = []
+    first_time_pair: tuple[_NumericSeries | None, _NumericSeries | None] = (
+        None,
+        None,
+    )
 
     for partition, path in enumerate(subrun.map_files):
+        progress(
+            f"Reading partition {partition + 1} of {len(subrun.map_files)} "
+            f"in sub-run {subrun.index}: {path.name}."
+        )
         if subrun.partitioned:
             match = _PARTITION_NAME.fullmatch(path.name)
             if match is None or int(match.group(2)) != partition:
@@ -1066,19 +1226,25 @@ def _inspect_subrun_metadata(
                         global_numbers.append(globalnr.values[owned])
                 globalnr_presence.append(globalnr is not None)
 
-                time_series = _read_numeric_series(dataset, _TIME)
-                if time_series is None:
-                    issues.append(
-                        _issue(
-                            "V-OUT-002",
-                            "error",
-                            path,
-                            "Required map-time variable 'time' is missing.",
-                            "Restore a complete D-Flow FM map file.",
+                if check_corrupt_partitions or partition == 0:
+                    time_series = _read_numeric_series(dataset, _TIME)
+                    if time_series is None:
+                        issues.append(
+                            _issue(
+                                "V-OUT-002",
+                                "error",
+                                path,
+                                "Required map-time variable 'time' is missing.",
+                                "Restore a complete D-Flow FM map file.",
+                            )
                         )
-                    )
+                    morph_series = _read_numeric_series(dataset, _MORPH_TIME)
+                    if partition == 0:
+                        first_time_pair = (time_series, morph_series)
+                else:
+                    time_series, morph_series = first_time_pair
                 times.append(time_series)
-                morph_times.append(_read_numeric_series(dataset, _MORPH_TIME))
+                morph_times.append(morph_series)
         except (
             EOFError,
             IndexError,
@@ -1435,7 +1601,7 @@ def _selected_subrun_indices(
     *,
     on_corrupt_output: Literal["mask", "error", "skip"],
 ) -> set[int] | None:
-    if not selections or any(times.at != "last" for times, _ in selections):
+    if not selections:
         return None
     axis = TimeAxis(
         entries=tuple(
@@ -1473,7 +1639,10 @@ def _prepare_time_axis(
     time_zone: str | None,
     check_boundary_duplicates: bool,
     boundary_subruns: frozenset[int] | None = None,
+    bed_cache: _BedCache | None = None,
+    log: Callable[[str], None] | None = None,
 ) -> tuple[_TimeAxisCache, tuple[ValidationIssue, ...]]:
+    progress: Callable[[str], None] = log or (lambda _message: None)
     issues: list[ValidationIssue] = []
     records_by_subrun: dict[int, list[_TimeRecord]] = {}
     timezone_conflicts: dict[str, set[int]] = {}
@@ -1723,11 +1892,16 @@ def _prepare_time_axis(
         for subrun, metadata in zip(simulation.subruns, subrun_metadata, strict=True)
     }
     dropped: set[tuple[int, int]] = set()
-    for previous, following in zip(
-        simulation.subruns,
-        simulation.subruns[1:],
-        strict=False,
+    bed_cache = {} if bed_cache is None else bed_cache
+    boundary_count = len(simulation.subruns) - 1
+    for position, (previous, following) in enumerate(
+        zip(simulation.subruns, simulation.subruns[1:], strict=False),
+        start=1,
     ):
+        progress(
+            "Checking the restart boundary into sub-run "
+            f"{following.index}: {_progress_share(position, boundary_count)}."
+        )
         previous_series = metadata_by_index[previous.index].time_series
         following_series = metadata_by_index[following.index].time_series
         if previous_series is None or following_series is None:
@@ -1785,6 +1959,8 @@ def _prepare_time_axis(
             )
 
         if check_boundary_duplicates and boundary_selected:
+            for cached_key in [key for key in bed_cache if key[0] < previous.index]:
+                del bed_cache[cached_key]
             try:
                 comparison = _compare_boundary_bed_levels(
                     previous,
@@ -1793,6 +1969,7 @@ def _prepare_time_axis(
                     following_record,
                     metadata_by_index[previous.index],
                     metadata_by_index[following.index],
+                    bed_cache,
                 )
             except (
                 EOFError,
@@ -1927,30 +2104,29 @@ def _compare_boundary_bed_levels(
     following_record: _TimeRecord,
     previous_metadata: _SubRunInspection,
     following_metadata: _SubRunInspection,
+    bed_cache: _BedCache,
 ) -> bool | None:
     corrupt_previous = set(previous_record.corrupt_partitions)
     corrupt_following = set(following_record.corrupt_partitions)
     for partition in range(previous.partition_count):
         if partition in corrupt_previous or partition in corrupt_following:
             continue
-        previous_values = _read_reference_partition_bed(
+        previous_values = _cached_reference_bed(
+            bed_cache,
             previous,
             partition,
             previous_record.local_index,
+            _last_time_index(previous_metadata),
         )
-        following_values = _read_reference_partition_bed(
+        following_values = _cached_reference_bed(
+            bed_cache,
             following,
             partition,
             following_record.local_index,
+            _last_time_index(following_metadata),
         )
         if previous_values is None or following_values is None:
             continue
-        same_topology = (
-            partition < len(previous_metadata.signatures)
-            and partition < len(following_metadata.signatures)
-            and previous_metadata.signatures[partition]
-            == following_metadata.signatures[partition]
-        )
         left_keys, left_values, left_global = previous_values
         right_keys, right_values, right_global = following_values
         if left_global != right_global:
@@ -1963,7 +2139,17 @@ def _compare_boundary_bed_levels(
         )
         if common.size == 0:
             continue
-        if not left_global and not right_global and not same_topology:
+        if (
+            not left_global
+            and not right_global
+            and not _same_partition_topology(
+                previous,
+                following,
+                partition,
+                previous_metadata,
+                following_metadata,
+            )
+        ):
             continue
         left_aligned = left_values[left_positions]
         right_aligned = right_values[right_positions]
@@ -1974,63 +2160,185 @@ def _compare_boundary_bed_levels(
     return None
 
 
-def _read_reference_partition_bed(
+def _same_partition_topology(
+    previous: SubRun,
+    following: SubRun,
+    partition: int,
+    previous_metadata: _SubRunInspection,
+    following_metadata: _SubRunInspection,
+) -> bool:
+    if partition < len(previous_metadata.signatures) and partition < len(
+        following_metadata.signatures
+    ):
+        return (
+            previous_metadata.signatures[partition]
+            == following_metadata.signatures[partition]
+        )
+    previous_signature = _read_partition_topology_signature(
+        previous.map_files[partition]
+    )
+    following_signature = _read_partition_topology_signature(
+        following.map_files[partition]
+    )
+    return previous_signature is not None and previous_signature == following_signature
+
+
+def _read_partition_topology_signature(path: Path) -> str | None:
+    netcdf4 = _netcdf4_module()
+    try:
+        with _NETCDF4_READ_LOCK, netcdf4.Dataset(path, mode="r") as dataset:
+            face_dimension = dataset.dimensions.get("mesh2d_nFaces")
+            edge_dimension = dataset.dimensions.get("mesh2d_nEdges")
+            if face_dimension is None or edge_dimension is None:
+                return None
+            face_nodes = _read_integer_variable(dataset, _FACE_NODES)
+            edge_nodes = _read_integer_variable(dataset, _EDGE_NODES)
+            if face_nodes is None or edge_nodes is None:
+                return None
+            return _topology_signature(
+                len(face_dimension),
+                len(edge_dimension),
+                _read_integer_variable(dataset, _FACE_DOMAIN),
+                _read_integer_variable(dataset, _FACE_GLOBALNR),
+                face_nodes,
+                edge_nodes,
+            )
+    except (
+        EOFError,
+        IndexError,
+        OSError,
+        RuntimeError,
+        TypeError,
+        ValueError,
+    ):
+        return None
+
+
+def _last_time_index(metadata: _SubRunInspection) -> int:
+    if metadata.time_series is None:
+        return 0
+    return int(metadata.time_series.values.size) - 1
+
+
+def _cached_reference_bed(
+    bed_cache: _BedCache,
     subrun: SubRun,
     partition: int,
     local_index: int,
-) -> tuple[_Array, _Array, bool] | None:
+    last_index: int,
+) -> _PartitionBed | None:
+    """Return a partition's bed at one index, opening the partition at most once.
+
+    The boundary check needs the first index of a sub-run (as the following
+    side) and its last index (as the previous side), so both are read together.
+    """
+    key = (subrun.index, partition)
+    beds = bed_cache.get(key, {})
+    if local_index not in beds:
+        wanted = sorted({0, last_index, local_index})
+        beds = {**beds, **_read_reference_partition_beds(subrun, partition, wanted)}
+        bed_cache[key] = beds
+    return beds[local_index]
+
+
+def _prefetch_boundary_beds(
+    dataset: Any,
+    subrun: SubRun,
+    time_series: _NumericSeries,
+    bed_cache: _BedCache,
+) -> None:
+    """Read partition 0's bed at the sub-run's first and last time from the open file.
+
+    Only the first and last index are read, because those are the only indices
+    the restart-boundary check uses. Failures are left to the boundary check,
+    which reports them as before.
+    """
+    last_index = int(time_series.values.size) - 1
+    try:
+        beds = _partition_beds_from_dataset(dataset, 0, sorted({0, last_index}))
+    except (
+        EOFError,
+        IndexError,
+        OSError,
+        RuntimeError,
+        TypeError,
+        ValueError,
+    ):
+        return
+    bed_cache[(subrun.index, 0)] = beds
+
+
+def _read_reference_partition_beds(
+    subrun: SubRun,
+    partition: int,
+    local_indices: Sequence[int],
+) -> dict[int, _PartitionBed | None]:
     path = subrun.map_files[partition]
     netcdf4 = _netcdf4_module()
     with _NETCDF4_READ_LOCK, netcdf4.Dataset(path, mode="r") as dataset:
-        variable = next(
-            (
-                dataset.variables[name]
-                for name in ("mesh2d_mor_bl", "mesh2d_flowelem_bl")
-                if name in dataset.variables
-            ),
-            None,
-        )
-        if variable is None or "mesh2d_nFaces" not in variable.dimensions:
-            return None
+        return _partition_beds_from_dataset(dataset, partition, local_indices)
 
-        dimensions = variable.dimensions
+
+def _partition_beds_from_dataset(
+    dataset: Any,
+    partition: int,
+    local_indices: Sequence[int],
+) -> dict[int, _PartitionBed | None]:
+    unavailable: dict[int, _PartitionBed | None] = dict.fromkeys(local_indices)
+    variable = next(
+        (
+            dataset.variables[name]
+            for name in ("mesh2d_mor_bl", "mesh2d_flowelem_bl")
+            if name in dataset.variables
+        ),
+        None,
+    )
+    if variable is None or "mesh2d_nFaces" not in variable.dimensions:
+        return unavailable
+
+    dimensions = variable.dimensions
+    remaining_dimensions = tuple(
+        dimension for dimension in dimensions if dimension != "time"
+    )
+    if remaining_dimensions != ("mesh2d_nFaces",):
+        return unavailable
+
+    domain = _read_integer_variable(dataset, _FACE_DOMAIN)
+    if domain is None:
+        face_count = variable.shape[dimensions.index("mesh2d_nFaces")]
+        local_faces = np.arange(face_count, dtype=np.int64)
+    else:
+        local_faces = np.flatnonzero(~domain.mask & (domain.values == partition))
+    if local_faces.size == 0:
+        return unavailable
+
+    globalnr = _read_integer_variable(dataset, _FACE_GLOBALNR)
+    if globalnr is not None:
+        if globalnr.mask[local_faces].any():
+            return unavailable
+        keys = globalnr.values[local_faces]
+        has_global_ids = True
+    else:
+        keys = local_faces
+        has_global_ids = False
+
+    beds: dict[int, _PartitionBed | None] = {}
+    for local_index in local_indices:
         if "time" in dimensions:
             if local_index >= variable.shape[dimensions.index("time")]:
-                return None
+                beds[local_index] = None
+                continue
             indexer = tuple(
                 local_index if dimension == "time" else slice(None)
                 for dimension in dimensions
             )
         else:
             indexer = tuple(slice(None) for _ in dimensions)
-        remaining_dimensions = tuple(
-            dimension for dimension in dimensions if dimension != "time"
-        )
-        if remaining_dimensions != ("mesh2d_nFaces",):
-            return None
-
         raw_values = np.ma.asarray(variable[indexer])
         values = np.asarray(raw_values.data, dtype=np.float64)
         values[np.ma.getmaskarray(raw_values)] = np.nan
-
-        domain = _read_integer_variable(dataset, _FACE_DOMAIN)
-        if domain is None:
-            local_faces = np.arange(values.size, dtype=np.int64)
-        else:
-            local_faces = np.flatnonzero(~domain.mask & (domain.values == partition))
-        if local_faces.size == 0:
-            return None
-
-        globalnr = _read_integer_variable(dataset, _FACE_GLOBALNR)
-        if globalnr is not None:
-            if globalnr.mask[local_faces].any():
-                return None
-            keys = globalnr.values[local_faces]
-            has_global_ids = True
-        else:
-            keys = local_faces
-            has_global_ids = False
-        return keys, values[local_faces], has_global_ids
+        beds[local_index] = (keys, values[local_faces], has_global_ids)
+    return beds
 
 
 def _time_axis_dataset(
@@ -2199,7 +2507,10 @@ def _build_merge_plan(
     crs: str | None,
     fingerprint: str,
     grid_path: Path,
+    *,
+    log: Callable[[str], None] | None = None,
 ) -> tuple[_MergePlan, _XarrayDataset]:
+    progress: Callable[[str], None] = log or (lambda _message: None)
     grid = ugrid.grid
     merged_dataset = ugrid.obj
     n_faces = int(grid.n_face)
@@ -2218,6 +2529,10 @@ def _build_merge_plan(
     edge_global_positions: list[_Array] = []
     edge_orientations: list[_Array] = []
     for partition, path in enumerate(subrun.map_files):
+        progress(
+            f"Mapping partition {partition + 1} of {len(subrun.map_files)} "
+            f"in sub-run {subrun.index}: faces and edges."
+        )
         try:
             with (
                 _NETCDF4_READ_LOCK,
@@ -2299,6 +2614,7 @@ def _build_merge_plan(
             ) from error
 
     if metadata.has_globalnr:
+        progress("Matching partition faces to the merged grid by global face number.")
         merged_globalnr = _array_as_integer(
             merged_dataset.get(_FACE_GLOBALNR),
             _FACE_GLOBALNR,
@@ -2329,6 +2645,9 @@ def _build_merge_plan(
         ]
         matching = "globalnr"
     else:
+        progress(
+            "Matching partition faces to the merged grid by face centre within 1 mm."
+        )
         merged_centres = _merged_face_centres(
             merged_dataset,
             n_faces,
@@ -2365,6 +2684,7 @@ def _build_merge_plan(
             global_positions.append(candidates[:, 0])
         matching = "coordinates"
 
+    progress("Checking that faces and edges are covered exactly once.")
     partition_n_owned = np.asarray(
         [faces.size for faces in local_faces],
         dtype=np.int64,
@@ -2453,6 +2773,7 @@ def _build_merge_plan(
             "Restore complete edge connectivity and deterministic ownership.",
         )
 
+    progress("Building the merged grid dataset.")
     grid_dataset = _grid_dataset(ugrid, crs, fingerprint, grid_file)
     plan = _MergePlan(
         matching=matching,

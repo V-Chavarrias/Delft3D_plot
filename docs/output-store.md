@@ -17,6 +17,10 @@ Because `output.root` is used directly, it must resolve to a unique output
 folder. For projects with multiple simulations, set a distinct
 `simulations[*].output_dir` for each one or omit `output.root`.
 
+By default (no `output_dir` and no `output.root`), the output goes to
+`<simulation folder>/d3dplot/`. For P-drive projects this is on the P-drive,
+which is allowed. Model inputs are never modified.
+
 `OutputLayout.for_simulation(simulation, project.output)` resolves this path and
 exposes standard locations such as `cache`, `figures`, `tables`, `config`, and
 `logs`. See [configuration](./configuration.md#output-locations-and-safety)

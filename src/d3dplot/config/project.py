@@ -261,6 +261,15 @@ class ProjectConfig(ConfigModel):
         default=True,
         description=("Compare bed levels at duplicate SMT restart-boundary outputs."),
     )
+    check_corrupt_partitions: bool = Field(
+        default=False,
+        description=(
+            "Open every partition of every sub-run during inspection to detect "
+            "corrupt time or morphological-time values. Slow on large simulations; "
+            "when false, the time axis is built from the first partition of each "
+            "sub-run."
+        ),
+    )
     check_map_headers: bool = Field(
         default=False,
         description=(

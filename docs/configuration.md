@@ -67,6 +67,11 @@ zero-based NetCDF array indices internally.
 the map time units have no offset and the MDU does not explicitly set `Tzone`.
 Map time units take precedence over explicit MDU `Tzone`, which takes
 precedence over the project setting. Conflicts are reported as `V-TIME-002`.
+`check_corrupt_partitions` defaults to `false`. When `false`, the inspection reads
+the time of one partition per sub-run and does not open every partition to look
+for corrupt files, so `on_corrupt_output` has no effect until it is set to `true`.
+Set it to `true` to read every partition of every selected sub-run and apply
+`on_corrupt_output`; this is slow on large projects.
 `on_corrupt_output` controls selected outputs with corrupt partitions: `mask`
 keeps the output and masks affected faces, `skip` omits it, and `error` rejects
 it. `check_boundary_duplicates` defaults to `true` and compares bed levels at
@@ -185,8 +190,8 @@ non-default value. The `river_km_statistics` analysis defaults to
 
 River-km files use the fixed comma-delimited `x, y, label, km` format. The
 branch is the label suffix after the first underscore and is matched
-case-insensitively. Rijntakken files require `river_km.track`; `track: MA`
-selects the Maas provider and switches from `MA` to `BM` above 230.0 km. For a generic file with
+case-insensitively. Rijntakken files require `river_km.track`, which selects the
+track to use; the track can change the branch label at a given km. For a generic file with
 multiple branch tags, set `river_km.branches` to one branch to use throughout or
 one branch per requested km centre.
 
@@ -251,8 +256,8 @@ map1d, map2d, and river-km cache and figure paths use the same canonical registr
 names: `h` is stored as `water_depth`, while `bed_level` keeps its canonical
 name. Shared store helpers resolve aliases and assemble these variable-specific
 paths consistently across analyses.
-The complete read-only RiverLab testcase is provided as
-`examples/map1d_riverlab_r003.yml` in the repository.
+A complete annotated example with dummy paths is provided as
+`examples/map1d.yml` in the repository.
 
 ## Static validation
 
@@ -278,6 +283,12 @@ chosen in this order:
 The selected base always contains `d3dplot/`. Since `output.root` is used
 directly, multiple simulations cannot share it; assign distinct
 `simulations[*].output_dir` values or omit `output.root` for those simulations.
+
+Writing into the simulation folder is the default and is allowed, including
+when that folder is on the P-drive (plan D124). Model inputs are never
+modified. To keep outputs off the P-drive, set `output.root` or
+`simulations[*].output_dir` to a local folder. If you do this, do not list the
+run folder in `forbidden_roots`.
 
 `output.forbidden_roots` lists directories that must not contain generated
 output. Validation reports `V-OUT-041` when a resolved output root is inside

@@ -35,4 +35,4 @@ With uncommitted changes, `git switch -c feat/<short_title>` alone moves them to
 ## Rules
 - Keep upstream changes general (useful beyond d3dplot) and minimal; no d3dplot-specific code upstream.
 - Keep a d3dplot adapter only while the upstream change is not released; remove it afterwards.
-- Read-only on `p:\`, always.
+- While developing, read-only on `p:\`, always (the tool's default output may still be written into `p:\` simulation folders, plan D124).

@@ -165,9 +165,7 @@ def test_map1d_river_km_coordinates_use_nearest_branch_points(tmp_path: Path) ->
 
 @pytest.mark.unit
 def test_map1d_yaml_testcase_loads() -> None:
-    config = load_config(
-        Path(__file__).parents[1] / "examples" / "map1d_riverlab_r003.yml"
-    )
+    config = load_config(Path(__file__).parents[1] / "examples" / "map1d.yml")
 
     analysis = config.analyses[0]
     assert analysis.analysis == "map1d"

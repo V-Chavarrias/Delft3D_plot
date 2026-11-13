@@ -39,14 +39,16 @@ from d3dplot.config.io import (
     write_resolved_config,
 )
 from d3dplot.config.project import ProjectConfig, SimulationConfig
-from d3dplot.config.selections import TimesConfig
 from d3dplot.execution.diagnostics import DiagnosticLog
 from d3dplot.execution.project import (
     ProjectStageUnavailable,
     ensure_executable_analyses,
     run_native_project,
 )
-from d3dplot.execution.project_runner import plot_profile_analyses
+from d3dplot.execution.project_runner import (
+    inspection_time_selections,
+    plot_profile_analyses,
+)
 from d3dplot.execution.slurm import render_slurm_script
 from d3dplot.paths import resolve_path_preserving_drive
 from d3dplot.plotting.stage import (
@@ -401,8 +403,9 @@ def _validate_project(
                 crs=config.crs,
                 time_zone=config.time_zone,
                 check_boundary_duplicates=config.check_boundary_duplicates,
+                check_corrupt_partitions=config.check_corrupt_partitions,
                 forbidden_roots=config.output.forbidden_roots,
-                time_selections=_inspection_time_selections(config),
+                time_selections=inspection_time_selections(config),
                 on_corrupt_output=config.on_corrupt_output,
             )
             issues.extend(inspection_report.issues)
@@ -516,30 +519,6 @@ def inspect(
         if not report.is_valid:
             diagnostic_log.error("Inspection failed.")
             raise typer.Exit(code=1)
-
-
-@app.command()
-def prepare(
-    configuration: Annotated[
-        Path,
-        typer.Argument(
-            exists=True,
-            file_okay=True,
-            dir_okay=False,
-            readable=True,
-            help="YAML or JSON project configuration.",
-        ),
-    ],
-    simulation_label: Annotated[
-        str | None,
-        typer.Option(
-            "--simulation",
-            help="Prepare only the configured simulation with this label.",
-        ),
-    ] = None,
-) -> None:
-    """Prepare guarded inspection and geometry caches for a project."""
-    inspect(configuration, simulation_label=simulation_label)
 
 
 @app.command()
@@ -693,8 +672,9 @@ def _inspect_project(
             crs=config.crs,
             time_zone=config.time_zone,
             check_boundary_duplicates=config.check_boundary_duplicates,
+            check_corrupt_partitions=config.check_corrupt_partitions,
             forbidden_roots=config.output.forbidden_roots,
-            time_selections=_inspection_time_selections(config),
+            time_selections=inspection_time_selections(config),
             on_corrupt_output=config.on_corrupt_output,
         )
         issues.extend(inspection_report.issues)
@@ -719,26 +699,6 @@ def _inspect_project(
             f"warnings={len(report.warnings)}."
         )
     return report, results
-
-
-def _inspection_time_selections(
-    config: ProjectConfig,
-) -> tuple[tuple[TimesConfig, Literal["first", "last"]], ...] | None:
-    has_reference_comparison = len(config.simulations) > 1 and any(
-        analysis.time_matching == "reference"
-        and any(
-            comparison.startswith("difference_simulation")
-            for comparison in analysis.comparisons
-        )
-        for analysis in config.analyses
-    )
-    if has_reference_comparison:
-        return None
-    selections = tuple(
-        (analysis.times, analysis.duplicate_morphological_times)
-        for analysis in config.analyses
-    )
-    return selections or None
 
 
 def _emit_inspection_report(

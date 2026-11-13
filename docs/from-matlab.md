@@ -85,7 +85,5 @@ datenums do not include a timezone. Matlab v7.3/HDF5 measurement files are not
 supported.
 
 Keep model inputs read-only and direct generated output to a local
-`output.root`. The current CLI can validate and inspect projects and can plot
-from persisted quantity caches, but it does not yet provide the end-to-end
-`process`/`run` commands. See the [user guide](./user-guide.md) for the
-currently available workflow and its limits.
+`output.root`. The [user guide](./user-guide.md) shows the workflow from
+`validate` to `run`, and the [command reference](./cli.md) lists every command.

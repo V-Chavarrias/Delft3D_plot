@@ -10,7 +10,7 @@ Follow the plan in `docs/architecture.md`. Steps are in order; do not skip the f
 ## 1. Understand the reference
 - Read plan §0, §2 (decisions) and the section of the feature (§7, §8).
 - Porting from Matlab: find the tag in `c:\checkouts\oet_matlab\applications\vtools\D3D\plot\` (`gdm_check_tag_<TAG>`, `gdm_create_mat_<TAG>`, `gdm_plot_<TAG>`, `fig_*`). Write down every flag it reads (`isfield_default(flg_loc,'…')`) and what it does. Keep the behaviour, not the structure.
-- Real data may be inspected read-only on `p:\` (plan §5). Never write there.
+- Real data may be inspected read-only on `p:\` (plan §5). While developing, never write there. The tool's default output may still go to the simulation's `d3dplot/` folder on `p:\` (plan D124).
 
 ## 2. Look for existing functionality (reuse)
 Search, in this order, and note what you will reuse:

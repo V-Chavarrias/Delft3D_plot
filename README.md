@@ -1,104 +1,64 @@
-# Delft3D_plot
+# d3dplot
 
-Python tool to postprocess and plot Delft3D (D-Flow FM / SMT) results. Version 1 covers 2D maps (`map2d`) and river-km statistics (`river_km_statistics`).
+`d3dplot` is a command-line tool that turns D-Flow FM and SMT simulation results
+into figures and tables. You describe what you want in a YAML file, and d3dplot
+reads the model output, processes it once, and writes the figures next to your
+simulation.
 
-> **Status:** v1 is implemented locally (map2d, river-km statistics, map1d, measurements, and the native `prepare`/`process`/`run` pipeline). d3dplot reads model input with its own readers and does not depend on HYDROLIB-core at run time. The [architecture plan](docs/architecture.md) holds the design and status; the [synthetic SMT test case generator](tools/synthetic_smt/README.md) is available for development.
+It is the Python successor of the Matlab tool `D3D_plot`.
 
-## Goals
+## Install
 
-- Script-based workflow (Python script or YAML + CLI).
-- **Process first, plot later**: raw results are processed once into a cache, and figures are made (and remade) from that cache.
-- **Validate all input up front** before any heavy processing starts.
-- Parallel processing and plotting (local process pool; SLURM job arrays on Linux clusters).
-- Reads model input with its own readers (no run-time dependency on [HYDROLIB-core](https://github.com/Deltares/HYDROLIB-core)) and reuses [dfm_tools](https://github.com/Deltares/dfm_tools) and xugrid for model output instead of re-implementing them.
-- Runs on Linux and Windows.
+Requires Python 3.11, 3.12 or 3.13.
 
-The functional reference is the Matlab tool `D3D_plot` in [OpenEarthTools](https://github.com/openearth/matlab-tools/blob/main/applications/vtools/D3D/plot/D3D_plot.m). This is not a one-to-one translation.
-
-## How model output is assembled
-
-Partitioned D-Flow FM output contains one map file per partition. Each file
-contains local face and edge numbers, including ghost cells. Before values are
-processed, d3dplot creates `cache/grid.nc` and `cache/merge_plan.nc`.
-
-`grid.nc` contains the combined mesh geometry. `merge_plan.nc` contains the
-lookup needed to place values from the partition files into that combined mesh:
-
-```text
-local value in a partition
-        |
-        |  owned_local
-        v
-global position in the combined grid
-        |
-        |  global_pos
-        v
-one value in the output array
+```powershell
+python -m pip install d3dplot
+d3dplot --help
 ```
 
-The plan also stores the equivalent lookup for edges, including edge
-orientation. It stores indexes and mappings only; it does not store bed levels,
-other model variables, or times. Those remain in the model map files and in
-`cache/times.nc`.
+From a source checkout:
 
-### Sub-runs and plans
-
-An SMT simulation has several sub-runs, usually representing successive model
-periods or restarts. The simulation has one mapping recipe between local
-partition indices and its combined global grid. Every sub-run uses that same
-simulation-wide recipe:
-
-```text
-SMT with one common grid:
-
-sub-runs:        [0, 1, 2, 3]
-merge plan:      one plan in merge_plan.nc
+```powershell
+python -m pip install .
 ```
 
-The grid and merge plan are built from sub-run 0. Time and `morft` metadata are
-still read from every sub-run. Different simulations have separate output
-roots and therefore separate `grid.nc` and `merge_plan.nc` files.
+## Quick start
 
-A non-SMT (plain FM) simulation is represented as one sub-run:
-
-```text
-sub-runs:        [0]
-merge plan:      one plan in merge_plan.nc
+```powershell
+d3dplot info C:\models\my-run                      # what is in the simulation
+d3dplot init C:\models\my-run -o project.yaml      # write a starter configuration
+d3dplot validate project.yaml                      # check the configuration
+d3dplot run project.yaml                           # process the results and plot
 ```
 
-If that plain-FM run is partitioned, the plan still contains one entry for
-each map partition. If it has one unpartitioned map file, the mapping is
-effectively an identity mapping: local face 0 goes to global face 0, local
-face 1 goes to global face 1, and so on.
+`run` processes the results and then makes the figures. Use `process` and `plot`
+separately when you want to control each step, and `replot` to redraw a single
+figure after you change its settings.
 
-See the [output-store documentation](docs/output-store.md) and the
-[architecture plan](docs/architecture.md#76-reading-model-output-merge-plan-d21-d23)
-for the cache layout and implementation details.
+The [user guide](docs/user-guide.md) walks through a complete project.
 
 ## Documentation
 
-- [User guide](docs/user-guide.md)
-- [From Matlab `D3D_plot`](docs/from-matlab.md)
-- [Gallery](docs/gallery.md)
-- [Maintainer release guide](docs/releasing.md)
-- [Reference](docs/reference.md)
-- [Project documentation](docs/index.md)
-- [Architecture proposal](docs/architecture.md)
-- [Synthetic SMT test case generator](tools/synthetic_smt/README.md)
-- [Contributing guide](CONTRIBUTING.md)
+| Page | Read it to |
+| --- | --- |
+| [User guide](docs/user-guide.md) | Go from a simulation to figures, step by step. |
+| [Command reference](docs/cli.md) | Look up every command and option. |
+| [Configuration reference](docs/configuration.md) | Look up every setting in the YAML file, with examples. |
+| [Output store](docs/output-store.md) | Find where results, figures, logs and reports are written. |
+| [Variables](docs/variables.md) | Find the variable names and aliases you can plot. |
+| [Labels](docs/labels.md) | Use labels to refer to simulations and comparisons. |
+| [Model input](docs/model-input.md) | Know which model input files d3dplot reads. |
+| [Simulation discovery](docs/simulation-discovery.md) | Understand how d3dplot recognises a simulation folder. |
+| [Gallery](docs/gallery.md) | See example figures. |
+| [Coming from Matlab](docs/from-matlab.md) | Map `D3D_plot` options and workflows to d3dplot. |
 
-## Development workspace
+The example configuration is in [examples/map1d.yml](examples/map1d.yml).
 
-[Delft3D_plot.code-workspace](Delft3D_plot.code-workspace) opens this repository together with sibling checkouts of the reference repositories:
+## Development
 
-```
-checkouts/
-├─ Delft3D_plot/     (this repository)
-├─ oet_matlab/       https://github.com/openearth/matlab-tools
-├─ HYDROLIB-core/    https://github.com/Deltares/HYDROLIB-core (reference only)
-└─ dfm_tools/        https://github.com/Deltares/dfm_tools
-```
+Contributors should read [CONTRIBUTING.md](CONTRIBUTING.md). The design decisions
+are recorded in [docs/architecture.md](docs/architecture.md).
 
 ## Licence
 
-[GPL-3.0-or-later](LICENSE).
+GPL-3.0-or-later. See [LICENSE](LICENSE).

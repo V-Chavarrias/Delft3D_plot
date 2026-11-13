@@ -1,46 +1,47 @@
 # User guide
 
-This guide covers the currently available command-line workflow for D-Flow FM
-and SMT simulations. The built-in analyses are `map1d`, `map2d`, and
-`river_km_statistics`.
+This guide walks through a typical d3dplot project: look at your simulation,
+write a configuration file, check it, produce the figures, and rerun only the
+parts you change.
 
-## Install
+- Every command and option: [command reference](./cli.md)
+- Every setting in the YAML file: [configuration reference](./configuration.md)
+- Where the results are stored: [output store](./output-store.md)
 
-After a release is available, install the package with:
+## 1. Install
 
 ```powershell
 python -m pip install d3dplot
+d3dplot --help
 ```
 
-For the unreleased source checkout, follow the development setup in
-[Contributing](https://github.com/V-Chavarrias/Delft3D_plot/blob/main/CONTRIBUTING.md).
-Use `d3dplot --help` to see the installed
-commands.
+To work from a source checkout, follow
+[CONTRIBUTING.md](https://github.com/V-Chavarrias/Delft3D_plot/blob/main/CONTRIBUTING.md).
 
-## Inspect a simulation
+## 2. Look at the simulation
 
-Start with the read-only commands:
+These commands only read the simulation. They do not change any files.
 
 ```powershell
 d3dplot info C:\models\my-run
 d3dplot variables C:\models\my-run
 ```
 
-`info` reports the simulation type, status, sub-runs, partitions, output times,
-and coordinate reference metadata. `variables` lists raw NetCDF fields and
-registered quantities, aliases, and derived quantities. These commands do not
-create caches or change model files.
+- `info` shows the simulation type and status, the sub-runs and partitions, the
+  output times and the coordinate system.
+- `variables` lists the variable names you can use in the configuration.
+  Aliases such as `bl` for `bed_level` are accepted.
 
-## Create and edit a project configuration
+## 3. Create a configuration file
 
-Generate a starter YAML file for one or more simulations:
+Generate a starter file for one or more simulations:
 
 ```powershell
 d3dplot init C:\models\my-run -o project.yaml
 ```
 
-The starter file contains a `map2d` analysis for `bed_level`. A minimal
-configuration can look like this:
+The starter file contains one `map2d` analysis. A minimal configuration looks
+like this:
 
 ```yaml
 simulations:
@@ -57,75 +58,125 @@ analyses:
       axis: hydrodynamic
 ```
 
-Choose an `output.root` on a local disk, outside model inputs and any
-read-only/network data locations. Paths are interpreted from the process
-working directory. See the [configuration reference](./configuration.md) for
-time selection, measurements, plotting, and execution settings.
+Notes:
 
-To compare simulations, add them to `simulations` and select a comparison such
-as `difference_simulation`. Use `d3dplot variables` before entering variable
-names; registered aliases such as `bl` and `qsp` are accepted as well as their
-canonical names.
+- `label` is a short name for the simulation. It tells the simulations apart in
+  the results.
+- `output` is optional. Without it, the results go into a `d3dplot` folder
+  inside each simulation folder. For projects on the P-drive, that folder is on
+  the P-drive too. Writing there is allowed, and the model files are never
+  changed. To keep the results elsewhere, set `output.root` to a local folder.
+  With several simulations, give each one its own `output_dir` instead.
+- Relative paths are resolved from the folder where you run `d3dplot`.
+- To compare two simulations, add a second entry under `simulations` and select
+  a comparison in the analysis. See the [configuration reference](./configuration.md).
 
-## Validate and inspect outputs
+The [annotated example](https://github.com/V-Chavarrias/Delft3D_plot/blob/main/examples/map1d.yml)
+shows a complete configuration with a comment on each option.
+
+## 4. Check the configuration
 
 ```powershell
 d3dplot validate project.yaml
-d3dplot validate project.yaml --format json
 ```
 
-Validation checks the YAML, simulation inputs, requested variables, and
-available map output. If those checks pass, it also builds or reuses the
-guarded grid, merge-plan, and time-axis inspection caches. `d3dplot inspect
-project.yaml` explicitly builds or refreshes those caches. These commands can
-write diagnostics, timestamped reports, and caches beneath the configured
-output root; model inputs remain read-only. Validation reports are written by
-default to `tables/validation_<timestamp>.txt` (or `.json` when
-`--format json` is used). Inspection reports use
-`tables/inspection_<timestamp>.txt`.
+`validate` checks the file, the simulations, the variable names and the map
+output before any processing starts. Each problem has a code such as
+`V-VAR-001`. The report is written to the `tables` folder of the output.
+If there are no errors, `validate` also builds the grid and time caches, so the
+next steps are faster.
 
-The output store only writes inside a marked `d3dplot` output root. A new root
-is marked automatically; a non-empty, unmarked directory is rejected. See
-[Output store](./output-store.md) for the guard and layout rules.
+Fix all errors before you continue. Warnings do not stop the workflow, but read
+them: they often explain a figure that looks wrong.
 
-## Plot and replay figures
+## 5. Process and plot
 
-`d3dplot plot` renders figures from persisted analysis quantity caches:
+For most projects, one command does everything:
 
 ```powershell
+d3dplot run project.yaml
+```
+
+`run` computes the configured quantities into caches, and then draws the
+figures.
+
+To separate the steps:
+
+```powershell
+d3dplot process project.yaml
 d3dplot plot project.yaml
-d3dplot plot project.yaml --variable bed_level --fresh-figures
 ```
 
-Inspection caches created by `validate` or `inspect` are not processed
-quantity caches. The current CLI does not yet expose the end-to-end
-`process`/`run` commands that create those quantity caches from model output.
-Therefore, plotting requires caches produced through the processing API or an
-earlier processing workflow; validation alone does not make a project ready
-to plot. The SLURM template also checks for the not-yet-available `d3dplot
-run` command and exits explicitly rather than submitting work.
+Use `process` when you only need the data. Use `plot` to draw figures from
+existing caches.
 
-PNG figures contain provenance for replaying an individual map figure:
+### Large runs
+
+- `--workers N` sets the number of worker processes. `--serial` runs everything
+  in one process, which is useful for debugging.
+- `--shard i/N` processes one part of the work. Run shards `0/N` to `(N-1)/N`,
+  for example on separate machines or as SLURM array tasks. When all shards are
+  finished, run `d3dplot plot project.yaml` once.
+- `d3dplot slurm write project.yaml` writes a SLURM array-job script. It never
+  submits the job. See the [command reference](./cli.md#slurm-write).
+
+## 6. Check the results
 
 ```powershell
-d3dplot replot C:\postprocessing\reference\d3dplot\figures\01\bed_level\figure.png
-d3dplot replot C:\postprocessing\reference\d3dplot\figures\01\bed_level\figure.png --set analyses[0].figure.dpi=300
+d3dplot status project.yaml
 ```
 
-`replot` only accepts a d3dplot PNG with valid provenance and regenerates that
-figure, not the complete time series or movie.
+`status` shows the state of the outputs for each simulation.
 
-## Use the packaged agent skills
+The `d3dplot` folder of each simulation contains:
 
-The package includes the `d3dplot-create-input`, `d3dplot-replot`, and
-`d3dplot-troubleshoot` workflow skills. VS Code discovers skills from a
-workspace skill directory, not from an arbitrary installed Python package
-directory. To use one, copy its complete folder from the installed package's
-`d3dplot/skills/` directory into the workspace's `.github/skills/` directory.
-The installed resource location can be printed with:
+| Folder | Contents |
+|---|---|
+| `tables` | Validation and inspection reports. |
+| `logs` | `.dia` file with the main steps and choices, and `.log` file with detailed progress. |
+| `cache` | Processed quantities, grids and time tables. Reused by the next run. |
+| `figures` | The figures as PNG files. |
+| `config` | The resolved configuration of the last run and the SLURM script. |
+
+## 7. Change and rerun
+
+- To change the figures only, edit the YAML and run `d3dplot plot project.yaml`.
+  Matching figures are reused. Add `--fresh-figures` to redraw all of them.
+- To change one figure, run `d3dplot replot FIGURE.png --set KEY=VALUE`. Each
+  PNG records how it was made, so `replot` redraws that figure only.
+- To limit a `plot` run, use `--simulation`, `--variable` or `--only`.
+- To remove generated files, run `d3dplot clean project.yaml --figures` or
+  `--cache`. Without an option, both are removed. Model files are never changed.
+
+## Command overview
+
+| Task | Command |
+|---|---|
+| Look at a simulation | `info`, `variables` |
+| Create a configuration | `init` |
+| Check a configuration | `validate` |
+| Build the grid and time caches | `inspect` |
+| Compute the quantities | `process` |
+| Compute and plot | `run` |
+| Draw the figures | `plot` |
+| Redraw one figure | `replot` |
+| Check progress | `status` |
+| Remove generated files | `clean` |
+| Write the JSON Schema | `schema` |
+| Convert Matlab profile measurements | `measurements convert` |
+| Write a SLURM script | `slurm write` |
+
+The [command reference](./cli.md) describes every command and option.
+
+## Agent skills
+
+The package includes workflow skills for VS Code and GitHub Copilot:
+`d3dplot-create-input`, `d3dplot-replot` and `d3dplot-troubleshoot`. VS Code
+only finds skills in a workspace's `.github/skills/` folder, so copy the complete
+skill folder there. Print the location of the installed skills with:
 
 ```powershell
 python -c "from importlib.resources import files; print(files('d3dplot').joinpath('skills'))"
 ```
 
-Keep the `SKILL.md` filename and the skill folder together when copying.
+Copy the whole folder, including its `SKILL.md` file.

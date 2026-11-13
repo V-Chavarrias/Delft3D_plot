@@ -3,7 +3,7 @@
 The release workflow is intentionally inert for publishing until the repository
 variable `D3DPLOT_RELEASES_ENABLED` is set to `true`. **Do not enable it or
 publish a release until the release prerequisites in the architecture plan are
-met.** d3dplot has no HYDROLIB-core release dependency ([upstream status](./upstream.md)).
+met.
 
 ## One-time GitHub and PyPI setup
 

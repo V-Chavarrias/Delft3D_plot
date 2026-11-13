@@ -34,6 +34,39 @@ from d3dplot.validate.report import ValidationIssue
 
 
 @pytest.mark.integration
+def test_inspection_reports_phases_to_log(synthetic_case: Path, tmp_path: Path) -> None:
+    simulation = _discover(synthetic_case / "simulations" / "r001")
+    layout = OutputLayout(tmp_path / "d3dplot")
+    messages: list[str] = []
+
+    result, report = inspect_simulation(
+        simulation,
+        layout,
+        crs=None,
+        forbidden_roots=(),
+        log=messages.append,
+    )
+
+    assert result is not None, report.to_text()
+    assert messages[0].startswith("Inspection started:")
+    assert any("Reading the reference sub-run" in message for message in messages)
+    assert any(message.startswith("Building the time axis") for message in messages)
+    assert messages[-1].startswith("Inspection caches written")
+
+    reused_messages: list[str] = []
+    reused, _ = inspect_simulation(
+        simulation,
+        layout,
+        crs=None,
+        forbidden_roots=(),
+        log=reused_messages.append,
+    )
+
+    assert reused is not None and reused.cache_reused
+    assert reused_messages[-1].startswith("Reusing the current inspection cache")
+
+
+@pytest.mark.integration
 def test_inspection_matches_dfm_tools_and_reuses_cache(
     synthetic_case: Path,
     tmp_path: Path,
@@ -250,6 +283,7 @@ def test_selected_subrun_scan_checks_neighbors_before_finishing(
         subruns: tuple[SimpleNamespace, ...],
         *,
         candidates: dict[int, inspection._SubRunInspection] | None = None,
+        log: object = None,
     ) -> tuple[tuple[inspection._SubRunInspection, tuple[ValidationIssue, ...]], ...]:
         indices = [subrun.index for subrun in subruns]
         fully_scanned.extend(indices)
@@ -283,6 +317,7 @@ def test_selected_subrun_scan_checks_neighbors_before_finishing(
         time_zone=None,
         time_selections=((TimesConfig(at="last"), "last"),),
         on_corrupt_output="mask",
+        check_corrupt_partitions=True,
     )
 
     assert result is not None
@@ -357,6 +392,7 @@ def test_corrupt_partition_keeps_first_subrun_grid_reference(
         OutputLayout(tmp_path / "d3dplot"),
         crs=None,
         forbidden_roots=(),
+        check_corrupt_partitions=True,
     )
 
     assert result is not None
@@ -366,6 +402,95 @@ def test_corrupt_partition_keeps_first_subrun_grid_reference(
     corrupt_entries = [entry for entry in time_axis.entries if entry.corrupt_partitions]
     assert corrupt_entries
     assert all(1 in entry.corrupt_partitions for entry in corrupt_entries)
+
+
+@pytest.mark.unit
+def test_explicit_time_selection_without_corrupt_checks_uses_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    simulation = SimpleNamespace(
+        subruns=tuple(SimpleNamespace(index=index) for index in range(4))
+    )
+    metadata = inspection._SubRunInspection(
+        signatures=(),
+        owned_counts=(),
+        has_globalnr=False,
+        time_consistent=True,
+        corrupt_partitions=(),
+        time_series=None,
+        morph_time_series=None,
+    )
+    candidate_reads: list[int] = []
+
+    def candidate_scan(
+        subrun: SimpleNamespace,
+        *,
+        bed_cache: object = None,
+    ) -> tuple[inspection._SubRunInspection, tuple[ValidationIssue, ...]]:
+        candidate_reads.append(subrun.index)
+        return metadata, ()
+
+    def full_scan(*args: object, **kwargs: object) -> None:
+        raise AssertionError("full time metadata must not be read")
+
+    monkeypatch.setattr(inspection, "_inspect_subrun_time_candidate", candidate_scan)
+    monkeypatch.setattr(inspection, "_inspect_subruns_time_metadata", full_scan)
+
+    result, issues, fully_inspected = inspection._inspect_time_metadata_for_selection(
+        simulation,  # type: ignore[arg-type]
+        metadata,
+        time_zone=None,
+        time_selections=(
+            (TimesConfig(at=[datetime(2020, 1, 1, 1, tzinfo=UTC)]), "last"),
+        ),
+        on_corrupt_output="mask",
+        check_corrupt_partitions=False,
+    )
+
+    assert result is not None
+    assert len(result) == 4
+    assert not issues
+    assert candidate_reads == [1, 2, 3]
+    assert fully_inspected == frozenset({0})
+
+
+@pytest.mark.unit
+def test_boundary_topology_is_read_on_demand_without_signatures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    previous = SimpleNamespace(map_files=(Path("prev_0000.nc"),))
+    following = SimpleNamespace(map_files=(Path("next_0000.nc"),))
+    empty = inspection._SubRunInspection(
+        signatures=(),
+        owned_counts=(),
+        has_globalnr=False,
+        time_consistent=True,
+        corrupt_partitions=(),
+        time_series=None,
+        morph_time_series=None,
+    )
+    signatures = {Path("prev_0000.nc"): "same", Path("next_0000.nc"): "same"}
+    monkeypatch.setattr(
+        inspection,
+        "_read_partition_topology_signature",
+        lambda path: signatures[path],
+    )
+
+    assert inspection._same_partition_topology(
+        previous,  # type: ignore[arg-type]
+        following,  # type: ignore[arg-type]
+        0,
+        empty,
+        empty,
+    )
+    signatures[Path("next_0000.nc")] = "other"
+    assert not inspection._same_partition_topology(
+        previous,  # type: ignore[arg-type]
+        following,  # type: ignore[arg-type]
+        0,
+        empty,
+        empty,
+    )
 
 
 @pytest.mark.integration

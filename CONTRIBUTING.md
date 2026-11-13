@@ -22,9 +22,6 @@ uv venv .venv --python 3.12
 uv pip install --python .venv/bin/python -e ../dfm_tools -e '.[dev,docs]'
 ```
 
-d3dplot does not need a HYDROLIB-core checkout. HYDROLIB-core is installed from
-PyPI as a dependency of `dfm_tools`.
-
 ## Checks
 
 ```powershell
@@ -39,4 +36,4 @@ Install the Git hooks with `pre-commit install` and
 `pre-commit install --hook-type commit-msg`. Use conventional commit messages;
 Commitizen maintains `CHANGELOG.md` when versions are released.
 
-Never write to P-drive data or commit files from `data_local/`.
+While developing d3dplot, never write to P-drive data (`p:\`), and never commit files from `data_local/`. The tool itself writes its default output into each simulation's `d3dplot/` folder, which can be on the P-drive (plan D124); set `output.root` to a local folder to keep outputs elsewhere.

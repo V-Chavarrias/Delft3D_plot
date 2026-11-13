@@ -1,10 +1,9 @@
 # Upstream contributions
 
-Record upstream HYDROLIB-core work that was considered for d3dplot. d3dplot no
-longer depends on HYDROLIB-core (plan [D121](./architecture.md)–[D123](./architecture.md)),
-so none of the changes below is a release blocker or a minimum-version
-requirement. See [the architecture plan](./architecture.md#14-upstream-contributions)
-for the contribution workflow.
+Record upstream HYDROLIB-core work that was considered for d3dplot. None of the
+changes below is a release blocker or a minimum-version requirement. See
+[the architecture plan](./architecture.md#14-upstream-contributions) for the
+contribution workflow.
 
 ## HYDROLIB-core
 

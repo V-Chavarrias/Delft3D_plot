@@ -5,7 +5,8 @@ Python successor of the Matlab tool `D3D_plot`: postprocessing and plotting of D
 
 ## Never
 
-- **Never create, modify or delete anything on the P-drive (`p:\`, `/p/`).** Reading is allowed. Tests and runs on P-drive data use `output.root` in a local folder.
+- **While developing d3dplot, never create, modify or delete anything on the P-drive (`p:\`, `/p/`).** This covers code, tests, docs and acceptance runs. Reading is allowed. Development tests and runs on P-drive data set `output.root` or `simulations[*].output_dir` to a local folder.
+- The tool's default output is `<simulation folder>\d3dplot\`, which is on the P-drive for P-drive projects. That is allowed by design (plan D124); it is not a development write.
 - Never modify tool inputs (model files, measurements, GIS files). All writes go through the store's write guard (plan §7.17).
 - Never commit project data. Local data lives in `data_local/` (git-ignored).
 - Never weaken a validation rule or a test tolerance to make a test pass.

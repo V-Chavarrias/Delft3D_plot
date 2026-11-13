@@ -1,0 +1,45 @@
+# Example map1d configuration: one-dimensional values along three river
+# branch chains of a single simulation, shown as space-time plots.
+# All paths are dummy examples; replace them with your own folders.
+
+simulations:
+  # Simulation folder with the 1D map output. The input is read-only.
+  - path: 'p:\dummy-project\06_simulations\03\r003'
+    # Short name used in figure names, comparisons and the reference setting.
+    label: RTC
+
+# Label of the simulation that the difference comparisons subtract from.
+reference_simulation: RTC
+
+# Language of the figure labels: en, nl or es.
+language: en
+
+# Name of the figure-series subfolder.
+series: "01"
+
+# No output block: figures are written to <simulation folder>\d3dplot\.
+# For a simulation on the P-drive, add output.root with a local folder.
+
+analyses:
+  - analysis: map1d
+    # Quantities to plot. h is the water depth; bed_level is the bed level.
+    variables: [h, bed_level]
+    # Each chain is an ordered list of model branch identifiers that
+    # together describe one river reach.
+    branches:
+      - [NRHBR, NRHBR2, WL, WLds]
+      - [NRHBR, NRHBR2, PKan2, IJ]
+      - [NRHBR, NRHBR2, PKan2, Ned]
+    # Short identifiers for the chains, used in output file names.
+    branch_names: [w, k, n]
+    # Titles shown on the figures, one per chain in the same order.
+    branch_titles: [Rhine-Waal, Rhine-IJssel, Rhine-Nederrijn]
+    times:
+      # all: every output time. Other options select specific times.
+      at: all
+      # Time axis of the output: hydrodynamic or morphological time.
+      axis: hydrodynamic
+    # space_time: river distance on one axis and time on the other, coloured by value.
+    views: [space_time]
+    # value: plot the values. difference_time: subtract the value at the first time.
+    comparisons: [value, difference_time]

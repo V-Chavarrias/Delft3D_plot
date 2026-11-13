@@ -15,6 +15,6 @@ behavior:
 | Upstream library contribution workflow | [Upstream contributions](./upstream.md) |
 
 The supported Python entry points are documented alongside their usage in
-these pages. The [JSON Schema](./cli.md#print-the-configuration-schema) can be
+these pages. The [JSON Schema](./cli.md#schema) can be
 exported with `d3dplot schema` for editor completion and configuration
 validation.

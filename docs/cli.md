@@ -1,104 +1,281 @@
-# Command-line interface
+# Command reference
 
-Install the package, then use either the `d3dplot` command or
-`python -m d3dplot`. The CLI provides read-only simulation summaries, guarded
-output inspection, configuration schema output, validation, and
-starter-configuration generation, plotting, and profile-measurement conversion.
+This page lists every `d3dplot` command and its options. The installed version
+is always authoritative: run `d3dplot --help` or `d3dplot <command> --help` to
+see the options your version accepts.
 
-## Inspect a simulation
+`d3dplot` can also be run as `python -m d3dplot`.
 
-```powershell
-d3dplot info C:\models\run
-d3dplot info C:\models\run --json
-d3dplot variables C:\models\run
-```
+## Summary
 
-`info` reports simulation kind and status, sub-run and partition counts, the
-last hydrodynamic and morphological times, raw variables, and coordinate
-reference metadata. `--json` emits the same summary as structured JSON.
-`variables` lists detected raw NetCDF names, matching registered raw quantities
-and aliases, unregistered fields, and all registered derived quantities.
+| Command | What it does | Writes files |
+|---|---|---|
+| [`info`](#info) | Summarise a simulation: type, status, sub-runs, times, CRS | No |
+| [`variables`](#variables) | List the raw NetCDF fields and the available quantities | No |
+| [`init`](#init) | Create a starter project YAML | One YAML file |
+| [`validate`](#validate) | Check a project; build inspection caches if there are no errors | Reports and caches |
+| [`inspect`](#inspect) | Build or refresh the grid, merge-plan and time-axis caches | Caches and a report |
+| [`process`](#process) | Compute the configured quantities into caches | Caches |
+| [`run`](#run) | `process`, then `plot` (unless sharded) | Caches and figures |
+| [`plot`](#plot) | Render figures from the caches | Figures |
+| [`replot`](#replot) | Regenerate one figure from its PNG | One figure |
+| [`status`](#status) | Show the processing and figure state of each simulation | No |
+| [`clean`](#clean) | Remove figures and/or caches | Deletes files |
+| [`schema`](#schema) | Print the JSON Schema of the project configuration | No |
+| [`measurements convert`](#measurements-convert) | Convert Matlab profile measurements to NetCDF | NetCDF files |
+| [`slurm write`](#slurm-write) | Write a SLURM array-job script (never submits) | One script |
 
-Both commands use read-only discovery. SMT discovery reads the model-input
-metadata from sub-run 0 and reuses it for later sub-runs. To report raw fields
-and CRS, `info`/`variables` read the first map-file header from each sub-run;
-optional full discovery header checks are controlled by
-`check_map_headers: true`. They do not build a merge plan, create a cache, or
-modify model files. A simulation without map output can still be inspected
-with `info` and is reported as `not_started`.
-
-## Build the output-inspection cache
+## Typical workflow
 
 ```powershell
-d3dplot inspect project.yaml
-d3dplot inspect project.yaml --simulation reference
+d3dplot info C:\models\run                     # look at the simulation
+d3dplot variables C:\models\run                # find the variable names
+d3dplot init C:\models\run -o project.yaml     # create a starter configuration
+d3dplot validate project.yaml                  # check the configuration and inputs
+d3dplot run project.yaml                       # process the quantities and plot
+d3dplot status project.yaml                    # check what was produced
 ```
 
-`inspect` builds or reuses the grid, merge-plan, and checked time-axis caches
-for every configured simulation, or only the one selected by label. It measures
-partition identity and topology from sub-run 0, reads time quality from every
-sub-run, and checks duplicate SMT restart boundaries. Plain FM output without
-global face numbers uses one-to-one face-centre matching within 1 mm and reports
-the coordinate-matching fallback as `V-OUT-023`. The time-axis cache stores
-UTC hydrodynamic and morphological times, merged sub-run/local indices, and
-corrupt-partition flags. Later-subrun topology is assumed to match sub-run 0.
+After you change only the figure settings, `d3dplot plot project.yaml` redraws
+the figures from the existing caches. Use `d3dplot process` when you want the
+caches without figures, for example before a sharded run.
 
-Generated caches are written atomically beneath the configured, guarded
-`output.root` (or the simulation's default `d3dplot` output folder). Model files
-remain read-only. `inspect` does not process quantities or create figures.
-It writes a timestamped text report to
-`tables/inspection_<timestamp>.txt` beneath the reference simulation's output
-root.
-Boundary `morft` mismatches are errors (`V-OUT-032`); boundary bed-level
-mismatches are warnings (`V-OUT-033`).
+## Inspecting simulations
 
-## Create a starter configuration
+### `info`
 
 ```powershell
-d3dplot init C:\models\run -o project.yaml
-d3dplot init C:\models\run-a C:\models\run-b -o project.yaml
-d3dplot init C:\models\run -o project.yaml --analyses map2d,river_km_statistics
+d3dplot info SIMULATION_PATH [--json]
 ```
 
-`init` creates a commented YAML file with one `map2d` analysis by default.
-Simulation paths are written as absolute paths, and labels are generated from
-the folder names. The optional `river_km_statistics` section contains
-placeholder polygon and river-km paths; replace them before using that
-analysis. Existing files are never overwritten.
+Reports the simulation type and status, the number of sub-runs and partitions,
+the last hydrodynamic and morphological times, the raw variables and the
+coordinate reference system. A simulation without map output is reported as
+`not_started`.
 
-## Convert river-km profile measurements
+| Option | Description |
+|---|---|
+| `--json` | Print the same summary as JSON. |
+
+`info` only reads the file headers. It does not create caches or change model files.
+
+### `variables`
 
 ```powershell
-d3dplot measurements convert measurements.mat -o converted.nc --time-zone +01:00
-d3dplot measurements convert measurements.mat -o converted.nc --time-zone +01:00 --variable bed_level
+d3dplot variables SIMULATION_PATH
 ```
 
-The command converts Matlab v5/v7 profile measurements to canonical NetCDF.
-MATLAB datenums do not contain a timezone, so `--time-zone` is required and
-must be a fixed UTC offset. Without `--variable`, one output file is written
-per variable, with the canonical variable name added to the output filename.
-The source `.mat` is left unchanged. Output files are never overwritten; the
-destination must be in a new or empty directory, or beneath an existing marked
-d3dplot output root. Matlab v7.3/HDF5 inputs are not supported.
+Lists:
 
-## Generate a SLURM array-job template
+- the raw NetCDF fields found in the simulation,
+- the registered raw quantities and their aliases, for example `bl` for `bed_level`,
+- the raw fields that are not registered,
+- all registered derived quantities.
+
+Use the names from this list in the `variables` entries of your YAML file.
+
+### `schema`
 
 ```powershell
-d3dplot slurm write project.yaml --dry-run
-d3dplot slurm write project.yaml
+d3dplot schema > d3dplot.schema.json
 ```
 
-By default, the generated template is written to
-`config/slurm_array.sh` beneath the reference simulation's marked output root.
-All writes use the output-store guard. `--dry-run` prints the template without
-creating the output root or any files. The command never submits a job.
+Prints the JSON Schema of the project configuration. Editors that support JSON
+Schema can use it for completion and checking.
 
-The template is for one node per array job. It uses
-`execution.slurm.tasks_per_node` as the CPU count for the worker pool and
-requires a cluster-visible config path in `D3DPLOT_CONFIG`. Once the planned
-`d3dplot run` command is integrated, choose the shard count when submitting
-and start array indices at zero so each task receives the correct deterministic
-shard:
+## Creating and checking a project
+
+### `init`
+
+```powershell
+d3dplot init SIMULATION_PATH [SIMULATION_PATH ...] -o project.yaml [--analyses NAMES]
+```
+
+Creates a commented starter YAML file. Simulation paths are written as absolute
+paths, and labels are taken from the folder names. The file is never
+overwritten.
+
+| Option | Description |
+|---|---|
+| `-o`, `--output` | **Required.** The new YAML file to create. |
+| `--analyses` | Comma-separated built-in analyses: `map1d`, `map2d`, `profile`, `river_km_statistics`. Default: `map2d`. |
+
+Example:
+
+```powershell
+d3dplot init C:\models\run-a C:\models\run-b -o project.yaml --analyses map2d,river_km_statistics
+```
+
+The `river_km_statistics` section contains placeholder polygon and river-km
+paths. Replace them before you run that analysis.
+
+### `validate`
+
+```powershell
+d3dplot validate project.yaml [--format text|json]
+```
+
+Checks the configuration against the schema and the project rules. It also
+finds each simulation, checks the requested variables against the registry and
+the map files, and checks the derived-quantity dependencies.
+
+If there are no errors, `validate` also builds or reuses the grid, merge-plan
+and time-axis inspection caches, the same as [`inspect`](#inspect). It does not
+process quantities or create figures.
+
+| Option | Description |
+|---|---|
+| `--format text` | Default. Writes `tables/validation_<timestamp>.txt`. |
+| `--format json` | Writes `tables/validation_<timestamp>.json` with the shape `{"valid": true, "issues": []}`. |
+
+The command exits with a non-zero code if the project has errors. Each issue
+has a stable code such as `V-VAR-001` (unknown variable) or `V-VAR-002`
+(variable missing from the map files).
+
+### `inspect`
+
+```powershell
+d3dplot inspect project.yaml [--simulation LABEL]
+```
+
+Builds or reuses the grid, merge-plan and checked time-axis caches for every
+simulation, or for the one named by `--simulation`. It reads the partition
+layout from the first sub-run, reads the time information from every sub-run,
+and checks duplicate SMT restart boundaries. The report is written to
+`tables/inspection_<timestamp>.txt` in the reference simulation's output root.
+Inspection does not process quantities or create figures.
+
+| Option | Description |
+|---|---|
+| `--simulation LABEL` | Only inspect the simulation with this label. |
+
+## Processing and plotting
+
+### `process`
+
+```powershell
+d3dplot process project.yaml [--serial] [--reprocess POLICY] [--executor NAME] [--workers N] [--shard i/N]
+```
+
+Computes the configured quantities for all simulations and writes them as
+guarded caches under the output root. Existing caches are reused unless the
+reprocessing policy says otherwise. The command does not create figures.
+
+| Option | Description |
+|---|---|
+| `--serial` | Run sequentially. Useful for debugging. |
+| `--reprocess if_changed\|never\|always` | Override the cache reprocessing policy of the configuration. |
+| `--executor serial\|processes\|slurm` | Override `execution.executor`. |
+| `--workers N` | Override the number of worker processes. |
+| `--shard i/N` | Process only shard `i` of `N` (zero-based). Shards are deterministic and do not overlap. |
+
+Progress is written to the run's `.dia` file (the user-facing messages) and
+`.log` file (detailed task progress). Both are in `output.root/d3dplot/logs`.
+
+### `run`
+
+```powershell
+d3dplot run project.yaml [--serial] [--reprocess POLICY] [--executor NAME] [--workers N] [--shard i/N]
+```
+
+Runs [`process`](#process) and then [`plot`](#plot). It takes the same options.
+If you use `--shard`, `run` processes that shard and skips the figures. After all
+shards have finished, run `d3dplot plot project.yaml` once.
+
+### `plot`
+
+```powershell
+d3dplot plot project.yaml [--simulation LABEL] [--variable NAME] [--only ANALYSIS] [--set KEY=VALUE] [--fresh-figures]
+d3dplot plot C:\postprocessing\reference\d3dplot
+```
+
+Renders the figures from the caches made by `process` or `run`. The argument can
+be the project YAML file, or the output folder that contains `config/latest.yaml`
+(the resolved configuration written by the last run).
+
+Matching PNG figures are reused. Use `--fresh-figures` to redraw all of them.
+
+| Option | Description |
+|---|---|
+| `--simulation LABEL` | Only plot this simulation. |
+| `--variable NAME` | Only plot this variable. |
+| `--only ANALYSIS` | Only plot this analysis, for example `map2d`. |
+| `--set KEY=VALUE` | Override a configuration value for this run. Repeat the option for more overrides. |
+| `--fresh-figures` | Redraw the figures instead of reusing matching PNG files. |
+
+### `replot`
+
+```powershell
+d3dplot replot FIGURE.png [--set KEY=VALUE]
+```
+
+Regenerates one figure from the provenance stored in the PNG. Only PNG files
+created by d3dplot with valid provenance are accepted. This redraws that
+figure only, not the whole time series or a movie.
+
+| Option | Description |
+|---|---|
+| `--set KEY=VALUE` | Override a value before redrawing, for example `analyses[0].figure.dpi=300`. Repeat the option for more overrides. |
+
+### `status`
+
+```powershell
+d3dplot status project.yaml [--json]
+```
+
+Shows the state of the outputs for each configured simulation.
+
+| Option | Description |
+|---|---|
+| `--json` | Print the status as JSON. |
+
+### `clean`
+
+```powershell
+d3dplot clean project.yaml [--figures] [--cache]
+```
+
+Removes generated output. The model files and measurement files are never
+changed, and the output root itself is kept.
+
+| Option | Description |
+|---|---|
+| `--figures` | Remove the generated figures. |
+| `--cache` | Remove the processed and inspection caches. |
+
+Without either option, `clean` removes both figures and caches.
+
+## Working with other tools
+
+### `measurements convert`
+
+```powershell
+d3dplot measurements convert measurements.mat -o converted.nc --time-zone +01:00 [--variable NAME]
+```
+
+Converts Matlab v5 or v7 river-km profile measurements to NetCDF. Matlab date
+numbers have no time zone, so `--time-zone` is required and must be a fixed UTC
+offset such as `+01:00`. The source `.mat` file is not changed.
+
+| Option | Description |
+|---|---|
+| `-o`, `--output` | **Required.** Canonical NetCDF output path, in a new or empty folder (or a marked d3dplot output root). |
+| `--time-zone +HH:MM` | **Required.** The fixed UTC offset of the measurement times. |
+| `--variable NAME` | Convert only this variable. Without it, one file is written per variable. |
+
+Existing files are never overwritten. The destination must be a new or empty
+folder, or a folder inside an existing d3dplot output root. Matlab v7.3 (HDF5)
+files are not supported.
+
+### `slurm write`
+
+```powershell
+d3dplot slurm write project.yaml [--dry-run]
+```
+
+Writes a SLURM array-job script to `config/slurm_array.sh` beneath the output
+root. The command never submits a job. Submit the script yourself, with one
+array task per shard:
 
 ```bash
 sbatch --array=0-7 \
@@ -106,83 +283,41 @@ sbatch --array=0-7 \
   /shared/output/reference/d3dplot/config/slurm_array.sh
 ```
 
-The generated script derives `--shard i/N` from
-`SLURM_ARRAY_TASK_ID/SLURM_ARRAY_TASK_COUNT`; Python's randomized `hash()` is
-not used. It anticipates `d3dplot run`, which is not yet integrated in this
-version, and exits with an explicit error until that command is available.
-Multi-node execution and automatic submission remain out of scope for the v1
-stub.
+Array indices start at zero. The script derives the shard from
+`SLURM_ARRAY_TASK_ID` and `SLURM_ARRAY_TASK_COUNT`, and runs `d3dplot run` for
+that shard. `D3DPLOT_CONFIG` must point to the project file on a path that the
+cluster nodes can read. The script uses `execution.slurm.tasks_per_node` as the
+number of worker processes. Each array task runs on one node. Multi-node jobs
+are not supported.
 
-## Validate a project
+| Option | Description |
+|---|---|
+| `--dry-run` | Print the script without writing any files. |
 
-```powershell
-d3dplot validate project.yaml
-d3dplot validate project.yaml --format json
-```
+## Output locations and safety
 
-Validation checks the configuration schema and static project rules, discovers
-each configured simulation, and checks requested quantity names against the
-registry and detected map headers. Registered raw quantities must be present
-in every sub-run. An unregistered name is accepted as a raw NetCDF field only
-when it is found in the configured simulations; missing fields produce
-`V-VAR-002`, while unknown names produce `V-VAR-001` with suggestions when
-available. Section quantities such as `velocity_parallel`, `velocity_perpendicular`,
-and `discharge` produce `V-VAR-006` because line sampling is not part of v1.
+Commands that write files put them in a `d3dplot` folder for each simulation.
+Its location is the first of these that is set:
 
-When these checks have no errors, `validate` also builds or reuses the same
-grid, merge-plan, and checked time-axis caches as `inspect`. Derived quantity
-dependencies are validated as part of this step, but it does not process
-quantities or create figures. Errors produce a non-zero exit code. Text is the
-default report format, and the report is written to
-`tables/validation_<timestamp>.txt`. With `--format json`, it is written to
-`tables/validation_<timestamp>.json`; JSON reports have the stable shape
-`{"valid": true, "issues": []}`.
+1. `output_dir` of the simulation, followed by `d3dplot`,
+2. `output.root` of the project, followed by `d3dplot`,
+3. the simulation folder, followed by `d3dplot`.
 
-## Process quantities from Python
+Inside that folder, `cache`, `figures`, `tables`, `config` and `logs` hold the
+results. Model files and measurement files are never changed. See
+[Output store](./output-store.md) for the full layout.
 
-`d3dplot process` and `d3dplot run` take the YAML or JSON project file directly:
+## Exit codes
 
-```powershell
-.\.venv\Scripts\python.exe -m d3dplot prepare project.yaml
-.\.venv\Scripts\python.exe -m d3dplot process project.yaml
-```
+| Code | Meaning |
+|---|---|
+| `0` | Success. |
+| `1` | An error occurred, or validation found errors. |
+| `2` | A usage error, such as an unknown option. |
 
-The native runner processes every configured simulation and the built-in
-`map1d`, `map2d`, and `river_km_statistics` analyses. It writes guarded caches
-beneath `output.root`, supports `vertical: all` or explicit
-`vertical.layers`, and honours `reprocess`, `execution.executor`,
-`execution.workers`, and `execution.shard`. Use `--shard i/N` for
-non-overlapping deterministic task subsets; `d3dplot run` skips plotting for a
-sharded run until all shards are complete. It opens guarded `.dia` and
-debug `.log` files before simulation discovery and inspection, so preflight
-failures are recorded under `output.root/d3dplot/logs`. Add `--serial`
-to run sequentially for debugging. It does not modify model or measurement
-inputs. The `.dia` records user-facing phase starts and choices; the `.log`
-records task and per-analysis progress: map2d and river-km starts/completions,
-time steps, quantity evaluation and raw reads, and map/statistics cache writes.
-It also records river-km, polygon, and profile-measurement reads. Both files are
-flushed as messages arrive, so the `.log` can be used to see which long-running
-operation is currently active.
+## Plugin analyses
 
-Third-party analyses can register a config-only model through the
-`d3dplot.analyses` Python entry-point group. The entry point must load an
-`d3dplot.analyses.AnalysisPlugin` value whose `config_model` subclasses
-`AnalysisConfigBase` and declares `analysis` as the matching
-`Literal["plugin_name"]`. The model is included in validation and `schema`;
-`process`, `run`, and `plot` reject it explicitly because plugin runtime
-handlers are not part of this contract.
-
-For the Maas local configuration, invoke the CLI directly:
-
-```powershell
-.\.venv\Scripts\python.exe -m d3dplot run data_local\maas_sk_initial_final_bed_level.yml
-.\.venv\Scripts\python.exe -m d3dplot run data_local\maas_sk_initial_final_bed_level.yml --serial
-```
-
-## Print the configuration schema
-
-```powershell
-d3dplot schema > d3dplot.schema.json
-```
-
-The command prints the JSON Schema for the built-in project configuration.
+A third-party package can register a configuration-only analysis through the
+`d3dplot.analyses` entry-point group. Such an analysis is included in `validate`
+and `schema`. `process`, `run` and `plot` reject it, because the plugin's
+runtime handlers are not part of this version.

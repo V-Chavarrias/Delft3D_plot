@@ -32,6 +32,7 @@ from d3dplot.config.selections import (
     DepthAverageSelection,
     ElevationSelection,
     LayersSelection,
+    TimesConfig,
 )
 from d3dplot.execution.cache import CacheFingerprintReadError
 from d3dplot.execution.diagnostics import DiagnosticLog
@@ -156,6 +157,27 @@ def _write_preflight_report(
     diagnostics.info(f"Validation report written: {report_path}.")
 
 
+def inspection_time_selections(
+    project: ProjectConfig,
+) -> tuple[tuple[TimesConfig, Literal["first", "last"]], ...] | None:
+    """Return the time selections the output inspection must confirm, if any."""
+    has_reference_comparison = len(project.simulations) > 1 and any(
+        analysis.time_matching == "reference"
+        and any(
+            comparison.startswith("difference_simulation")
+            for comparison in analysis.comparisons
+        )
+        for analysis in project.analyses
+    )
+    if has_reference_comparison:
+        return None
+    selections = tuple(
+        (analysis.times, analysis.duplicate_morphological_times)
+        for analysis in project.analyses
+    )
+    return selections or None
+
+
 def _inspection_for_simulation(
     project: ProjectConfig,
     simulation_config: SimulationConfig,
@@ -185,7 +207,11 @@ def _inspection_for_simulation(
         crs=project.crs,
         time_zone=(str(project.time_zone) if project.time_zone is not None else None),
         check_boundary_duplicates=project.check_boundary_duplicates,
+        check_corrupt_partitions=project.check_corrupt_partitions,
+        time_selections=inspection_time_selections(project),
+        on_corrupt_output=project.on_corrupt_output,
         forbidden_roots=project.output.forbidden_roots,
+        log=diagnostics.info,
     )
     diagnostics.record_validation_issues(inspection_report.issues)
     combined_report = ValidationReport(

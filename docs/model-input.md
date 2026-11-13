@@ -1,9 +1,7 @@
 # Model input
 
 The `d3dplot.model_input` package provides read-only readers for D-Flow FM
-model inputs. The readers are native to d3dplot and do not depend on
-HYDROLIB-core at run time. Referenced files are never parsed recursively or
-modified. The MDU keyword table is generated from the Deltares
+model inputs. Referenced files are never parsed recursively or modified. The MDU keyword table is generated from the Deltares
 `Delft3DFM.File.Specifications` `mdu.json` by `tools/generate_mdu_keywords.py`.
 Unknown and obsolete keywords are accepted and reported, not rejected, so old
 simulations can still be processed.
