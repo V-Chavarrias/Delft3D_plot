@@ -21,7 +21,7 @@ configuration schema with `d3dplot schema` and validate it with
 | `fig_resolution`, `fig_size`, `font_size` | `figure.dpi`, `figure.size_cm`, `figure.font_size` | Applied during common figure finalisation. |
 | `fig_print` | `figure.formats` | Only `png` is supported in v1. |
 | `Lref` | `labels.vertical_datum` | Controls the displayed vertical datum. |
-| `do_movie`, `tim_movie` | `movie: {duration_s: ...}` | Optional movie export from plotted map frames. |
+| `do_movie`, `tim_movie` | `movie: {total_duration_s: ...}` | Optional movie export from plotted map frames; `tim_movie` is the total movie duration. |
 | Matlab variable aliases such as `bl`, `qsp` | `variables` | Canonical names such as `bed_level` and `specific_discharge` are also accepted. |
 
 Use the [configuration reference](./configuration.md) for the complete

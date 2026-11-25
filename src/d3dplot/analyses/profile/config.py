@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Literal, TypeAlias
 
@@ -15,16 +16,27 @@ ProfileView: TypeAlias = Literal["profile", "space_time", "section"]
 
 
 class ProfileLineConfig(ConfigModel):
-    """One polyline along which quantities are sampled."""
+    """One polyline along which quantities are sampled.
+
+    Give the geometry either as a ``file`` (.pli) or inline as ``coordinates``.
+    """
 
     name: str = Field(description="Stable output name of the line.")
-    file: Path = Field(description="Polyline (.pli) file in model coordinates.")
+    file: Path | None = Field(
+        default=None,
+        description="Polyline (.pli) file in model coordinates.",
+    )
     polyline: str | None = Field(
         default=None,
         description=(
             "Name of the polyline object inside the file. Required when the file "
-            "contains more than one polyline."
+            "contains more than one polyline. Only valid with file."
         ),
+    )
+    coordinates: list[tuple[float, float]] | None = Field(
+        default=None,
+        min_length=2,
+        description="Inline (x, y) vertices in model coordinates, in order.",
     )
 
     @field_validator("name")
@@ -40,6 +52,29 @@ class ProfileLineConfig(ConfigModel):
         if value is not None and (not value or value != value.strip()):
             raise ValueError("Profile polyline names must be non-empty and trimmed.")
         return value
+
+    @field_validator("coordinates")
+    @classmethod
+    def validate_coordinates(
+        cls, value: list[tuple[float, float]] | None
+    ) -> list[tuple[float, float]] | None:
+        if value is not None and not all(
+            math.isfinite(x) and math.isfinite(y) for x, y in value
+        ):
+            raise ValueError("Profile line coordinates must be finite.")
+        return value
+
+    @model_validator(mode="after")
+    def validate_geometry_source(self) -> ProfileLineConfig:
+        if (self.file is None) == (self.coordinates is None):
+            raise ValueError(
+                f"Profile line {self.name!r} needs exactly one of file or coordinates."
+            )
+        if self.coordinates is not None and self.polyline is not None:
+            raise ValueError(
+                f"Profile line {self.name!r}: polyline applies only to file."
+            )
+        return self
 
 
 class ProfileConfig(AnalysisConfigBase):

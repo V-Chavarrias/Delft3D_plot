@@ -85,6 +85,26 @@ def test_profile_view_accepts_several_fractions_as_separate_series() -> None:
 
 
 @pytest.mark.unit
+def test_profile_line_needs_exactly_one_geometry_source() -> None:
+    inline = ProfileLineConfig(name="a", coordinates=[(0, 34), (7000, 34)])
+    assert inline.file is None
+    with pytest.raises(ValidationError, match="exactly one of file or coordinates"):
+        ProfileLineConfig(name="a")
+    with pytest.raises(ValidationError, match="exactly one of file or coordinates"):
+        ProfileLineConfig(name="a", file=Path("a.pli"), coordinates=[(0, 0), (1, 1)])
+    with pytest.raises(ValidationError, match="applies only to file"):
+        ProfileLineConfig(name="a", coordinates=[(0, 0), (1, 1)], polyline="p")
+
+
+@pytest.mark.unit
+def test_profile_inline_coordinates_need_two_finite_points() -> None:
+    with pytest.raises(ValidationError):
+        ProfileLineConfig(name="a", coordinates=[(0, 0)])
+    with pytest.raises(ValidationError, match="finite"):
+        ProfileLineConfig(name="a", coordinates=[(0, 0), (float("nan"), 1)])
+
+
+@pytest.mark.unit
 def test_profile_line_names_and_polyline_names_must_be_trimmed() -> None:
     with pytest.raises(ValidationError, match="trimmed"):
         _line(" a ")

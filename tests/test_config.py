@@ -14,7 +14,7 @@ from pydantic import ValidationError
 
 from d3dplot.analyses import AnalysisPlugin
 from d3dplot.analyses.map1d.config import Map1DConfig
-from d3dplot.analyses.map2d.config import Map2DConfig
+from d3dplot.analyses.map2d.config import Map2DConfig, MovieConfig
 from d3dplot.analyses.registry import (
     builtin_analysis_names,
     clear_plugin_analysis_cache,
@@ -616,3 +616,12 @@ def test_active_sediment_thickness_threshold_cannot_be_negative() -> None:
                 ],
             }
         )
+
+
+@pytest.mark.unit
+def test_movie_total_duration_is_shared_by_frames() -> None:
+    assert MovieConfig(total_duration_s=40).frame_duration_s(4) == pytest.approx(10.0)
+    assert MovieConfig(duration_s=0.5).frame_duration_s(4) == pytest.approx(0.5)
+    assert MovieConfig().frame_duration_s(4) == pytest.approx(1.0)
+    with pytest.raises(ValidationError, match="not both"):
+        MovieConfig(duration_s=1.0, total_duration_s=40)

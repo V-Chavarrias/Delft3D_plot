@@ -815,6 +815,7 @@ def plot_map2d_group(
                         "V-PLOT-002",
                         "A movie frame is missing a valid figure fingerprint.",
                     )
+                frame_duration_s = analysis.movie.frame_duration_s(len(frame_paths))
                 fingerprint = fingerprint_artifact(
                     kind="map2d_movie",
                     schema_version=CACHE_SCHEMA_VERSION,
@@ -822,7 +823,7 @@ def plot_map2d_group(
                     algorithm_version="map2d-movie-1",
                     parameters={
                         "comparison": comparison,
-                        "duration_s": analysis.movie.duration_s,
+                        "duration_s": frame_duration_s,
                         "extent_index": extent_index,
                         "subject": output_subject,
                         "variable": variable,
@@ -845,7 +846,7 @@ def plot_map2d_group(
                     was_reused = write_mp4(
                         frame_paths,
                         movie_path,
-                        analysis.movie.duration_s,
+                        frame_duration_s,
                         fingerprint,
                         output_guard,
                     )

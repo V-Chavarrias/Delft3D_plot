@@ -595,18 +595,26 @@ class _ProfileRun:
                 is_geographic=self._is_geographic,
             )
             self._topology[plan_index] = topology
-        polylines = self._polylines.get(config.file)
-        if polylines is None:
-            polylines = read_pli_polylines(config.file)
-            self._polylines[config.file] = polylines
-        polyline = select_polyline(
-            polylines,
-            line_name=config.name,
-            polyline_name=config.polyline,
-        )
+        polyline_xy: np.ndarray
+        if config.coordinates is not None:
+            polyline_xy = np.asarray(config.coordinates, dtype=np.float64)
+        elif config.file is not None:
+            polylines = self._polylines.get(config.file)
+            if polylines is None:
+                polylines = read_pli_polylines(config.file)
+                self._polylines[config.file] = polylines
+            polyline_xy = select_polyline(
+                polylines,
+                line_name=config.name,
+                polyline_name=config.polyline,
+            ).xy
+        else:
+            raise ProfileStageError(
+                f"Profile line {config.name!r} has neither file nor coordinates."
+            )
         line = prepare_profile_line(
             config.name,
-            polyline.xy,
+            polyline_xy,
             topology,
             self._layout,
             self._guard,
