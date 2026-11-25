@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import os
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -21,7 +21,12 @@ from d3dplot.analyses.map2d.process import (
     Map2DTaskProcessor,
 )
 from d3dplot.analyses.profile.config import ProfileConfig
-from d3dplot.analyses.profile.stage import ProfileStageError, process_profile_analysis
+from d3dplot.analyses.profile.stage import (
+    ProfileReference,
+    ProfileStageError,
+    ProfileValues,
+    process_profile_analysis,
+)
 from d3dplot.analyses.river_km_statistics.config import RiverKmStatisticsConfig
 from d3dplot.analyses.river_km_statistics.process import (
     select_time_average_outputs,
@@ -53,7 +58,7 @@ from d3dplot.simulation.inspection import (
     InspectionResult,
     inspect_simulation,
 )
-from d3dplot.simulation.time_axis import TimeAxis, TimeSelectionResult
+from d3dplot.simulation.time_axis import TimeAxis, TimeEntry, TimeSelectionResult
 from d3dplot.store import (
     OutputLayout,
     OutputWriteError,
@@ -294,6 +299,170 @@ def _selections_for_simulation(
     return selections, policies
 
 
+def _resolve_reference_simulation(project: ProjectConfig) -> SimulationConfig:
+    reference = project.reference_simulation
+    if isinstance(reference, str):
+        resolved = next(
+            (item for item in project.simulations if item.label == reference),
+            None,
+        )
+    else:
+        resolved = (
+            project.simulations[reference]
+            if 0 <= reference < len(project.simulations)
+            else None
+        )
+    if resolved is None:
+        raise ValueError("The configured reference simulation could not be resolved.")
+    return resolved
+
+
+@dataclass(frozen=True, slots=True)
+class _ReferenceSource:
+    """PRF samples of the reference simulation and the time axis they came from."""
+
+    time_axis: TimeAxis
+    entries: tuple[TimeEntry, ...]
+    values: ProfileValues
+
+
+def _profile_reference_sources(
+    project: ProjectConfig,
+    analyses: Sequence[tuple[int, ProfileConfig]],
+    diagnostics: DiagnosticLog,
+) -> dict[int, _ReferenceSource]:
+    """Sample the reference simulation for each PRF difference_simulation analysis."""
+    needing = tuple(
+        (index, analysis)
+        for index, analysis in analyses
+        if "difference_simulation" in analysis.comparisons
+    )
+    if not needing or len(project.simulations) < 2:
+        return {}
+    reference_config = _resolve_reference_simulation(project)
+    layout = OutputLayout.for_simulation(reference_config, project.output)
+    inspected, _ = _inspection_for_simulation(
+        project, reference_config, layout, diagnostics
+    )
+    if inspected is None:
+        raise ValueError(
+            "PRF difference_simulation needs a valid output inspection for the "
+            f"reference simulation {reference_config.label}."
+        )
+    simulation, inspection = inspected
+    guard = initialize_output_root(
+        layout,
+        tool_version=__version__,
+        forbidden_roots=project.output.forbidden_roots,
+    )
+    time_axis = TimeAxis.from_cache(inspection.times_path)
+    time_zone = str(project.time_zone) if project.time_zone is not None else None
+    sources: dict[int, _ReferenceSource] = {}
+    failed = False
+    for analysis_index, analysis in needing:
+        analysis_key = f"analysis-{analysis_index}-{analysis.analysis}"
+        selection = time_axis.select(
+            analysis.times,
+            naive_time_zone=time_zone,
+            duplicate_morphological_times=analysis.duplicate_morphological_times,
+            on_corrupt_output=project.on_corrupt_output,
+        )
+        diagnostics.record_time_selection(
+            analysis_key=analysis_key,
+            simulation_label=reference_config.label,
+            requested=analysis.times.model_dump_json(),
+            result=selection,
+        )
+        diagnostics.record_validation_issues(selection.issues)
+        if not selection.is_valid:
+            diagnostics.error(f"Invalid time selection for {analysis_key}.")
+            failed = True
+            continue
+        values: ProfileValues = {}
+        try:
+            process_profile_analysis(
+                project,
+                reference_config,
+                simulation,
+                inspection,
+                analysis,
+                analysis_index,
+                selection.entries,
+                layout,
+                guard,
+                render_figures=False,
+                diagnostic=diagnostics.info,
+                capture=values,
+            )
+        except (ProfileStageError, OSError, OutputWriteError, ValueError) as error:
+            diagnostics.error(
+                f"PRF reference processing failed for {reference_config.label}/"
+                f"{analysis_key}: {error}"
+            )
+            failed = True
+            continue
+        sources[analysis_index] = _ReferenceSource(
+            time_axis, tuple(selection.entries), values
+        )
+    if failed:
+        raise ValueError("PRF plotting failed; see the diagnostics log.")
+    return sources
+
+
+def _profile_reference(
+    analysis: ProfileConfig,
+    own_time_axis: TimeAxis,
+    own_entries: tuple[TimeEntry, ...],
+    source: _ReferenceSource,
+    *,
+    own_is_reference: bool,
+    diagnostics: DiagnosticLog,
+) -> ProfileReference | None:
+    """Pair own selected times with reference times for difference_simulation."""
+    if own_is_reference:
+        if not analysis.include_reference_in_differences:
+            return None
+        return ProfileReference(
+            values=source.values,
+            time_indices={entry.time_index: entry.time_index for entry in own_entries},
+        )
+    own_axis = TimeAxis(
+        own_entries,
+        own_time_axis.source_utc_offset,
+        own_time_axis.morphology_available,
+    )
+    reference_axis = TimeAxis(
+        source.entries,
+        source.time_axis.source_utc_offset,
+        source.time_axis.morphology_available,
+    )
+    reference_matching = analysis.time_matching == "reference"
+    targets = source.entries if reference_matching else own_entries
+    candidates = own_axis if reference_matching else reference_axis
+    result = candidates.match(
+        targets,
+        axis=analysis.times.axis,
+        tolerance=analysis.times.tolerance,
+        duplicate_morphological_times=analysis.duplicate_morphological_times,
+    )
+    diagnostics.record_validation_issues(result.issues)
+    time_indices: dict[int, int] = {}
+    for match in result.matches:
+        own_entry, reference_entry = (
+            (match.local, match.reference)
+            if reference_matching
+            else (match.reference, match.local)
+        )
+        time_indices[own_entry.time_index] = reference_entry.time_index
+    unpaired = len(own_entries) - len(time_indices)
+    if unpaired:
+        diagnostics.info(
+            f"PRF {analysis.analysis!r} difference_simulation: {unpaired} selected "
+            "output(s) have no reference time within tolerance and are skipped."
+        )
+    return ProfileReference(values=source.values, time_indices=time_indices)
+
+
 def _process_profile_analyses(
     project: ProjectConfig,
     simulation_config: SimulationConfig,
@@ -306,6 +475,8 @@ def _process_profile_analyses(
     reused_paths: list[str],
     *,
     render_figures: bool,
+    reference_sources: Mapping[int, _ReferenceSource] | None = None,
+    own_is_reference: bool = False,
 ) -> bool:
     """Process PRF analyses for one simulation; return True if any analysis failed."""
     guard = initialize_output_root(
@@ -335,6 +506,21 @@ def _process_profile_analyses(
             diagnostics.error(f"Invalid time selection for {analysis_key}.")
             failed = True
             continue
+        reference: ProfileReference | None = None
+        source = (
+            reference_sources.get(analysis_index)
+            if render_figures and reference_sources is not None
+            else None
+        )
+        if source is not None:
+            reference = _profile_reference(
+                analysis,
+                time_axis,
+                tuple(selection.entries),
+                source,
+                own_is_reference=own_is_reference,
+                diagnostics=diagnostics,
+            )
         try:
             result = process_profile_analysis(
                 project,
@@ -348,6 +534,7 @@ def _process_profile_analyses(
                 guard,
                 render_figures=render_figures,
                 diagnostic=diagnostics.info,
+                reference=reference,
             )
         except (ProfileStageError, OSError, OutputWriteError, ValueError) as error:
             diagnostics.error(
@@ -394,6 +581,10 @@ def plot_profile_analyses(
         raise ValueError("PRF plotting requires a diagnostics log.")
     output_paths: list[str] = []
     reused_paths: list[str] = []
+    reference_sources = _profile_reference_sources(project, analyses, diagnostics)
+    reference_config = (
+        _resolve_reference_simulation(project) if reference_sources else None
+    )
     for simulation_config in project.simulations:
         if simulation_label is not None and simulation_config.label != simulation_label:
             continue
@@ -418,6 +609,8 @@ def plot_profile_analyses(
             output_paths,
             reused_paths,
             render_figures=True,
+            reference_sources=reference_sources,
+            own_is_reference=simulation_config is reference_config,
         ):
             raise ValueError("PRF plotting failed; see the diagnostics log.")
     return ProfilePlotResult(

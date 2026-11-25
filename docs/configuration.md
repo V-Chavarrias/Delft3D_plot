@@ -93,6 +93,13 @@ total. Use `movie: {duration_s: 0.5}` instead to set the duration of each frame.
 The two options are mutually exclusive. MP4 encoding requires the optional `movies`
 extra (`d3dplot[movies]`).
 
+A `profile` analysis accepts `comparisons: [value, difference_time, difference_simulation]`.
+`difference_time` subtracts the first selected time, and `difference_simulation`
+subtracts the reference simulation (`reference_simulation`) at the matching time. The
+differences are available for the `profile` view only. `figure.show_initial: false`
+omits the first selected time, and `figure.y_limits` (a list, or a dictionary keyed by
+variable and comparison) sets the vertical axis of each profile figure.
+
 `language` selects English (`en`), Dutch (`nl`), or Spanish (`es`) labels.
 `labels.vertical_datum` controls the datum shown for reference elevations, and
 `labels.extra_dictionaries` lists additional translation CSVs. See

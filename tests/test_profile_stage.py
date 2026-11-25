@@ -244,3 +244,53 @@ def test_second_profile_plot_with_replot_never_reuses_figures(
     assert second_run.output_paths == ()
     assert second.output_paths == ()
     assert set(second.reused_paths) == set(first.output_paths)
+
+
+@pytest.mark.integration
+def test_profile_differences_compare_times_and_the_reference_simulation(
+    synthetic_case: Path,
+    tmp_path: Path,
+) -> None:
+    pli_path = _synthetic_centreline_pli(tmp_path)
+    project = ProjectConfig.model_validate(
+        {
+            "simulations": [
+                {
+                    "path": str(synthetic_case / "simulations" / "r001"),
+                    "label": "r001",
+                    "output_dir": str(tmp_path / "output" / "r001"),
+                },
+                {
+                    "path": str(synthetic_case / "simulations" / "r002"),
+                    "label": "r002",
+                    "output_dir": str(tmp_path / "output" / "r002"),
+                },
+            ],
+            "execution": {"executor": "serial"},
+            "analyses": [
+                {
+                    "analysis": "profile",
+                    "variables": ["water_level"],
+                    "lines": [{"name": "section", "file": str(pli_path)}],
+                    "views": ["profile"],
+                    "comparisons": [
+                        "value",
+                        "difference_time",
+                        "difference_simulation",
+                    ],
+                }
+            ],
+        }
+    )
+
+    run_result = run_project(project, executor="serial")
+    result = _plot_profiles(project)
+
+    assert run_result.failed_simulations == ()
+    figures = [str(path) for path in result.output_paths if path.suffix == ".png"]
+    assert any("difference_time" in path for path in figures)
+    difference_simulation = [
+        path for path in figures if "difference_simulation" in path
+    ]
+    assert difference_simulation
+    assert all("r002" in path for path in difference_simulation)

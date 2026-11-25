@@ -3,12 +3,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
 from itertools import groupby
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeAlias
 from urllib.parse import quote
 
 import numpy as np
@@ -73,9 +73,26 @@ DiagnosticSink = Callable[[str], None]
 
 _PROFILE_INPUT_ALGORITHM_VERSION = "1"
 
+# Keyed by (line name, selection index, time index of the simulation).
+ProfileValues: TypeAlias = dict[tuple[str, int, int], np.ndarray]
+
+_DIFFERENCE_LABELS = {
+    "difference_time": "difference in time",
+    "difference_simulation": "difference from reference",
+}
+
 
 class ProfileStageError(ValueError):
     """A PRF analysis cannot be processed or rendered for one simulation."""
+
+
+@dataclass(frozen=True, slots=True)
+class ProfileReference:
+    """Reference samples for difference_simulation, paired with the own times."""
+
+    values: ProfileValues
+    time_indices: Mapping[int, int]
+    """Maps each own time index to the reference time index it is compared with."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,10 +186,14 @@ def process_profile_analysis(
     *,
     render_figures: bool,
     diagnostic: DiagnosticSink | None = None,
+    reference: ProfileReference | None = None,
+    capture: ProfileValues | None = None,
 ) -> ProfileStageResult:
     """Build PRF profile caches for the selected times and optionally render figures.
 
     Entries are visited in time order, and each sub-run's output is opened once.
+    ``capture`` receives the sampled values; ``reference`` supplies the values
+    for difference_simulation.
     """
     selections = profile_selections(analysis)
     run = _ProfileRun(
@@ -185,6 +206,8 @@ def process_profile_analysis(
         guard,
         render_figures=render_figures,
         diagnostic=diagnostic,
+        reference=reference,
+        capture=capture,
     )
     try:
         run.process(simulation, inspection, entries)
@@ -217,6 +240,8 @@ class _ProfileRun:
         *,
         render_figures: bool,
         diagnostic: DiagnosticSink | None,
+        reference: ProfileReference | None,
+        capture: ProfileValues | None,
     ) -> None:
         self._project = project
         self._simulation_label = simulation_config.label
@@ -227,6 +252,8 @@ class _ProfileRun:
         self._guard = guard
         self._render = render_figures
         self._diagnostic = diagnostic
+        self._reference = reference
+        self._capture = capture
         self._style = project.effective_figure(analysis)
         self._hooks = project.effective_hooks(analysis)
         self._replot = project.effective_replot(analysis)
@@ -236,7 +263,8 @@ class _ProfileRun:
         self._geometry: dict[int, GridGeometry] = {}
         self._lines: dict[tuple[int, str], ProfileLine] = {}
         self._input_fingerprints: dict[int, str] = {}
-        self._line_views: dict[tuple[str, int], LineView] = {}
+        self._baselines: dict[tuple[str, int], tuple[int, np.ndarray]] = {}
+        self._line_views: dict[tuple[str, int, str, int], LineView] = {}
         self._section_views: dict[tuple[str, int], SectionView] = {}
         self._space_time_values: dict[tuple[str, int], dict[datetime, np.ndarray]] = {}
         self._space_time_lines: dict[tuple[str, int], ProfileLine] = {}
@@ -267,7 +295,7 @@ class _ProfileRun:
         )
         engine = QuantityEngine()
         subruns = {subrun.index: subrun for subrun in simulation.subruns}
-        ordered = sorted(entries, key=lambda entry: (entry.subrun, entry.time))
+        ordered = _processing_order(entries)
         for subrun_index, group in groupby(ordered, key=lambda entry: entry.subrun):
             group_entries = tuple(group)
             plan_index = reader.plan_index(subrun_index)
@@ -318,6 +346,9 @@ class _ProfileRun:
             )
             for selection in self._selections
         ]
+        if self._capture is not None:
+            for index, values in enumerate(values_by_selection):
+                self._capture[(line.name, index, entry.time_index)] = values
         interfaces: np.ndarray | None = None
         if "section" in self._analysis.views:
             interfaces = profile_interfaces_at_time(
@@ -334,9 +365,16 @@ class _ProfileRun:
             zip(self._selections, values_by_selection, strict=True)
         ):
             if "profile" in self._analysis.views:
-                self._render_profile(
-                    entry, line, index, selection, values, input_fingerprint
-                )
+                for comparison in self._analysis.comparisons:
+                    self._render_profile(
+                        entry,
+                        line,
+                        index,
+                        selection,
+                        values,
+                        comparison,
+                        input_fingerprint,
+                    )
             if "section" in self._analysis.views and interfaces is not None:
                 self._render_section(
                     entry, line, index, selection, values, interfaces, input_fingerprint
@@ -360,39 +398,104 @@ class _ProfileRun:
         index: int,
         selection: ProfileSelection,
         values: np.ndarray,
+        comparison: str,
         input_fingerprint: str,
     ) -> None:
-        path = self._figure_path(line, index, selection, "profile", entry.time)
-        if self._reuse(path):
-            return
-        series, labels = _series(values, selection)
-        title = f"{line.name} - {selection.variable} - {self._time_label(entry)}"
-        key = (line.name, index)
-        view = self._line_views.get(key)
-        if view is None:
-            view = LineView.create(
-                line.distance_m,
-                series,
-                labels,
-                display="lines",
-                figure_config=self._style,
-                x_label="Distance along line (m)",
-                y_label=selection.variable,
-                title=title,
-            )
-            self._line_views[key] = view
-        else:
-            view.update(line.distance_m, series, title=title)
-        self._finish(
-            view.figure,
-            view.axes,
-            path,
-            selection.variable,
-            "profile",
-            entry.time,
-            input_fingerprint,
-            close=False,
+        baseline_index, baseline = self._baselines.setdefault(
+            (line.name, index), (entry.time_index, values)
         )
+        if entry.time_index == baseline_index and not self._style.show_initial:
+            return
+        data = self._comparison_values(
+            comparison, line, index, entry, values, baseline_index, baseline
+        )
+        if data is None:
+            return
+        series, labels = _series(data, selection)
+        title = f"{line.name} - {selection.variable} - {self._time_label(entry)}"
+        if comparison in _DIFFERENCE_LABELS:
+            title = (
+                f"{line.name} - {selection.variable} "
+                f"({_DIFFERENCE_LABELS[comparison]}) - {self._time_label(entry)}"
+            )
+        rows = _y_limit_rows(self._style.y_limits, selection.variable, comparison)
+        for row, y_limits in enumerate(rows):
+            path = self._figure_path(
+                line,
+                index,
+                selection,
+                "profile",
+                entry.time,
+                comparison=comparison,
+                row=row if len(rows) > 1 else None,
+            )
+            if self._reuse(path):
+                continue
+            key = (line.name, index, comparison, row)
+            view = self._line_views.get(key)
+            if view is None:
+                view = LineView.create(
+                    line.distance_m,
+                    series,
+                    labels,
+                    display="lines",
+                    figure_config=self._style,
+                    x_label="Distance along line (m)",
+                    y_label=selection.variable,
+                    title=title,
+                    y_limits=y_limits,
+                )
+                self._line_views[key] = view
+            else:
+                view.update(line.distance_m, series, title=title)
+            self._finish(
+                view.figure,
+                view.axes,
+                path,
+                selection.variable,
+                "profile",
+                entry.time,
+                input_fingerprint,
+                comparison=comparison,
+                close=False,
+            )
+
+    def _comparison_values(
+        self,
+        comparison: str,
+        line: ProfileLine,
+        index: int,
+        entry: TimeEntry,
+        values: np.ndarray,
+        baseline_index: int,
+        baseline: np.ndarray,
+    ) -> np.ndarray | None:
+        """Return the plotted values for one comparison, or None if not plotted."""
+        if comparison == "value":
+            return values
+        if comparison == "difference_time":
+            if entry.time_index == baseline_index and (
+                not self._analysis.include_initial_time_difference
+            ):
+                return None
+            return values.astype(np.float64) - baseline.astype(np.float64)
+        if comparison == "difference_simulation":
+            if self._reference is None:
+                return None
+            reference_index = self._reference.time_indices.get(entry.time_index)
+            if reference_index is None:
+                return None
+            reference_values = self._reference.values.get(
+                (line.name, index, reference_index)
+            )
+            if reference_values is None or reference_values.shape != values.shape:
+                raise ProfileStageError(
+                    f"Reference PRF values for line {line.name!r} are missing or do "
+                    "not match this simulation's shape; check that both simulations "
+                    "have the same lines and selections."
+                )
+            return values.astype(np.float64) - reference_values.astype(np.float64)
+        raise ProfileStageError(f"Unsupported PRF comparison {comparison!r}.")
 
     def _render_section(
         self,
@@ -497,11 +600,12 @@ class _ProfileRun:
         input_fingerprint: str,
         *,
         close: bool,
+        comparison: str = "value",
     ) -> None:
         context = FigureContext(
             analysis="profile",
             view=view_name,
-            comparison="value",
+            comparison=comparison,
             variable=variable,
             simulation=self._simulation_label,
             time=time,
@@ -545,18 +649,22 @@ class _ProfileRun:
         selection: ProfileSelection,
         view_name: str,
         time: datetime | None,
+        *,
+        comparison: str = "value",
+        row: int | None = None,
     ) -> Path:
         filename = "all_times.png" if time is None else f"{time:%Y%m%dT%H%M%S}.png"
+        suffix = [line.name, quote(view_name, safe="-_."), selection.label()]
+        if comparison != "value":
+            suffix.append(comparison)
+        if row is not None:
+            suffix.append(f"limits{row + 1}")
         return build_quantity_output_path(
             self._layout,
             OutputArea.FIGURES,
             get_variable_spec(selection.variable).name,
             prefix=(f"analysis-{self._analysis_index}-profile", self._simulation_label),
-            suffix=(
-                line.name,
-                quote(view_name, safe="-_."),
-                selection.label(),
-            ),
+            suffix=tuple(suffix),
             filename=filename,
         )
 
@@ -683,6 +791,45 @@ def _series(
         f"{selection.variable} layer {k + 1}" for k in range(columns.shape[0])
     )
     return columns, labels
+
+
+def _processing_order(entries: Sequence[TimeEntry]) -> list[TimeEntry]:
+    """Visit sub-runs contiguously, starting with the one holding the earliest time.
+
+    The earliest entry is then processed first, so it can serve as the
+    difference_time baseline for every later entry.
+    """
+    if not entries:
+        return []
+    first_subrun = min(entries, key=lambda entry: entry.time).subrun
+    return sorted(
+        entries,
+        key=lambda entry: (entry.subrun != first_subrun, entry.subrun, entry.time),
+    )
+
+
+def _y_limit_rows(
+    configured: object,
+    variable: str,
+    comparison: str,
+) -> list[tuple[float | None, float | None] | None]:
+    """Resolve y-limit rows; one figure is written per row."""
+    if configured is None:
+        return [None]
+    if isinstance(configured, list):
+        if not configured:
+            return [None]
+        return [(pair[0], pair[1]) for pair in configured]
+    if isinstance(configured, dict):
+        variable_limits = configured.get(variable)
+        if isinstance(variable_limits, dict):
+            comparison_limits = variable_limits.get(comparison)
+            if isinstance(comparison_limits, list) and comparison_limits:
+                return [(pair[0], pair[1]) for pair in comparison_limits]
+    raise ProfileStageError(
+        f"Unsupported PRF y_limits for variable {variable!r} and comparison "
+        f"{comparison!r}."
+    )
 
 
 def _one_dimensional(

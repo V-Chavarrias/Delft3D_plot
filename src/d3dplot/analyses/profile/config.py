@@ -14,6 +14,10 @@ from d3dplot.config.base import ConfigModel
 
 ProfileView: TypeAlias = Literal["profile", "space_time", "section"]
 
+_SUPPORTED_COMPARISONS = frozenset(
+    {"value", "difference_time", "difference_simulation"}
+)
+
 
 class ProfileLineConfig(ConfigModel):
     """One polyline along which quantities are sampled.
@@ -106,9 +110,20 @@ class ProfileConfig(AnalysisConfigBase):
 
     @model_validator(mode="after")
     def validate_profile_options(self) -> ProfileConfig:
-        if self.comparisons != ["value"]:
+        unsupported = [
+            comparison
+            for comparison in self.comparisons
+            if comparison not in _SUPPORTED_COMPARISONS
+        ]
+        if unsupported:
             raise ValueError(
-                "Profile analysis supports only the 'value' comparison for now."
+                "Profile analysis supports the 'value', 'difference_time' and "
+                f"'difference_simulation' comparisons; got {unsupported}."
+            )
+        has_differences = any(comparison != "value" for comparison in self.comparisons)
+        if has_differences and list(self.views) != ["profile"]:
+            raise ValueError(
+                "Difference comparisons are supported only for the 'profile' view."
             )
         if "section" in self.views and self.vertical != "all":
             raise ValueError("The 'section' view requires vertical: all.")

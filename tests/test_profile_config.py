@@ -51,9 +51,22 @@ def test_profile_config_rejects_unknown_view() -> None:
 
 
 @pytest.mark.unit
-def test_profile_config_rejects_difference_comparisons() -> None:
-    with pytest.raises(ValidationError, match="'value' comparison"):
-        _config(comparisons=["value", "difference_time"])
+def test_profile_config_accepts_time_and_simulation_differences() -> None:
+    config = _config(comparisons=["value", "difference_time", "difference_simulation"])
+
+    assert config.comparisons == ["value", "difference_time", "difference_simulation"]
+
+
+@pytest.mark.unit
+def test_profile_config_rejects_unsupported_difference_comparisons() -> None:
+    with pytest.raises(ValidationError, match="difference_simulation_time"):
+        _config(comparisons=["difference_simulation_time"])
+
+
+@pytest.mark.unit
+def test_profile_config_rejects_differences_outside_profile_view() -> None:
+    with pytest.raises(ValidationError, match="'profile' view"):
+        _config(views=["section"], comparisons=["value", "difference_time"])
 
 
 @pytest.mark.unit
