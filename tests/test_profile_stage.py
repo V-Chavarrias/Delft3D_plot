@@ -210,6 +210,9 @@ def test_profile_plot_renders_figures_from_the_process_caches(
         path.parts[path.parts.index("figures") + 1] == project.series
         for path in figures
     )
+    assert all(
+        path.parts[path.parts.index("figures") + 2] == "profile_1" for path in figures
+    )
 
 
 @pytest.mark.integration

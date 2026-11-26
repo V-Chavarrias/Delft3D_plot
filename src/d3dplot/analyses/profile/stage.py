@@ -662,13 +662,17 @@ class _ProfileRun:
             suffix.append(comparison)
         if row is not None:
             suffix.append(f"limits{row + 1}")
+        profile_number = 1 + sum(
+            isinstance(other, ProfileConfig)
+            for other in self._project.analyses[: self._analysis_index]
+        )
         return build_quantity_output_path(
             self._layout,
             OutputArea.FIGURES,
             get_variable_spec(selection.variable).name,
             prefix=(
                 self._project.series,
-                f"analysis-{self._analysis_index}-profile",
+                f"profile_{profile_number}",
                 self._simulation_label,
             ),
             suffix=tuple(suffix),
