@@ -49,6 +49,7 @@ from d3dplot.simulation.inspection import InspectionResult
 from d3dplot.simulation.map_reader import MapReader, MapReaderError
 from d3dplot.simulation.subrun import SubRun
 from d3dplot.simulation.time_axis import TimeEntry
+from d3dplot.simulation.time_utils import format_timestamp_text
 from d3dplot.store import (
     CACHE_SCHEMA_VERSION,
     OutputLayout,
@@ -653,7 +654,9 @@ class _ProfileRun:
         comparison: str = "value",
         row: int | None = None,
     ) -> Path:
-        filename = "all_times.png" if time is None else f"{time:%Y%m%dT%H%M%S}.png"
+        filename = (
+            "all_times.png" if time is None else f"{format_timestamp_text(time)}.png"
+        )
         suffix = [line.name, quote(view_name, safe="-_."), selection.label()]
         if comparison != "value":
             suffix.append(comparison)
@@ -663,7 +666,11 @@ class _ProfileRun:
             self._layout,
             OutputArea.FIGURES,
             get_variable_spec(selection.variable).name,
-            prefix=(f"analysis-{self._analysis_index}-profile", self._simulation_label),
+            prefix=(
+                self._project.series,
+                f"analysis-{self._analysis_index}-profile",
+                self._simulation_label,
+            ),
             suffix=tuple(suffix),
             filename=filename,
         )

@@ -205,7 +205,7 @@ def test_map1d_output_paths_use_canonical_variable_names(
     )
 
     assert figure_path.parents[3].name == canonical_name
-    assert figure_path.name == "20210101T000000_l01.png"
+    assert figure_path.name == "20210101T000000.000000_l01.png"
     assert cache_path.parent.parent.name == canonical_name
 
 
@@ -224,10 +224,10 @@ def test_map1d_axis_limit_sets_are_pairwise() -> None:
 
 
 @pytest.mark.unit
-def test_cache_timestamp_format_omits_zero_fraction() -> None:
+def test_cache_timestamp_format_always_writes_the_fraction() -> None:
     assert (
         format_hydrodynamic_timestamp(datetime(2021, 1, 1, tzinfo=UTC))
-        == "20210101T000000"
+        == "20210101T000000.000000"
     )
     assert (
         format_hydrodynamic_timestamp(datetime(2021, 1, 1, 0, 0, 0, 418435, tzinfo=UTC))

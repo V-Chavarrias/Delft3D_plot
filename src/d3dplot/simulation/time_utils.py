@@ -72,13 +72,17 @@ def decode_cf_time(
     return decoded.astimezone(UTC)
 
 
+def format_timestamp_text(value: datetime) -> str:
+    """Format a timestamp in its own clock as ``yyyymmddTHHMMSS.ffffff``.
+
+    The fraction is always written, so every figure and cache filename has one shape.
+    """
+    return f"{value:%Y%m%dT%H%M%S}.{value.microsecond:06d}"
+
+
 def format_hydrodynamic_timestamp(value: datetime) -> str:
     """Format a UTC hydrodynamic timestamp for cache filenames."""
-    timestamp = value.astimezone(UTC)
-    text = timestamp.strftime("%Y%m%dT%H%M%S")
-    if timestamp.microsecond:
-        text += f".{timestamp.microsecond:06d}"
-    return text
+    return format_timestamp_text(value.astimezone(UTC))
 
 
 def cf_time_units_with_origin(

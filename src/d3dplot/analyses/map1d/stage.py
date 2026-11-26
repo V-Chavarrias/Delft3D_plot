@@ -45,7 +45,7 @@ from d3dplot.plotting.finalize import FigureContext, finalize_figure
 from d3dplot.plotting.time import format_time_label
 from d3dplot.plotting.writers import get_figure_writer
 from d3dplot.simulation.discover import SimulationKind, discover_simulation
-from d3dplot.simulation.time_utils import decode_cf_time
+from d3dplot.simulation.time_utils import decode_cf_time, format_timestamp_text
 from d3dplot.store import (
     OutputLayout,
     OutputWriteGuard,
@@ -827,7 +827,7 @@ def _figure_path(
     *,
     limit_index: int = 0,
 ) -> Path:
-    filename = f"{time:%Y%m%dT%H%M%S}_l{limit_index + 1:02d}.png"
+    filename = f"{format_timestamp_text(time)}_l{limit_index + 1:02d}.png"
     return build_quantity_output_path(
         layout,
         OutputArea.FIGURES,

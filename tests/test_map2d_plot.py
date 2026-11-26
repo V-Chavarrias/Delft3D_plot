@@ -24,6 +24,7 @@ from d3dplot.analyses.map2d.plot import (
     Map2DPlotError,
     Map2DPlotFrame,
     Map2DPlotSource,
+    _colormap_for,
     _figure_path,
     _mask_values_outside_range,
     _movie_path,
@@ -32,6 +33,7 @@ from d3dplot.analyses.map2d.plot import (
     _velocity_scale,
     plot_map2d_group,
 )
+from d3dplot.config.analysis import Comparison
 from d3dplot.config.project import ProjectConfig
 from d3dplot.config.selections import TimesConfig
 from d3dplot.execution.project_runner import _quantity_requests
@@ -104,7 +106,7 @@ def test_map2d_figure_and_movie_paths_use_canonical_names(
 
     assert figure_path.parent.name == "c1"
     assert figure_path.parent.parent.name == canonical_name
-    assert figure_path.name == "20210101T000000_e1.png"
+    assert figure_path.name == "20210101T000000.000000_e1.png"
     assert movie_path.parent.name == "c1"
     assert movie_path.parent.parent.name == canonical_name
     assert movie_path.name == "movie_e1.mp4"
@@ -387,6 +389,25 @@ def test_time_difference_appearance_uses_label_key_and_invalidates_cached_colorm
     assert default_colormap.output_paths == explicitly_configured.output_paths
     assert default_colormap.reused_paths == ()
     assert set(_HOOK_MAP_APPEARANCES) == {("RdYlBu", "difference in bed elevation [m]")}
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("comparison", "expected"),
+    [
+        ("value", "viridis"),
+        ("difference_time", "RdYlBu"),
+        ("difference_simulation", "RdYlGn"),
+        ("difference_simulation_time", "RdYlGn"),
+    ],
+)
+def test_default_colormap_depends_on_comparison(
+    comparison: Comparison, expected: str
+) -> None:
+    analysis = Map2DConfig.model_validate(
+        {"analysis": "map2d", "variables": ["bed_level"]}
+    )
+    assert _colormap_for(analysis, "bed_level", comparison) == expected
 
 
 @pytest.mark.unit

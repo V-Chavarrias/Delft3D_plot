@@ -22,6 +22,7 @@ from d3dplot.analyses.map2d.plot import Map2DPlotError
 from d3dplot.cli import app
 from d3dplot.config import load_config
 from d3dplot.plotting.stage import read_replot_metadata
+from d3dplot.simulation.time_utils import format_timestamp_text
 from d3dplot.store import (
     CACHE_SCHEMA_VERSION,
     OutputLayout,
@@ -198,7 +199,7 @@ def _write_frame(
         / "map2d"
         / "water_depth"
         / "all"
-        / f"{time.strftime('%Y%m%dT%H%M%S')}.nc"
+        / f"{format_timestamp_text(time)}.nc"
     )
     relative_grid = os.path.relpath(grid_path, path.parent).replace("\\", "/")
     with atomic_path(path, guard) as temporary:

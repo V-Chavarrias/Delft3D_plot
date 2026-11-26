@@ -206,6 +206,10 @@ def test_profile_plot_renders_figures_from_the_process_caches(
     figures = [path for path in result.output_paths if path.suffix == ".png"]
     assert figures, "the plot stage should render at least one figure"
     assert all(path.is_file() for path in result.output_paths)
+    assert all(
+        path.parts[path.parts.index("figures") + 1] == project.series
+        for path in figures
+    )
 
 
 @pytest.mark.integration

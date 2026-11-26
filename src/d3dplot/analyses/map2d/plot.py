@@ -59,7 +59,10 @@ from d3dplot.plotting.views.map import MapView, MapViewError
 from d3dplot.plotting.writers import get_figure_writer
 from d3dplot.simulation.partitions import _NETCDF4_READ_LOCK
 from d3dplot.simulation.time_axis import TimeAxis, TimeEntry
-from d3dplot.simulation.time_utils import timezone_from_offset
+from d3dplot.simulation.time_utils import (
+    format_timestamp_text,
+    timezone_from_offset,
+)
 from d3dplot.store import (
     CACHE_SCHEMA_VERSION,
     OutputLayout,
@@ -609,7 +612,7 @@ def plot_map2d_group(
                         kind="figure",
                         schema_version=CACHE_SCHEMA_VERSION,
                         tool_version=__version__,
-                        algorithm_version="map2d-plot-3",
+                        algorithm_version="map2d-plot-4",
                         parameters={
                             "analysis": analysis.model_dump(mode="json"),
                             "comparison": comparison,
@@ -1302,17 +1305,25 @@ def _mask_values_outside_range(
     return masked, int(np.count_nonzero(outside))
 
 
+_DEFAULT_DIFFERENCE_COLORMAPS: dict[str, str] = {
+    "difference_time": "RdYlBu",
+    "difference_simulation": "RdYlGn",
+    "difference_simulation_time": "RdYlGn",
+}
+
+
 def _colormap_for(
     analysis: Map2DConfig,
     variable: str,
     comparison: Comparison,
 ) -> str:
     configured = analysis.map.colormap
+    default_difference = _DEFAULT_DIFFERENCE_COLORMAPS.get(comparison)
     if (
-        comparison in {"difference_time", "difference_simulation_time"}
+        default_difference is not None
         and "colormap" not in analysis.map.model_fields_set
     ):
-        return "RdYlBu"
+        return default_difference
     if isinstance(configured, str):
         return configured
     return next(
@@ -1343,10 +1354,7 @@ def _figure_path(
     color_index: int,
     extent_index: int,
 ) -> Path:
-    timestamp = time.strftime("%Y%m%dT%H%M%S")
-    if time.microsecond:
-        timestamp += f".{time.microsecond:06d}"
-    filename = f"{timestamp}_e{extent_index + 1}.png"
+    filename = f"{format_timestamp_text(time)}_e{extent_index + 1}.png"
     prefix: tuple[str, ...] = (series, "map2d", comparison)
     if "_simulation" in comparison or subject == "all_simulations":
         prefix += (quote(subject, safe="-_."),)

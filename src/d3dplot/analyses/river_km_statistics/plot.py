@@ -73,6 +73,7 @@ from d3dplot.plotting.views.space_time import SpaceTimeView
 from d3dplot.plotting.writers import get_figure_writer
 from d3dplot.simulation.partitions import _NETCDF4_READ_LOCK
 from d3dplot.simulation.time_axis import TimeAxis, TimeEntry, TimeSelectionResult
+from d3dplot.simulation.time_utils import format_hydrodynamic_timestamp
 from d3dplot.store import (
     CACHE_SCHEMA_VERSION,
     OutputLayout,
@@ -3973,11 +3974,7 @@ def _line_path(
     time: datetime | None,
     limit_index: int,
 ) -> Path:
-    time_text = (
-        time.astimezone(UTC).strftime("%Y%m%dT%H%M%S")
-        if time is not None
-        else "all_times"
-    )
+    time_text = format_hydrodynamic_timestamp(time) if time is not None else "all_times"
     prefix: tuple[str, ...] = (quote(series, safe="-_."),)
     if subject == "all_simulations":
         prefix += (quote(subject, safe="-_."),)
@@ -4058,7 +4055,7 @@ def _line_fingerprint(
         kind="figure",
         schema_version=CACHE_SCHEMA_VERSION,
         tool_version=__version__,
-        algorithm_version="river-km-plot-1",
+        algorithm_version="river-km-plot-2",
         parameters=parameters,
         inputs=(
             _configuration_fingerprint(project, analysis),

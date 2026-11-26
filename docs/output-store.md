@@ -80,7 +80,7 @@ Fingerprints use BLAKE2b over deterministic, sorted-key JSON:
 ## Map2d data cache
 
 Processed map values are stored at
-`cache/data/map2d/<canonical-variable>/<selection>/<yyyymmddTHHMMSS>.nc`.
+`cache/data/map2d/<canonical-variable>/<selection>/<yyyymmddTHHMMSS.ffffff>.nc`.
 Variable-specific cache and figure paths use the shared store path helpers, which
 resolve configured aliases to registry names (`h` becomes `water_depth`).
 Each file contains `values(face)` in the configured cache dtype (float32 by
@@ -106,7 +106,7 @@ regridder at `cache/geometry/regrid_<hash>.nc`.
 
 Map images are stored below `figures/<series>/map2d/<comparison>/<subject>/<variable>/`
 in a colour-limit folder `c<k>/` (D113), with the hydrodynamic time and extent index
-(`e<k>`) in the filename, for example `c1/20210101T000000_e1.png`. Map movies are
+(`e<k>`) in the filename, for example `c1/20210101T000000.000000_e1.png`. Map movies are
 `c<k>/movie_e<k>.mp4` in the variable folder. Variable, comparison, plot type and
 colour limits are folders, not filename parts. PNG metadata records the tool version, project/analysis configuration
 hash, figure fingerprint, and task key. Figure fingerprints include the
