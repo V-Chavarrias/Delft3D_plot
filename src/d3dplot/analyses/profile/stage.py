@@ -822,8 +822,12 @@ def _y_limit_rows(
         return [(pair[0], pair[1]) for pair in configured]
     if isinstance(configured, dict):
         variable_limits = configured.get(variable)
+        if variable_limits is None:
+            return [None]
         if isinstance(variable_limits, dict):
             comparison_limits = variable_limits.get(comparison)
+            if comparison_limits is None:
+                return [None]
             if isinstance(comparison_limits, list) and comparison_limits:
                 return [(pair[0], pair[1]) for pair in comparison_limits]
     raise ProfileStageError(

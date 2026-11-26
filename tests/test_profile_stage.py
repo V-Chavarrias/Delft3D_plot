@@ -14,7 +14,11 @@ import pytest
 from d3dplot import __version__
 from d3dplot.analyses.profile import process as profile_process
 from d3dplot.analyses.profile.config import ProfileConfig
-from d3dplot.analyses.profile.stage import ProfileStageError, profile_selections
+from d3dplot.analyses.profile.stage import (
+    ProfileStageError,
+    _y_limit_rows,
+    profile_selections,
+)
 from d3dplot.config.project import ProjectConfig
 from d3dplot.execution.diagnostics import DiagnosticLog
 from d3dplot.execution.project_runner import (
@@ -78,6 +82,22 @@ def test_profile_selections_reject_unsummed_fractions_of_a_sediment_variable() -
 def test_profile_selections_reject_fractions_for_a_non_sediment_variable() -> None:
     with pytest.raises(ProfileStageError, match="no sediment fraction dimension"):
         profile_selections(_profile_config(variables=["water_level"], fractions=[1]))
+
+
+@pytest.mark.unit
+def test_y_limit_rows_use_automatic_limits_for_a_missing_comparison() -> None:
+    configured = {
+        "mean_grain_size_arithmetic": {"difference_time": [[None, None], [-0.03, 0.03]]}
+    }
+
+    assert _y_limit_rows(configured, "mean_grain_size_arithmetic", "value") == [None]
+    assert _y_limit_rows(configured, "bed_level", "difference_time") == [None]
+    assert _y_limit_rows(
+        configured, "mean_grain_size_arithmetic", "difference_time"
+    ) == [
+        (None, None),
+        (-0.03, 0.03),
+    ]
 
 
 def _synthetic_centreline_pli(tmp_path: Path) -> Path:
