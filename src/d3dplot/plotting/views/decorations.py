@@ -51,7 +51,6 @@ class BackgroundTiles:
 
     image: _Array
     extent: Extent
-    attribution: str
     fingerprint: str
 
 
@@ -262,20 +261,6 @@ class MapDecorations:
                     zorder=4,
                 )
 
-        background = self._backgrounds.get(bounds)
-        if background is not None and background.attribution:
-            axes.text(
-                0.01,
-                0.01,
-                background.attribution,
-                color="black",
-                fontsize=5,
-                ha="left",
-                va="bottom",
-                transform=axes.transAxes,
-                zorder=5,
-            )
-
     def _fetch_background(self, bounds: Extent) -> BackgroundTiles | None:
         if self.contextily is None or self.provider is None or self.crs is None:
             return None
@@ -345,7 +330,6 @@ class MapDecorations:
             },
             inputs=(image_hash,),
         )
-        attribution = str(self.provider.get("attribution", ""))
         extent = (
             float(tile_extent[0]),
             float(tile_extent[1]),
@@ -355,7 +339,6 @@ class MapDecorations:
         return BackgroundTiles(
             image=image_array,
             extent=extent,
-            attribution=attribution,
             fingerprint=fingerprint,
         )
 

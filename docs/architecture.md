@@ -1460,7 +1460,7 @@ The map settings form one configuration block, `MapViewConfig` (§10.1), used as
 * **Extents along river km**: one extent per point of a river-km file, of size `2·window_x_m × 2·window_y_m` centred on the point (Matlab `rkm_tol_x/y`).
   * Extent generation and labels share one fixed-format reader, but retain independent file paths as required by D47.
 * **Background tiles** (D42): contextily, an optional extra. dfm_tools deprecated its own `plot_background` in favour of contextily.
-  * Default provider: satellite imagery (`Esri.WorldImagery`); configurable (`background_tiles: {provider: …}`), with the provider's attribution shown on the figure.
+  * Default provider: satellite imagery (`Esri.WorldImagery`); configurable (`background_tiles: {provider: …}`). The provider's attribution text is not drawn on the figure.
   * Tiles are fetched once per extent in the prepare stage, in the model CRS (configured `crs`, since the map files have EPSG 0).
   * Caching: `contextily.set_cache_dir(tiles_cache_dir)` gives a persistent on-disk cache. This replaces Matlab's `earth_tiles` folder (Matlab `plotMapTiles`: `<cache>/<server>/<z>/<x>/<y>.png`). Default: a per-user cache folder. It can point to a shared folder so several users and offline machines reuse downloaded tiles; the write guard allows this one configured folder.
   * Without network and without cached tiles: a warning (V-ENV-002) and the figure is drawn without a background. The provider and attribution are resolved once per map group; tiles are drawn behind the model values.

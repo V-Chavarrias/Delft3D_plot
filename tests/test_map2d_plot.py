@@ -864,7 +864,7 @@ def test_map2d_land_and_independent_river_km_overlays_are_cached_and_read_only(
 
 
 @pytest.mark.unit
-def test_map2d_tiles_use_persistent_cache_and_provider_attribution(
+def test_map2d_tiles_use_persistent_cache_without_attribution_text(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -902,7 +902,7 @@ def test_map2d_tiles_use_persistent_cache_and_provider_attribution(
     assert first.output_paths
     assert first_fetch_count > 0
     assert any(tile_cache.rglob("output.pkl"))
-    assert any("Esri" in text for texts in _HOOK_MAP_TEXTS for text in texts)
+    assert not any("Esri" in text for texts in _HOOK_MAP_TEXTS for text in texts)
 
     second = plot_map2d_group(
         project,
