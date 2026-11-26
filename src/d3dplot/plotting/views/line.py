@@ -47,6 +47,7 @@ class LineView:
         show_legend: bool = True,
         x_limits: AxisLimit | None = None,
         y_limits: AxisLimit | None = None,
+        grid: bool = False,
     ) -> LineView:
         x_values, y_values = _validated_data(x, values, len(labels))
         figure = plt.figure()
@@ -83,6 +84,8 @@ class LineView:
             axes.set_xlim(*x_limits)
         if y_limits is not None:
             axes.set_ylim(*y_limits)
+        if grid:
+            axes.grid(True, which="major")
         if figure_config.x_reversed:
             axes.invert_xaxis()
         figure.tight_layout()

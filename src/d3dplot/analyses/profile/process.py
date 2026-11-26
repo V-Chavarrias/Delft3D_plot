@@ -74,6 +74,28 @@ class ProfileSelection:
         text = json.dumps(self.parameters(), sort_keys=True).encode()
         return hashlib.sha256(text).hexdigest()[:12]
 
+    def folder_label(self) -> str | None:
+        """Return a readable figure folder name, or None for the whole column."""
+        parts: list[str] = []
+        if self.vertical != "all":
+            parts.append(self.vertical.replace("_", "-"))
+        if self.elevation is not None:
+            parts.append(f"at-{_number_text(self.elevation)}")
+        if self.z_range is not None:
+            parts.append("z-" + "_to_".join(_number_text(v) for v in self.z_range))
+        if self.layers is not None:
+            parts.append("layer-" + "-".join(str(index) for index in self.layers))
+        if self.fractions is not None:
+            parts.append("fraction-" + "-".join(str(index) for index in self.fractions))
+        if self.sum_fractions:
+            parts.append("sum-fractions")
+        return "-".join(parts) or None
+
+
+def _number_text(value: float) -> str:
+    # Folder names avoid minus signs and decimal points.
+    return format(value, ".8g").replace("-", "m").replace(".", "p")
+
 
 @dataclass(frozen=True, eq=False)
 class ProfileLine:

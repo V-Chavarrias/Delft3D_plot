@@ -235,7 +235,7 @@ def test_profile_bed_level_shows_the_channel_and_space_time_view(
     profile_figures = [
         path
         for path in result.output_paths
-        if "profile" in path.parts and path.suffix == ".png"
+        if path.parent.name == "value" and path.suffix == ".png"
     ]
     space_time_figures = [
         path
@@ -243,6 +243,7 @@ def test_profile_bed_level_shows_the_channel_and_space_time_view(
         if "space_time" in path.parts and path.suffix == ".png"
     ]
     assert profile_figures
+    assert all(path.parent.parent.name == "section" for path in profile_figures)
     assert len(space_time_figures) == 1
     assert all(path.is_file() for path in result.output_paths)
 

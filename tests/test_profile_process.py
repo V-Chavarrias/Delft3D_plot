@@ -112,7 +112,13 @@ def test_selection_label_separates_layers_and_is_stable() -> None:
 
 
 @pytest.mark.unit
-def test_polyline_without_name_is_used_when_file_holds_one_polyline() -> None:
+def test_selection_folder_label_is_readable_and_none_for_the_whole_column() -> None:
+    assert ProfileSelection(variable="mesh2d_ucx").folder_label() is None
+    layer = ProfileSelection(variable="mesh2d_ucx", layers=(2,))
+    assert layer.folder_label() == "layer-2"
+    z_range = ProfileSelection(variable="mesh2d_ucx", z_range=(-2.5, 0.0))
+    assert z_range.folder_label() == "z-m2p5_to_0"
+
     polylines = [Polyline(name="only", xy=_LINE_XY)]
 
     selected = select_polyline(polylines, line_name="a", polyline_name=None)

@@ -104,6 +104,12 @@ visible grid-face indices as int32, with the extent bounds and fingerprint in
 global attributes. Cross-grid comparisons may cache an xugrid centroid
 regridder at `cache/geometry/regrid_<hash>.nc`.
 
+Profile images are stored below `figures/<series>/profile_<n>/<simulation>/<variable>/<line>/`,
+with the optional selection folder (for example `layer-2`), the comparison folder
+(`value`, `difference_time`, `difference_simulation`) and the time as the filename, for
+example `value/20020101T080255.366337.png`. Section figures use `<line>/section/` and
+space-time figures `<line>/space_time/all_times.png`.
+
 Map images are stored below `figures/<series>/map2d/<comparison>/<subject>/<variable>/`
 in a colour-limit folder `c<k>/` (D113), with the hydrodynamic time and extent index
 (`e<k>`) in the filename, for example `c1/20210101T000000.000000_e1.png`. Map movies are

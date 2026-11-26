@@ -53,6 +53,27 @@ def test_line_view_updates_lines_without_replacing_artists() -> None:
     plt.close(view.figure)
 
 
+def test_line_view_grid_is_opt_in() -> None:
+    kwargs = {
+        "x": np.array([1.0, 2.0]),
+        "values": np.array([[1.0, 2.0]]),
+        "labels": ("one",),
+        "display": "lines",
+        "figure_config": FigureConfig(),
+        "x_label": "km",
+        "y_label": "value",
+        "title": "grid",
+    }
+    default_view = LineView.create(**kwargs)
+    gridded_view = LineView.create(**kwargs, grid=True)
+
+    assert not default_view.axes.xaxis.get_gridlines()[0].get_visible()
+    assert gridded_view.axes.xaxis.get_gridlines()[0].get_visible()
+    assert gridded_view.axes.yaxis.get_gridlines()[0].get_visible()
+    plt.close(default_view.figure)
+    plt.close(gridded_view.figure)
+
+
 def test_line_view_stacked_area_updates_component_vertices() -> None:
     view = LineView.create(
         np.array([1.0, 2.0]),

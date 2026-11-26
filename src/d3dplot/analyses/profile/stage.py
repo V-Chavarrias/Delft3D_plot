@@ -9,7 +9,6 @@ from datetime import datetime
 from itertools import groupby
 from pathlib import Path
 from typing import Any, TypeAlias
-from urllib.parse import quote
 
 import numpy as np
 from matplotlib import dates as mdates
@@ -38,6 +37,7 @@ from d3dplot.config.selections import (
 from d3dplot.config.selections import VerticalSelection as VerticalConfig
 from d3dplot.execution.cache import CacheFingerprintReadError, read_cache_fingerprints
 from d3dplot.paths import resolve_path_preserving_drive
+from d3dplot.plotting.figure_names import axis_label, figure_file_path
 from d3dplot.plotting.finalize import FigureContext, close_figure, finalize_figure
 from d3dplot.plotting.time import format_time_label
 from d3dplot.plotting.views.line import LineView
@@ -49,7 +49,6 @@ from d3dplot.simulation.inspection import InspectionResult
 from d3dplot.simulation.map_reader import MapReader, MapReaderError
 from d3dplot.simulation.subrun import SubRun
 from d3dplot.simulation.time_axis import TimeEntry
-from d3dplot.simulation.time_utils import format_timestamp_text
 from d3dplot.store import (
     CACHE_SCHEMA_VERSION,
     OutputLayout,
@@ -57,7 +56,6 @@ from d3dplot.store import (
     fingerprint_artifact,
     fingerprint_small_input,
 )
-from d3dplot.store.paths import OutputArea, build_quantity_output_path
 from d3dplot.variables.context import QuantityContext
 from d3dplot.variables.engine import QuantityEngine, QuantityEngineError
 from d3dplot.variables.geometry import GridGeometry
@@ -76,11 +74,6 @@ _PROFILE_INPUT_ALGORITHM_VERSION = "1"
 
 # Keyed by (line name, selection index, time index of the simulation).
 ProfileValues: TypeAlias = dict[tuple[str, int, int], np.ndarray]
-
-_DIFFERENCE_LABELS = {
-    "difference_time": "difference in time",
-    "difference_simulation": "difference from reference",
-}
 
 
 class ProfileStageError(ValueError):
@@ -413,23 +406,15 @@ class _ProfileRun:
         if data is None:
             return
         series, labels = _series(data, selection)
-        title = f"{line.name} - {selection.variable} - {self._time_label(entry)}"
-        if comparison in _DIFFERENCE_LABELS:
-            title = (
-                f"{line.name} - {selection.variable} "
-                f"({_DIFFERENCE_LABELS[comparison]}) - {self._time_label(entry)}"
-            )
+        title = self._time_label(entry)
+        y_label = self._label(
+            get_variable_spec(selection.variable).label_key,
+            kind="value" if comparison == "value" else "difference",
+        )
         rows = _y_limit_rows(self._style.y_limits, selection.variable, comparison)
         for row, y_limits in enumerate(rows):
-            path = self._figure_path(
-                line,
-                index,
-                selection,
-                "profile",
-                entry.time,
-                comparison=comparison,
-                row=row if len(rows) > 1 else None,
-            )
+            tail = [comparison] if len(rows) == 1 else [comparison, f"l{row + 1}"]
+            path = self._figure_path(line, index, selection, entry.time, tail)
             if self._reuse(path):
                 continue
             key = (line.name, index, comparison, row)
@@ -441,10 +426,12 @@ class _ProfileRun:
                     labels,
                     display="lines",
                     figure_config=self._style,
-                    x_label="Distance along line (m)",
-                    y_label=selection.variable,
+                    x_label="Distance along line [m]",
+                    y_label=y_label,
                     title=title,
+                    show_legend=len(labels) > 1,
                     y_limits=y_limits,
+                    grid=True,
                 )
                 self._line_views[key] = view
             else:
@@ -508,7 +495,7 @@ class _ProfileRun:
         interfaces: np.ndarray,
         input_fingerprint: str,
     ) -> None:
-        path = self._figure_path(line, index, selection, "section", entry.time)
+        path = self._figure_path(line, index, selection, entry.time, ["section"])
         if self._reuse(path):
             return
         if values.ndim != 2:
@@ -516,7 +503,7 @@ class _ProfileRun:
                 f"PRF section view needs layer-resolved values; {selection.variable!r} "
                 "gave one value per crossing."
             )
-        title = f"{line.name} - {selection.variable} - {self._time_label(entry)}"
+        title = self._time_label(entry)
         key = (line.name, index)
         view = self._section_views.get(key)
         if view is None:
@@ -527,9 +514,11 @@ class _ProfileRun:
                 interfaces,
                 values,
                 colormap="viridis",
-                colorbar_label=selection.variable,
-                x_label="Distance along line (m)",
-                y_label="Elevation (m)",
+                colorbar_label=self._label(
+                    get_variable_spec(selection.variable).label_key
+                ),
+                x_label="Distance along line [m]",
+                y_label=self._label("elevation"),
                 title=title,
             )
             self._section_views[key] = view
@@ -550,7 +539,7 @@ class _ProfileRun:
         for (line_name, index), by_time in self._space_time_values.items():
             line = self._space_time_lines[(line_name, index)]
             selection = self._selections[index]
-            path = self._figure_path(line, index, selection, "space_time", None)
+            path = self._figure_path(line, index, selection, None, ["space_time"])
             if self._reuse(path):
                 continue
             times = sorted(by_time)
@@ -569,10 +558,12 @@ class _ProfileRun:
                 data,
                 figure_config=self._style,
                 colormap="viridis",
-                colorbar_label=selection.variable,
-                x_label="Distance along line (m)",
+                colorbar_label=self._label(
+                    get_variable_spec(selection.variable).label_key
+                ),
+                x_label="Distance along line [m]",
                 y_label="Time",
-                title=f"{line.name} - {selection.variable}",
+                title="",
             )
             locator = mdates.AutoDateLocator()  # type: ignore[no-untyped-call]
             view.axes.yaxis.set_major_locator(locator)
@@ -643,40 +634,43 @@ class _ProfileRun:
     def _time_label(self, entry: TimeEntry) -> str:
         return format_time_label(entry.time, self._style.time_format)
 
+    def _label(self, label_key: str, *, kind: str = "value") -> str:
+        return axis_label(
+            label_key,
+            self._project.language,
+            datum=self._project.labels.vertical_datum,
+            extra_dictionaries=self._project.labels.extra_dictionaries,
+            kind=kind,
+        )
+
     def _figure_path(
         self,
         line: ProfileLine,
         index: int,
         selection: ProfileSelection,
-        view_name: str,
         time: datetime | None,
-        *,
-        comparison: str = "value",
-        row: int | None = None,
+        tail: Sequence[str],
     ) -> Path:
-        filename = (
-            "all_times.png" if time is None else f"{format_timestamp_text(time)}.png"
-        )
-        suffix = [line.name, quote(view_name, safe="-_."), selection.label()]
-        if comparison != "value":
-            suffix.append(comparison)
-        if row is not None:
-            suffix.append(f"limits{row + 1}")
+        selection_folder = selection.folder_label()
+        folders = [
+            line.name,
+            *([] if selection_folder is None else [selection_folder]),
+            *tail,
+        ]
         profile_number = 1 + sum(
             isinstance(other, ProfileConfig)
             for other in self._project.analyses[: self._analysis_index]
         )
-        return build_quantity_output_path(
+        return figure_file_path(
             self._layout,
-            OutputArea.FIGURES,
-            get_variable_spec(selection.variable).name,
             prefix=(
                 self._project.series,
                 f"profile_{profile_number}",
                 self._simulation_label,
             ),
-            suffix=tuple(suffix),
-            filename=filename,
+            variable=get_variable_spec(selection.variable).name,
+            folders=folders,
+            time=time,
         )
 
     def _combined_input_fingerprint(self) -> str:
