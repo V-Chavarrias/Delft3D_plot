@@ -26,7 +26,11 @@ from d3dplot.analyses.map1d.process import (
     read_map1d_river_km_coordinates,
     write_map1d_cache,
 )
-from d3dplot.analyses.map1d.stage import _axis_limit_pairs, _figure_path
+from d3dplot.analyses.map1d.stage import (
+    _axis_limit_pairs,
+    _display_offset,
+    _figure_path,
+)
 from d3dplot.config import load_config
 from d3dplot.config.figure import FigureConfig
 from d3dplot.config.project import SimulationConfig
@@ -189,13 +193,13 @@ def test_map1d_output_paths_use_canonical_variable_names(
 
     figure_path = _figure_path(
         layout,
-        simulation,
-        0,
+        simulation.label,
         variable,
         "w",
         "space_time",
         "value",
         time,
+        zone=UTC,
     )
     cache_path = map1d_cache_path(
         layout,
@@ -205,8 +209,78 @@ def test_map1d_output_paths_use_canonical_variable_names(
     )
 
     assert figure_path.parents[3].name == canonical_name
-    assert figure_path.name == "20210101T000000.000000_l01.png"
+    assert figure_path.name == "20210101T000000.000000.png"
     assert cache_path.parent.parent.name == canonical_name
+
+
+@pytest.mark.unit
+def test_map1d_limit_set_gets_its_own_folder(tmp_path: Path) -> None:
+    layout = OutputLayout(tmp_path / "output")
+    simulation = SimulationConfig(path=tmp_path, label="RTC")
+    time = datetime(2021, 1, 1, tzinfo=UTC)
+
+    figure_path = _figure_path(
+        layout,
+        simulation.label,
+        "water_level",
+        "w",
+        "profile",
+        "value",
+        time,
+        zone=UTC,
+        limit_folder="l2",
+    )
+
+    assert figure_path.parent.name == "l2"
+    assert figure_path.parent.parent.name == "profile"
+    assert figure_path.parents[2].name == "value"
+    assert figure_path.name == "20210101T000000.000000.png"
+
+
+@pytest.mark.unit
+def test_map1d_over_all_times_figure_is_named_all_times(tmp_path: Path) -> None:
+    layout = OutputLayout(tmp_path / "output")
+    simulation = SimulationConfig(path=tmp_path, label="RTC")
+
+    figure_path = _figure_path(
+        layout,
+        simulation.label,
+        "water_level",
+        "w",
+        "space_time",
+        "value",
+        None,
+        zone=UTC,
+    )
+
+    assert figure_path.parent.name == "space_time"
+    assert figure_path.name == "all_times.png"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("units", "expected_offset", "expects_warning"),
+    [
+        ("seconds since 2002-01-01 00:00:00 +01:00", "+01:00", False),
+        ("seconds since 2002-01-01 00:00:00", "+00:00", True),
+    ],
+)
+def test_map1d_display_offset_follows_the_map_time_units(
+    tmp_path: Path,
+    units: str,
+    expected_offset: str,
+    expects_warning: bool,
+) -> None:
+    path = tmp_path / "map.nc"
+    with netCDF4.Dataset(path, mode="w") as dataset:
+        dataset.createDimension("time", 1)
+        time = dataset.createVariable("time", "f8", ("time",))
+        time.units = units
+        time[:] = [3592.0]
+
+    messages: list[str] = []
+    assert _display_offset(path, "RTC", messages) == expected_offset
+    assert bool(messages) is expects_warning
 
 
 @pytest.mark.unit

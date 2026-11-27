@@ -6,7 +6,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, tzinfo
 from hashlib import blake2b
 from importlib import import_module
 from pathlib import Path
@@ -38,6 +38,7 @@ from d3dplot.measurements.map2d import (
     prepare_map_measurement,
     scale_map_measurement,
 )
+from d3dplot.plotting.figure_names import difference_subject, figure_file_path
 from d3dplot.plotting.finalize import (
     FigureContext,
     FigureHookError,
@@ -59,10 +60,7 @@ from d3dplot.plotting.views.map import MapView, MapViewError
 from d3dplot.plotting.writers import get_figure_writer
 from d3dplot.simulation.partitions import _NETCDF4_READ_LOCK
 from d3dplot.simulation.time_axis import TimeAxis, TimeEntry
-from d3dplot.simulation.time_utils import (
-    format_timestamp_text,
-    timezone_from_offset,
-)
+from d3dplot.simulation.time_utils import figure_timezone
 from d3dplot.store import (
     CACHE_SCHEMA_VERSION,
     OutputLayout,
@@ -207,7 +205,9 @@ def plot_map2d_group(
     hooks = project.effective_hooks(analysis)
     hook_fingerprints = _hook_fingerprints(hooks)
     output_subject = (
-        f"{source.label}_vs_{target_source.label}" if uses_reference else source.label
+        difference_subject(source.label, target_source.label)
+        if uses_reference
+        else source.label
     )
     output_layout = target_source.layout
     output_guard = target_source.guard
@@ -234,6 +234,19 @@ def plot_map2d_group(
         messages.append(message)
         if diagnostic is not None:
             diagnostic(message)
+
+    own_offset = _source_offset(source, report)
+    reference_offset = (
+        _source_offset(target_source, report) if uses_reference else own_offset
+    )
+    display_zone = figure_timezone(
+        own_offset=own_offset,
+        reference_offset=reference_offset,
+        explicit_time_zone=(
+            None if project.time_zone is None else str(project.time_zone)
+        ),
+        compares_simulations=uses_reference,
+    )
 
     current_dataset: UgridDataset | None = None
     reference_dataset: UgridDataset | None = None
@@ -419,15 +432,11 @@ def plot_map2d_group(
                 if use_reference_time and paired_reference is not None
                 else frame
             )
-            display_source = target_source if use_reference_time else source
             display_time = (
                 display_frame.morph_time
                 if analysis.times.axis == "morphological"
                 and display_frame.morph_time is not None
                 else output_time
-            )
-            display_zone = timezone_from_offset(
-                display_source.model_time_zone or "+00:00"
             )
             display_time = display_time.astimezone(display_zone)
             scale = figure_config.display_scale
@@ -571,7 +580,8 @@ def plot_map2d_group(
                         output_subject,
                         variable,
                         comparison,
-                        output_time.astimezone(display_zone),
+                        output_time,
+                        display_zone,
                         color_index,
                         window.index,
                     )
@@ -1010,7 +1020,7 @@ def _match_reference_frames(
     candidate_entries = entries_for(candidate_frames)
     candidate_axis = TimeAxis(
         candidate_entries,
-        candidate_source.model_time_zone or "+00:00",
+        _source_offset(candidate_source, report),
         morphology_available=any(
             entry.morph_time is not None for entry in candidate_entries
         ),
@@ -1344,6 +1354,14 @@ def _model_crs(grid: Any, configured_crs: str | None) -> str | None:
     return str(to_string()) if callable(to_string) else str(grid_crs)
 
 
+def _source_offset(source: Map2DPlotSource, report: DiagnosticSink) -> str:
+    """Return a map source's UTC offset; without one, warn and use UTC."""
+    if source.model_time_zone is not None:
+        return source.model_time_zone
+    report(f"map2d {source.label}: no UTC offset is known; figures use UTC.")
+    return "+00:00"
+
+
 def _figure_path(
     layout: OutputLayout,
     series: str,
@@ -1351,20 +1369,18 @@ def _figure_path(
     variable: str,
     comparison: _Comparison,
     time: datetime,
+    zone: tzinfo,
     color_index: int,
     extent_index: int,
 ) -> Path:
-    filename = f"{format_timestamp_text(time)}_e{extent_index + 1}.png"
-    prefix: tuple[str, ...] = (series, "map2d", comparison)
-    if "_simulation" in comparison or subject == "all_simulations":
-        prefix += (quote(subject, safe="-_."),)
-    return build_quantity_output_path(
+    return figure_file_path(
         layout,
-        OutputArea.FIGURES,
-        variable,
-        prefix=prefix,
-        suffix=(f"c{color_index + 1}",),
-        filename=filename,
+        prefix=(series, "map2d"),
+        variable=variable,
+        folders=(quote(subject, safe="-_."), comparison, f"c{color_index + 1}"),
+        time=time,
+        zone=zone,
+        filename_suffix=f"_e{extent_index + 1}",
     )
 
 
@@ -1377,17 +1393,13 @@ def _movie_path(
     color_index: int,
     extent_index: int,
 ) -> Path:
-    filename = f"movie_e{extent_index + 1}.mp4"
-    parts: tuple[str, ...] = (series, "map2d", comparison)
-    if "_simulation" in comparison or subject == "all_simulations":
-        parts += (quote(subject, safe="-_."),)
     return build_quantity_output_path(
         layout,
         OutputArea.FIGURES,
         variable,
-        prefix=parts,
-        suffix=(f"c{color_index + 1}",),
-        filename=filename,
+        prefix=(series, "map2d"),
+        suffix=(quote(subject, safe="-_."), comparison, f"c{color_index + 1}"),
+        filename=f"movie_e{extent_index + 1}.mp4",
     )
 
 

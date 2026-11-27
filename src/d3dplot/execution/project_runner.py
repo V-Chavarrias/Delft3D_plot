@@ -324,6 +324,9 @@ class _ReferenceSource:
     time_axis: TimeAxis
     entries: tuple[TimeEntry, ...]
     values: ProfileValues
+    layout: OutputLayout
+    guard: OutputWriteGuard
+    simulation_label: str
 
 
 def _profile_reference_sources(
@@ -402,7 +405,12 @@ def _profile_reference_sources(
             failed = True
             continue
         sources[analysis_index] = _ReferenceSource(
-            time_axis, tuple(selection.entries), values
+            time_axis,
+            tuple(selection.entries),
+            values,
+            layout,
+            guard,
+            reference_config.label,
         )
     if failed:
         raise ValueError("PRF plotting failed; see the diagnostics log.")
@@ -425,6 +433,10 @@ def _profile_reference(
         return ProfileReference(
             values=source.values,
             time_indices={entry.time_index: entry.time_index for entry in own_entries},
+            source_utc_offset=source.time_axis.source_utc_offset,
+            layout=source.layout,
+            guard=source.guard,
+            simulation_label=source.simulation_label,
         )
     own_axis = TimeAxis(
         own_entries,
@@ -460,7 +472,14 @@ def _profile_reference(
             f"PRF {analysis.analysis!r} difference_simulation: {unpaired} selected "
             "output(s) have no reference time within tolerance and are skipped."
         )
-    return ProfileReference(values=source.values, time_indices=time_indices)
+    return ProfileReference(
+        values=source.values,
+        time_indices=time_indices,
+        source_utc_offset=source.time_axis.source_utc_offset,
+        layout=source.layout,
+        guard=source.guard,
+        simulation_label=source.simulation_label,
+    )
 
 
 def _process_profile_analyses(

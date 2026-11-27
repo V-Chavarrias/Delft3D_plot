@@ -67,6 +67,9 @@ zero-based NetCDF array indices internally.
 the map time units have no offset and the MDU does not explicitly set `Tzone`.
 Map time units take precedence over explicit MDU `Tzone`, which takes
 precedence over the project setting. Conflicts are reported as `V-TIME-002`.
+For figures that compare simulations, an explicit `time_zone` sets the displayed zone;
+without it, the reference simulation's offset is used. If no offset is known at all, the
+figure is shown in UTC with a warning.
 `check_corrupt_partitions` defaults to `false`. When `false`, the inspection reads
 the time of one partition per sub-run and does not open every partition to look
 for corrupt files, so `on_corrupt_output` has no effect until it is set to `true`.
@@ -96,9 +99,37 @@ extra (`d3dplot[movies]`).
 A `profile` analysis accepts `comparisons: [value, difference_time, difference_simulation]`.
 `difference_time` subtracts the first selected time, and `difference_simulation`
 subtracts the reference simulation (`reference_simulation`) at the matching time. The
-differences are available for the `profile` view only. `figure.show_initial: false`
-omits the first selected time, and `figure.y_limits` (a list, or a dictionary keyed by
-variable and comparison) sets the vertical axis of each profile figure.
+differences are available for the `profile` and `section` views; `difference_simulation`
+is not available for `section`. `figure.show_initial` defaults to `false`, so the
+first selected time is omitted; set it to `true` to include it. It applies to the `profile`
+view only and has no effect on `section`. `figure.y_limits` (a list, or a dictionary keyed by
+variable and comparison) sets the vertical axis of each profile figure. A list with
+several rows draws one figure per row, in its own `l<n>/` folder.
+
+A `section` view (`views: [section]`, with `vertical: all`) draws the layers as coloured
+bands along the line. Sediment variables use the bed layers, other variables the water
+column. `figure.color_limits` sets the colour scale per variable and comparison, and
+takes one row per figure (a single row applies to every `y_limits` row). Example:
+
+```yaml
+figure:
+  y_limits: [[null, null], [-2, 6]]
+  color_limits:
+    mean_grain_size_arithmetic:
+      difference_time: [[-0.03, 0.03]]
+```
+
+Limit rows are checked when the configuration is loaded:
+
+- An empty row list (`[]`, or an empty comparison list in the dictionary form) is
+  rejected (V-CFG-001). Use `null` for automatic limits.
+- A section figure pairs `y_limits` and `color_limits` one row per figure, for every
+  variable and comparison. A single row on either side applies to all figures.
+  Otherwise the counts must match; a mismatch is an error (V-CFG-005) and stops the run.
+- A dictionary form with no entry for a variable or comparison that the analysis uses
+  gets automatic limits for it. Validation reports this as a warning (V-CFG-006) that
+  names the missing entries. A flat list applies to every variable and comparison, so
+  it never triggers V-CFG-006.
 
 `language` selects English (`en`), Dutch (`nl`), or Spanish (`es`) labels.
 `labels.vertical_datum` controls the datum shown for reference elevations, and

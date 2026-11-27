@@ -16,7 +16,9 @@ from d3dplot.analyses.profile import process as profile_process
 from d3dplot.analyses.profile.config import ProfileConfig
 from d3dplot.analyses.profile.stage import (
     ProfileStageError,
-    _y_limit_rows,
+    _check_figure_folders_are_unique,
+    _limit_rows,
+    _paired_limits,
     profile_selections,
 )
 from d3dplot.config.project import ProjectConfig
@@ -79,25 +81,91 @@ def test_profile_selections_reject_unsummed_fractions_of_a_sediment_variable() -
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    ("second_line", "collides"), [("section", True), ("other", False)]
+)
+def test_profile_analyses_writing_the_same_figure_folders_are_rejected(
+    tmp_path: Path,
+    second_line: str,
+    collides: bool,
+) -> None:
+    project = ProjectConfig.model_validate(
+        {
+            "simulations": [{"path": str(tmp_path / "r001"), "label": "r001"}],
+            "output": {"root": str(tmp_path / "output")},
+            "analyses": [
+                {
+                    "analysis": "profile",
+                    "variables": ["water_level"],
+                    "lines": [{"name": "section", "file": "a.pli"}],
+                },
+                {
+                    "analysis": "profile",
+                    "variables": ["water_level"],
+                    "lines": [{"name": second_line, "file": "b.pli"}],
+                },
+            ],
+        }
+    )
+    analysis = project.analyses[1]
+    assert isinstance(analysis, ProfileConfig)
+
+    def check() -> None:
+        _check_figure_folders_are_unique(
+            project, analysis, 1, profile_selections(analysis)
+        )
+
+    if collides:
+        with pytest.raises(ProfileStageError, match="same folders"):
+            check()
+    else:
+        check()
+
+
+@pytest.mark.unit
 def test_profile_selections_reject_fractions_for_a_non_sediment_variable() -> None:
     with pytest.raises(ProfileStageError, match="no sediment fraction dimension"):
         profile_selections(_profile_config(variables=["water_level"], fractions=[1]))
 
 
 @pytest.mark.unit
-def test_y_limit_rows_use_automatic_limits_for_a_missing_comparison() -> None:
+def test_limit_rows_use_automatic_limits_for_a_missing_comparison() -> None:
     configured = {
         "mean_grain_size_arithmetic": {"difference_time": [[None, None], [-0.03, 0.03]]}
     }
 
-    assert _y_limit_rows(configured, "mean_grain_size_arithmetic", "value") == [None]
-    assert _y_limit_rows(configured, "bed_level", "difference_time") == [None]
-    assert _y_limit_rows(
-        configured, "mean_grain_size_arithmetic", "difference_time"
+    assert _limit_rows(
+        configured, "mean_grain_size_arithmetic", "value", option="y_limits"
+    ) == [None]
+    assert _limit_rows(
+        configured, "bed_level", "difference_time", option="y_limits"
+    ) == [None]
+    assert _limit_rows(
+        configured, "mean_grain_size_arithmetic", "difference_time", option="y_limits"
     ) == [
         (None, None),
         (-0.03, 0.03),
     ]
+
+
+@pytest.mark.unit
+def test_limit_rows_accept_null_rows_as_automatic_limits() -> None:
+    configured = {"v": {"difference_time": [None, [-0.03, 0.03]]}}
+
+    assert _limit_rows(configured, "v", "difference_time", option="color_limits") == [
+        None,
+        (-0.03, 0.03),
+    ]
+
+
+@pytest.mark.unit
+def test_paired_limits_broadcast_one_row_and_reject_mismatched_counts() -> None:
+    assert _paired_limits([(0.0, 6.0)], [None, (-1.0, 1.0)]) == [
+        ((0.0, 6.0), None),
+        ((0.0, 6.0), (-1.0, 1.0)),
+    ]
+    with pytest.raises(ProfileStageError, match="same number of rows"):
+        _paired_limits([None, None, None], [None, None])
 
 
 def _synthetic_centreline_pli(tmp_path: Path) -> Path:
@@ -211,7 +279,7 @@ def test_profile_plot_renders_figures_from_the_process_caches(
         for path in figures
     )
     assert all(
-        path.parts[path.parts.index("figures") + 2] == "profile_1" for path in figures
+        path.parts[path.parts.index("figures") + 2] == "profile" for path in figures
     )
 
 
@@ -321,4 +389,8 @@ def test_profile_differences_compare_times_and_the_reference_simulation(
         path for path in figures if "difference_simulation" in path
     ]
     assert difference_simulation
-    assert all("r002" in path for path in difference_simulation)
+    reference_root = tmp_path / "output" / "r001"
+    assert all(
+        Path(path).is_relative_to(reference_root) and "r002_vs_r001" in path
+        for path in difference_simulation
+    )

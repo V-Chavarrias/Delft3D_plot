@@ -121,9 +121,15 @@ class ProfileConfig(AnalysisConfigBase):
                 f"'difference_simulation' comparisons; got {unsupported}."
             )
         has_differences = any(comparison != "value" for comparison in self.comparisons)
-        if has_differences and list(self.views) != ["profile"]:
+        if has_differences and not set(self.views) <= {"profile", "section"}:
             raise ValueError(
-                "Difference comparisons are supported only for the 'profile' view."
+                "Difference comparisons are supported only for the 'profile' and "
+                "'section' views."
+            )
+        if "section" in self.views and "difference_simulation" in self.comparisons:
+            raise ValueError(
+                "The 'section' view supports the 'value' and 'difference_time' "
+                "comparisons only."
             )
         if "section" in self.views and self.vertical != "all":
             raise ValueError("The 'section' view requires vertical: all.")

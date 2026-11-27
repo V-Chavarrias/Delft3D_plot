@@ -25,6 +25,7 @@ from d3dplot.analyses.river_km_statistics.plot import (
     _line_path,
     _plot_axis_times,
     _source_statistic_values,
+    _variant_folders,
     statistic_values,
 )
 from d3dplot.analyses.river_km_statistics.process import (
@@ -139,23 +140,23 @@ def test_river_km_output_paths_use_canonical_variable_names(
         "mean",
         "value",
         None,
-        0,
+        UTC,
     )
 
     assert cache_path.parents[1].name == canonical_name
     assert figure_path.parents[2].name == canonical_name
-    assert figure_path.name == "all_times_l01.png"
+    assert figure_path.name == "all_times.png"
 
 
 @pytest.mark.unit
 @pytest.mark.parametrize(
-    ("limit_index", "expected_suffix"),
-    ((0, "_l01.png"), (9, "_l10.png")),
+    ("limit_index", "expected_folder"),
+    ((0, "l01"), (9, "l10")),
 )
-def test_line_path_zero_pads_limit_index(
+def test_line_path_puts_limit_sets_in_zero_padded_folders(
     tmp_path: Path,
     limit_index: int,
-    expected_suffix: str,
+    expected_folder: str,
 ) -> None:
     path = _line_path(
         OutputLayout(tmp_path),
@@ -168,10 +169,18 @@ def test_line_path_zero_pads_limit_index(
         "mean",
         "simulation",
         None,
-        limit_index,
+        UTC,
+        _variant_folders("l", limit_index, 10),
     )
 
-    assert path.name.endswith(expected_suffix)
+    assert path.parent.name == expected_folder
+    assert path.name == "all_times.png"
+
+
+@pytest.mark.unit
+def test_variant_folders_exist_only_for_several_variants() -> None:
+    assert _variant_folders("l", 0, 1) == ()
+    assert _variant_folders("c", 1, 3) == ("c02",)
 
 
 @pytest.mark.unit

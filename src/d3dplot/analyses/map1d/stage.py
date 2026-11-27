@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, tzinfo
 from pathlib import Path
 from urllib.parse import quote
 
@@ -41,17 +41,22 @@ from d3dplot.analyses.river_km_statistics.measurements import (
 )
 from d3dplot.config.figure import FigureConfig
 from d3dplot.config.project import ProjectConfig, SimulationConfig
+from d3dplot.plotting.figure_names import difference_subject, figure_file_path
 from d3dplot.plotting.finalize import FigureContext, finalize_figure
 from d3dplot.plotting.time import format_time_label
 from d3dplot.plotting.writers import get_figure_writer
 from d3dplot.simulation.discover import SimulationKind, discover_simulation
-from d3dplot.simulation.time_utils import decode_cf_time, format_timestamp_text
+from d3dplot.simulation.time_utils import (
+    decode_cf_time,
+    figure_timezone,
+    offset_text,
+    timezone_from_cf_units,
+)
 from d3dplot.store import (
     OutputLayout,
     OutputWriteGuard,
     initialize_output_root,
 )
-from d3dplot.store.paths import OutputArea, build_quantity_output_path
 from d3dplot.variables.registry import UnknownVariableError, get_variable_spec
 
 DiagnosticSink = Callable[[str], None]
@@ -115,7 +120,7 @@ def _run_map1d_stage(
     messages: list[str] = []
     cache_paths: list[Path] = []
     reused_cache_paths: list[Path] = []
-    for analysis_index, configured in enumerate(project.analyses):
+    for configured in project.analyses:
         if not isinstance(configured, Map1DConfig):
             continue
         if analysis_name is not None and analysis_name != configured.analysis:
@@ -127,7 +132,6 @@ def _run_map1d_stage(
                 project,
                 simulation,
                 configured,
-                analysis_index,
                 diagnostic=diagnostic,
                 render_figures=render_figures,
             )
@@ -149,7 +153,6 @@ def _plot_analysis(
     project: ProjectConfig,
     simulation: SimulationConfig,
     analysis: Map1DConfig,
-    analysis_index: int,
     *,
     diagnostic: DiagnosticSink | None,
     render_figures: bool,
@@ -258,6 +261,7 @@ def _plot_analysis(
                     diagnostic(messages[-1])
                 continue
             reference_values: np.ndarray | None = None
+            difference_target: tuple[OutputLayout, OutputWriteGuard] | None = None
             if any(
                 comparison
                 in {
@@ -271,6 +275,7 @@ def _plot_analysis(
                     if not analysis.include_reference_in_differences:
                         continue
                     reference_values = values
+                    difference_target = (layout, guard)
                 else:
                     reference_path, reference_mdu, reference_fallback = (
                         _map_path_for_simulation(reference)
@@ -323,8 +328,20 @@ def _plot_analysis(
                         ),
                         project.reprocess,
                     )
+                    difference_target = (reference_layout, reference_guard)
                     if reference_message is not None:
                         messages.append(reference_message)
+            own_offset = _display_offset(map_path, simulation.label, messages)
+            reference_offset = (
+                own_offset
+                if reference.label == simulation.label
+                else _display_offset(
+                    _map_path_for_simulation(reference)[0], reference.label, messages
+                )
+            )
+            explicit_time_zone = (
+                None if project.time_zone is None else str(project.time_zone)
+            )
             for comparison in analysis.comparisons:
                 if comparison not in {
                     "value",
@@ -342,19 +359,39 @@ def _plot_analysis(
                         None if reference_values is None else reference_values[0]
                     ),
                 )
-                for limit_index, (x_limits, y_limits) in enumerate(
-                    _axis_limit_pairs(style, variable, comparison)
-                ):
+                limit_pairs = _axis_limit_pairs(style, variable, comparison)
+                zone = figure_timezone(
+                    own_offset=own_offset,
+                    reference_offset=reference_offset,
+                    explicit_time_zone=explicit_time_zone,
+                    compares_simulations=comparison.startswith("difference_simulation"),
+                )
+                display_times = tuple(time.astimezone(zone) for time in selected_times)
+                output_layout, output_guard, output_subject = (
+                    layout,
+                    guard,
+                    simulation.label,
+                )
+                if comparison.startswith("difference_simulation"):
+                    if difference_target is None:
+                        raise AssertionError(
+                            "Simulation comparisons require a reference simulation."
+                        )
+                    output_layout, output_guard = difference_target
+                    output_subject = difference_subject(
+                        simulation.label, reference.label
+                    )
+                for limit_index, (x_limits, y_limits) in enumerate(limit_pairs):
                     _render_map1d_views(
                         project=project,
                         analysis=analysis,
                         simulation=simulation,
-                        analysis_index=analysis_index,
                         variable=variable,
                         chain=chain,
                         chain_name=chain_name,
                         chain_title=chain_title,
-                        selected_times=selected_times,
+                        selected_times=display_times,
+                        zone=zone,
                         compared=compared,
                         comparison=comparison,
                         view_names=analysis.views,
@@ -362,10 +399,13 @@ def _plot_analysis(
                         x_label=x_label,
                         x_limits=x_limits,
                         y_limits=y_limits,
-                        limit_index=limit_index,
+                        limit_folder=(
+                            None if len(limit_pairs) == 1 else f"l{limit_index + 1}"
+                        ),
                         measurements=measurements,
-                        layout=layout,
-                        guard=guard,
+                        layout=output_layout,
+                        guard=output_guard,
+                        output_subject=output_subject,
                         fingerprint=fingerprint,
                         hooks=hooks,
                         outputs=outputs,
@@ -390,12 +430,12 @@ def _render_map1d_views(
     project: ProjectConfig,
     analysis: Map1DConfig,
     simulation: SimulationConfig,
-    analysis_index: int,
     variable: str,
     chain: Map1DChain,
     chain_name: str,
     chain_title: str,
     selected_times: tuple[datetime, ...],
+    zone: tzinfo,
     compared: np.ndarray,
     comparison: str,
     view_names: Sequence[str],
@@ -403,10 +443,11 @@ def _render_map1d_views(
     x_label: str,
     x_limits: tuple[float | None, float | None] | None,
     y_limits: tuple[float | None, float | None] | None,
-    limit_index: int,
+    limit_folder: str | None,
     measurements: dict[str, ProfileMeasurement],
     layout: OutputLayout,
     guard: OutputWriteGuard,
+    output_subject: str,
     fingerprint: str,
     hooks: list[str],
     outputs: list[Path],
@@ -417,14 +458,14 @@ def _render_map1d_views(
             for time, row in zip(selected_times, compared, strict=True):
                 output_path = _figure_path(
                     layout,
-                    simulation,
-                    analysis_index,
+                    output_subject,
                     variable,
                     chain_name,
                     view_name,
                     comparison,
                     time,
-                    limit_index=limit_index,
+                    zone=zone,
+                    limit_folder=limit_folder,
                 )
                 if output_path.exists() and project.replot == "never":
                     reused.append(output_path)
@@ -473,14 +514,14 @@ def _render_map1d_views(
         elif view_name == "all_times":
             output_path = _figure_path(
                 layout,
-                simulation,
-                analysis_index,
+                output_subject,
                 variable,
                 chain_name,
                 view_name,
                 comparison,
-                selected_times[0],
-                limit_index=limit_index,
+                None,
+                zone=zone,
+                limit_folder=limit_folder,
             )
             if output_path.exists() and project.replot == "never":
                 reused.append(output_path)
@@ -515,14 +556,14 @@ def _render_map1d_views(
         elif view_name == "space_time":
             output_path = _figure_path(
                 layout,
-                simulation,
-                analysis_index,
+                output_subject,
                 variable,
                 chain_name,
                 view_name,
                 comparison,
-                selected_times[0],
-                limit_index=limit_index,
+                None,
+                zone=zone,
+                limit_folder=limit_folder,
             )
             if output_path.exists() and project.replot == "never":
                 reused.append(output_path)
@@ -642,6 +683,20 @@ def _read_times(path: Path) -> tuple[datetime, ...]:
     if any(value is None for value in decoded):
         raise Map1DProcessError(f"map1d map contains undecodable time values: {path}.")
     return tuple(value for value in decoded if value is not None)
+
+
+def _display_offset(path: Path, label: str, messages: list[str]) -> str:
+    """Return a map's UTC offset; without units offset, warn and use UTC."""
+    with netCDF4.Dataset(path, mode="r") as dataset:
+        units = str(getattr(dataset.variables["time"], "units", ""))
+    zone = timezone_from_cf_units(units)
+    if zone is None:
+        messages.append(
+            f"map1d {label}: the time units of {path} have no UTC offset; "
+            "figures use UTC."
+        )
+        return "+00:00"
+    return offset_text(zone)
 
 
 def _map_path_for_simulation(
@@ -817,28 +872,26 @@ def _location_for_variable(path: Path, variable: str) -> str:
 
 def _figure_path(
     layout: OutputLayout,
-    simulation: SimulationConfig,
-    analysis_index: int,
+    simulation_folder: str,
     variable: str,
     chain_name: str,
     view: str,
     comparison: str,
-    time: datetime,
+    time: datetime | None,
     *,
-    limit_index: int = 0,
+    zone: tzinfo,
+    limit_folder: str | None = None,
 ) -> Path:
-    filename = f"{format_timestamp_text(time)}_l{limit_index + 1:02d}.png"
-    return build_quantity_output_path(
+    folders = [chain_name, quote(comparison, safe="-_."), quote(view, safe="-_.")]
+    if limit_folder is not None:
+        folders.append(limit_folder)
+    return figure_file_path(
         layout,
-        OutputArea.FIGURES,
-        variable,
-        prefix=(f"analysis-{analysis_index}-map1d", simulation.label),
-        suffix=(
-            chain_name,
-            quote(comparison, safe="-_."),
-            quote(view, safe="-_."),
-        ),
-        filename=filename,
+        prefix=("map1d", simulation_folder),
+        variable=variable,
+        folders=folders,
+        time=time,
+        zone=zone,
     )
 
 

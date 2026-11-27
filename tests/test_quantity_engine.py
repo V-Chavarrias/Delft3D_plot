@@ -17,7 +17,11 @@ from d3dplot.simulation.map_reader import MapReader, MapReadResult
 from d3dplot.simulation.time_axis import TimeAxis, TimeEntry
 from d3dplot.store import OutputLayout
 from d3dplot.variables.context import QuantityContext, QuantityRequest
-from d3dplot.variables.engine import QuantityEngine, QuantityEngineError
+from d3dplot.variables.engine import (
+    QuantityEngine,
+    QuantityEngineError,
+    stack_bed_interfaces,
+)
 from d3dplot.variables.geometry import GridGeometry
 from d3dplot.variables.registry import (
     SelectionTarget,
@@ -414,6 +418,19 @@ def test_geometric_grain_size_uses_matlab_one_based_bed_layer_selection() -> Non
     )
     with pytest.raises(ValueError, match="one-based positive"):
         QuantityRequest("dg", layers=(0,))
+
+
+@pytest.mark.unit
+def test_bed_layer_interfaces_stack_downwards_from_the_bed_level() -> None:
+    interfaces = stack_bed_interfaces(
+        bed_level=np.array([0.0, -1.0]),
+        thickness=np.array([[1.0, 2.0], [0.5, 0.5]]),
+    )
+
+    np.testing.assert_allclose(
+        interfaces,
+        [[0.0, -1.0, -3.0], [-1.0, -1.5, -2.0]],
+    )
 
 
 def _two_face_geometry() -> GridGeometry:

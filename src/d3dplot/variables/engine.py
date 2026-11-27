@@ -26,6 +26,7 @@ from d3dplot.variables.registry import (
     VariableLocation,
     VariableSpec,
     _build_registry,
+    get_variable_spec,
     suggest_variable_names,
 )
 from d3dplot.variables.sampling import GridSampling, Sampling, SamplingPlan
@@ -44,6 +45,20 @@ _VERTICAL_INTERFACES_SPEC = VariableSpec(
     units="m",
     label_key="elevation",
 )
+
+
+def stack_bed_interfaces(bed_level: _Array, thickness: _Array) -> _Array:
+    """Stack bed layers down from the bed level, shape (faces, layers + 1).
+
+    Layer 0 is the top layer, so interface k is the bed level minus the thickness
+    of layers 0 to k-1 (as in the EHY reference for D-Flow FM bed layers).
+    """
+    bed = np.asarray(bed_level, dtype=np.float64)
+    thk = np.asarray(thickness, dtype=np.float64)
+    depth = np.concatenate(
+        [np.zeros((thk.shape[0], 1)), np.cumsum(thk, axis=1)], axis=1
+    )
+    return bed[:, np.newaxis] - depth
 
 
 class QuantityReaderSession(Protocol):
@@ -410,6 +425,14 @@ class QuantityTimeSession:
     def vertical_interfaces(self) -> _Array:
         """Read layer interfaces needed by vertical reductions."""
         return self._read_raw(_VERTICAL_INTERFACES_SPEC, ("vertical_interfaces",))
+
+    def bed_layer_interfaces(self) -> _Array:
+        """Read the bed-layer interfaces from the bed level down."""
+        bed_level = self._read_raw(get_variable_spec("bed_level"), ("bed_level",))
+        thickness = self._read_raw(
+            get_variable_spec("layer_thickness"), ("layer_thickness",)
+        )
+        return stack_bed_interfaces(bed_level, thickness)
 
     def _resolve_input_names(
         self,

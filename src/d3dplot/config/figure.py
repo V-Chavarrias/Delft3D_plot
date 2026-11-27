@@ -7,7 +7,14 @@ from datetime import date
 from pathlib import Path
 from typing import Literal, TypeAlias
 
-from pydantic import Field, PositiveFloat, PositiveInt, field_validator, model_validator
+from pydantic import (
+    Field,
+    PositiveFloat,
+    PositiveInt,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 from d3dplot.config.base import ConfigModel, reject_unimplemented_fields
 
@@ -171,9 +178,16 @@ class FigureConfig(ConfigModel):
         default=None,
         description="Optional y-axis limits, one pair per figure.",
     )
+    color_limits: ColorLimits | list[ColorLimitSet] | None = Field(
+        default=None,
+        description=(
+            "Colour-scale limits of section figures: one set per figure, or per "
+            "variable and comparison; null is automatic."
+        ),
+    )
     show_initial: bool = Field(
-        default=True,
-        description="Whether line plots include the initial value.",
+        default=False,
+        description="Whether profile plots include the initial time.",
     )
     staircase: bool = Field(
         default=False,
@@ -198,3 +212,22 @@ class FigureConfig(ConfigModel):
     def reject_unimplemented(self) -> FigureConfig:
         reject_unimplemented_fields(self, ["display_name"])
         return self
+
+    @field_validator("y_limits", "color_limits")
+    @classmethod
+    def reject_empty_limit_rows(cls, value: object, info: ValidationInfo) -> object:
+        """An empty row list would silently produce no figures."""
+        if isinstance(value, list) and not value:
+            raise ValueError(
+                f"{info.field_name} must have at least one row; "
+                "use null for automatic limits."
+            )
+        if isinstance(value, dict):
+            for variable, comparisons in value.items():
+                for comparison, rows in comparisons.items():
+                    if not rows:
+                        raise ValueError(
+                            f"{info.field_name}.{variable}.{comparison} must have at "
+                            "least one row; use null for automatic limits."
+                        )
+        return value

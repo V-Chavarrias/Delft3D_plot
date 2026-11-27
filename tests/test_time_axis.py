@@ -12,6 +12,7 @@ from d3dplot.config.selections import IndicesSelection, TimeRange, TimesConfig
 from d3dplot.simulation.time_axis import TimeAxis, TimeEntry
 from d3dplot.simulation.time_utils import (
     decode_cf_time,
+    figure_timezone,
     time_unit_seconds,
     timezone_from_cf_units,
     timezone_from_offset,
@@ -273,3 +274,28 @@ def test_cf_time_uses_encoded_or_fallback_offset_and_decodes_to_utc() -> None:
 def test_timezone_parser_rejects_named_or_out_of_range_offsets(value: str) -> None:
     with pytest.raises(ValueError):
         timezone_from_offset(value)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("compares_simulations", "explicit_time_zone", "expected_offset"),
+    [
+        (False, None, "+01:00"),
+        (False, "+02:00", "+01:00"),
+        (True, None, "+00:00"),
+        (True, "+02:00", "+02:00"),
+    ],
+)
+def test_figure_timezone_compares_against_reference_unless_explicit(
+    compares_simulations: bool,
+    explicit_time_zone: str | None,
+    expected_offset: str,
+) -> None:
+    zone = figure_timezone(
+        own_offset="+01:00",
+        reference_offset="+00:00",
+        explicit_time_zone=explicit_time_zone,
+        compares_simulations=compares_simulations,
+    )
+
+    assert zone == timezone_from_offset(expected_offset)

@@ -414,14 +414,18 @@ def interfaces_cache_fingerprint(
     input_fingerprint: str,
     line: ProfileLine,
     time: datetime,
+    bed_layers: bool = False,
 ) -> str:
     """Build the identity of the vertical interfaces cached for one line and time."""
+    parameters: dict[str, str] = {"line": line.name}
+    if bed_layers:
+        parameters["stack"] = "bed"
     return fingerprint_artifact(
         kind="profile_interfaces",
         schema_version=CACHE_SCHEMA_VERSION,
         tool_version="d3dplot",
         algorithm_version=_PROFILE_CACHE_ALGORITHM_VERSION,
-        parameters={"line": line.name},
+        parameters=parameters,
         inputs=[input_fingerprint, line.sampling.fingerprint()],
         time=time.isoformat(),
     )
@@ -432,13 +436,15 @@ def interfaces_cache_path(
     *,
     line_name: str,
     time: datetime,
+    bed_layers: bool = False,
 ) -> Path:
     """Return one guarded per-time cache path for the vertical interfaces."""
     filename = format_hydrodynamic_timestamp(time)
+    quantity = "bed_layer_interfaces" if bed_layers else "vertical_interfaces"
     return build_quantity_output_path(
         layout,
         OutputArea.CACHE_DATA,
-        "vertical_interfaces",
+        quantity,
         prefix=("profile-interfaces",),
         suffix=(line_name,),
         filename=f"{filename}.nc",
@@ -452,22 +458,33 @@ def profile_interfaces_at_time(
     layout: OutputLayout,
     guard: OutputWriteGuard,
     input_fingerprint: str,
+    bed_layers: bool = False,
     diagnostic: Callable[[str], None] | None = None,
 ) -> np.ndarray:
-    """Return the vertical interfaces at the crossing faces, shape (crossings, n+1)."""
+    """Return the vertical interfaces at the crossing faces, shape (crossings, n+1).
+
+    Bed-layer quantities use the bed-layer stack; others use the water column.
+    """
     time = reader.entry.time
     fingerprint = interfaces_cache_fingerprint(
         input_fingerprint=input_fingerprint,
         line=line,
         time=time,
+        bed_layers=bed_layers,
     )
-    path = interfaces_cache_path(layout, line_name=line.name, time=time)
+    path = interfaces_cache_path(
+        layout, line_name=line.name, time=time, bed_layers=bed_layers
+    )
     cached = _reuse_cache(path, fingerprint, line.n_crossings, diagnostic)
     if cached is not None:
         return cached
     reader.register(line)
+    quantities = reader.quantities()
     all_interfaces: np.ndarray = np.asarray(
-        reader.quantities().vertical_interfaces(), dtype=np.float64
+        quantities.bed_layer_interfaces()
+        if bed_layers
+        else quantities.vertical_interfaces(),
+        dtype=np.float64,
     )
     interfaces: np.ndarray = all_interfaces[line.plan.crossings.face_index]
     write_values_cache(

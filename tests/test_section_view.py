@@ -74,6 +74,27 @@ def test_update_redraws_the_same_artists_with_new_geometry() -> None:
 
 
 @pytest.mark.unit
+def test_grid_is_drawn_behind_the_section_polygons() -> None:
+    view = SectionView.create(
+        np.array([0.0, 1.0]),
+        np.array([1.0, 2.0]),
+        np.array([[0.0, 1.0, 3.0], [0.0, 2.0, 3.0]]),
+        np.array([[1.0, 2.0], [3.0, 4.0]]),
+        colormap="viridis",
+        colorbar_label="value",
+        x_label="distance",
+        y_label="elevation",
+        title="section",
+        grid=True,
+    )
+    try:
+        assert view.axes.xaxis.get_zorder() < view.collection.get_zorder()
+        assert view.axes.yaxis.get_zorder() < view.collection.get_zorder()
+    finally:
+        plt.close(view.figure)
+
+
+@pytest.mark.unit
 def test_nan_values_are_masked_and_shape_changes_are_rejected() -> None:
     view = SectionView.create(
         np.array([0.0, 1.0]),
@@ -98,7 +119,28 @@ def test_nan_values_are_masked_and_shape_changes_are_rejected() -> None:
 
 
 @pytest.mark.unit
-def test_create_rejects_values_without_one_row_per_crossing() -> None:
+def test_y_limits_override_one_or_both_bounds_of_the_elevation_axis() -> None:
+    values = np.array([[1.0, 2.0], [3.0, 4.0]])
+    edges = np.array([[0.0, 1.0, 3.0], [0.0, 2.0, 3.0]])
+    view = SectionView.create(
+        np.array([0.0, 1.0]),
+        np.array([1.0, 2.0]),
+        edges,
+        values,
+        colormap="turbo",
+        colorbar_label="value",
+        x_label="distance",
+        y_label="elevation",
+        title="section",
+        y_limits=(None, 5.0),
+    )
+    try:
+        assert view.axes.get_ylim() == pytest.approx((0.0, 5.0))
+        view.update(edges, values, y_limits=(1.0, None))
+        assert view.axes.get_ylim() == pytest.approx((1.0, 3.0))
+    finally:
+        plt.close(view.figure)
+
     with pytest.raises(ValueError, match="SectionView values must have shape"):
         SectionView.create(
             np.array([0.0, 1.0]),

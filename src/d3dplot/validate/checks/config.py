@@ -8,6 +8,8 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from d3dplot.analyses.profile.config import ProfileConfig
+from d3dplot.analyses.profile.limits import limit_rows, paired_limits
 from d3dplot.config.project import ProjectConfig
 from d3dplot.store.guard import OutputWriteGuard
 from d3dplot.store.layout import OUTPUT_MARKER_NAME, resolve_output_root
@@ -42,6 +44,8 @@ def validate_project_config(config: ProjectConfig) -> ValidationReport:
     _check_reference_simulation(config, issues)
     _check_simulation_labels_and_output_roots(config, issues)
     _check_axis_limit_rows(config, issues)
+    _check_section_limit_rows(config, issues)
+    _check_limit_coverage(config, issues)
     return ValidationReport(tuple(issues))
 
 
@@ -276,3 +280,96 @@ def _check_axis_limit_rows(
                     ),
                 )
             )
+
+
+def _check_section_limit_rows(
+    config: ProjectConfig,
+    issues: list[ValidationIssue],
+) -> None:
+    """Section figures pair y_limits and color_limits rows one figure each."""
+    for index, analysis in enumerate(config.analyses):
+        if not isinstance(analysis, ProfileConfig) or "section" not in analysis.views:
+            continue
+        figure = config.effective_figure(analysis)
+        mismatches: dict[tuple[int, int], list[str]] = {}
+        for variable in analysis.variables:
+            for comparison in analysis.comparisons:
+                y_rows = limit_rows(
+                    figure.y_limits, variable, comparison, option="y_limits"
+                )
+                colour_rows = limit_rows(
+                    figure.color_limits,
+                    variable,
+                    comparison,
+                    option="color_limits",
+                )
+                try:
+                    paired_limits(y_rows, colour_rows)
+                except ValueError:
+                    counts = (len(y_rows), len(colour_rows))
+                    mismatches.setdefault(counts, []).append(
+                        f"{variable} ({comparison})"
+                    )
+        for (y_count, colour_count), affected in mismatches.items():
+            issues.append(
+                ValidationIssue(
+                    code="V-CFG-005",
+                    level="error",
+                    location=f"analyses[{index}].figure",
+                    message=(
+                        f"y_limits has {y_count} row(s) and color_limits has "
+                        f"{colour_count} row(s) for {', '.join(affected)}; section "
+                        "figures need the same number of rows, or one row."
+                    ),
+                    hint=(
+                        "Use one row for every figure, or one row per figure in both "
+                        "y_limits and color_limits."
+                    ),
+                )
+            )
+
+
+def _check_limit_coverage(
+    config: ProjectConfig,
+    issues: list[ValidationIssue],
+) -> None:
+    """Dictionary-form limits without an entry use automatic limits; say so."""
+    for index, analysis in enumerate(config.analyses):
+        if not isinstance(analysis, ProfileConfig):
+            continue
+        figure = config.effective_figure(analysis)
+        options: list[tuple[str, object]] = []
+        if {"profile", "section"} & set(analysis.views):
+            options.append(("y_limits", figure.y_limits))
+        if "section" in analysis.views:
+            options.append(("color_limits", figure.color_limits))
+        for option, configured in options:
+            if not isinstance(configured, dict):
+                continue
+            missing: list[str] = []
+            for variable in analysis.variables:
+                variable_limits = configured.get(variable)
+                if variable_limits is None:
+                    missing.append(variable)
+                    continue
+                missing.extend(
+                    f"{variable} ({comparison})"
+                    for comparison in analysis.comparisons
+                    if comparison not in variable_limits
+                )
+            if missing:
+                issues.append(
+                    ValidationIssue(
+                        code="V-CFG-006",
+                        level="warning",
+                        location=f"analyses[{index}].figure.{option}",
+                        message=(
+                            f"{option} has no entry for {', '.join(missing)}; "
+                            "automatic limits are used for them."
+                        ),
+                        hint=(
+                            "Add the missing variable and comparison, or use a flat "
+                            "list to apply the same rows to every variable."
+                        ),
+                    )
+                )

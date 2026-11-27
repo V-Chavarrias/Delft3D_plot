@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, tzinfo
 from hashlib import blake2b
 from importlib import import_module
 from pathlib import Path
@@ -47,6 +47,7 @@ from d3dplot.config.project import ProjectConfig, SimulationConfig
 from d3dplot.config.selections import LayersSelection
 from d3dplot.execution.cache import decide_cache, read_cache_fingerprints
 from d3dplot.labels import label
+from d3dplot.plotting.figure_names import difference_subject, figure_file_path
 from d3dplot.plotting.finalize import (
     FigureContext,
     FigureHookError,
@@ -73,7 +74,7 @@ from d3dplot.plotting.views.space_time import SpaceTimeView
 from d3dplot.plotting.writers import get_figure_writer
 from d3dplot.simulation.partitions import _NETCDF4_READ_LOCK
 from d3dplot.simulation.time_axis import TimeAxis, TimeEntry, TimeSelectionResult
-from d3dplot.simulation.time_utils import format_hydrodynamic_timestamp
+from d3dplot.simulation.time_utils import figure_timezone
 from d3dplot.store import (
     CACHE_SCHEMA_VERSION,
     OutputLayout,
@@ -88,7 +89,6 @@ from d3dplot.store.paths import (
     OutputArea,
     build_output_path,
     build_quantity_output_directory,
-    build_quantity_output_path,
 )
 from d3dplot.variables.context import QuantityRequest
 from d3dplot.variables.grouping import sediment_class_grouping_key
@@ -939,6 +939,11 @@ def plot_river_km_statistics_stage(
                                 provenance_path=provenance_path,
                                 fresh_figures=fresh_figures,
                                 report=report,
+                                reference_target=(
+                                    layout_and_guard(reference)
+                                    if has_simulation_comparison
+                                    else None
+                                ),
                             )
                             outputs.extend(output_paths)
                             reused.extend(reused_paths)
@@ -1023,6 +1028,11 @@ def plot_river_km_statistics_stage(
                                 provenance_path=provenance_path,
                                 fresh_figures=fresh_figures,
                                 report=report,
+                                reference_target=(
+                                    layout_and_guard(reference)
+                                    if has_simulation_comparison
+                                    else None
+                                ),
                             )
                             outputs.extend(output_paths)
                             reused.extend(reused_paths)
@@ -1087,6 +1097,11 @@ def plot_river_km_statistics_stage(
                                 provenance_path=provenance_path,
                                 fresh_figures=fresh_figures,
                                 report=report,
+                                reference_target=(
+                                    layout_and_guard(reference)
+                                    if has_simulation_comparison
+                                    else None
+                                ),
                             )
                             outputs.extend(output_paths)
                             reused.extend(reused_paths)
@@ -1999,7 +2014,8 @@ def _plot_time_average_profiles(
                     statistic,
                     "value",
                     None,
-                    limit_index,
+                    _figure_zone(project, layout, simulation, "value"),
+                    _variant_folders("l", limit_index, len(limit_pairs)),
                 )
                 fingerprint = _line_fingerprint(
                     project,
@@ -2111,6 +2127,7 @@ def _plot_region_views(
     provenance_path: Path | None,
     fresh_figures: bool,
     report: DiagnosticSink,
+    reference_target: tuple[OutputLayout, OutputWriteGuard] | None = None,
 ) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
     outputs: list[Path] = []
     reused: list[Path] = []
@@ -2166,6 +2183,7 @@ def _plot_region_views(
                         analysis.measurements_label,
                     )
                 ),
+                reference_target=reference_target,
             )
             outputs.extend(results[0])
             reused.extend(results[1])
@@ -2193,9 +2211,19 @@ def _plot_comparison_views(
     fresh_figures: bool,
     report: DiagnosticSink,
     measurement_overlays: tuple[_ProfileMeasurementOverlay, ...] = (),
+    reference_target: tuple[OutputLayout, OutputWriteGuard] | None = None,
 ) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
     outputs: list[Path] = []
     reused: list[Path] = []
+    if comparison in _DIFFERENCE_COMPARISONS and reference_target is not None:
+        layout, guard = reference_target
+        simulation = simulation.model_copy(
+            update={
+                "label": difference_subject(
+                    simulation.label, _reference_simulation(project).label
+                )
+            }
+        )
     for view_name in analysis.views:
         if view_name == "profile":
             results = _plot_profiles(
@@ -2641,6 +2669,7 @@ def _plot_grouped_sources(
     provenance_path: Path | None,
     fresh_figures: bool,
     report: DiagnosticSink,
+    reference_target: tuple[OutputLayout, OutputWriteGuard] | None = None,
 ) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
     outputs: list[Path] = []
     reused: list[Path] = []
@@ -2824,6 +2853,7 @@ def _plot_grouped_sources(
                 fresh_figures=fresh_figures,
                 report=report,
                 measurement_overlays=measurement_overlays,
+                reference_target=reference_target,
             )
             outputs.extend(plotted)
             reused.extend(cached)
@@ -3090,6 +3120,7 @@ def _plot_profiles(
     reuse_templates = not hooks or figure_config.hooks_mode == "per_image"
     templates: dict[tuple[int, int, int], LineView] = {}
     overlay_artists: dict[tuple[int, int, int], list[Any]] = {}
+    display_zone = _figure_zone(project, layout, simulation, comparison)
     try:
         for frame, raw_values, source_fingerprints in zip(
             times, values, fingerprints, strict=True
@@ -3129,7 +3160,7 @@ def _plot_profiles(
                     if analysis.times.axis == "morphological"
                     and frame.morph_time is not None
                     else frame.time
-                ),
+                ).astimezone(display_zone),
                 time_format=figure_config.time_format,
             )
             for limit_index, (x_limit, y_limit) in enumerate(limit_pairs):
@@ -3144,7 +3175,8 @@ def _plot_profiles(
                     statistic,
                     comparison,
                     frame.time,
-                    limit_index,
+                    display_zone,
+                    _variant_folders("l", limit_index, len(limit_pairs)),
                 )
                 limits_fingerprint = fingerprint_artifact(
                     kind="figure",
@@ -3339,24 +3371,11 @@ def _plot_profile_all_times(
     )
     x_limits = _resolve_limits(figure_config.x_limits, variable, comparison)
     y_limits = _resolve_limits(figure_config.y_limits, variable, comparison)
+    display_zone = _figure_zone(project, layout, simulation, comparison)
+    limit_pairs = _paired_limits(x_limits, y_limits)
     outputs: list[Path] = []
     reused: list[Path] = []
-    for limit_index, (x_limit, y_limit) in enumerate(
-        _paired_limits(x_limits, y_limits)
-    ):
-        output_path = _line_path(
-            layout,
-            project.series,
-            simulation.label,
-            region_name,
-            km_set_name,
-            variable,
-            "profile_all_times",
-            statistic,
-            comparison,
-            None,
-            limit_index,
-        )
+    for limit_index, (x_limit, y_limit) in enumerate(limit_pairs):
         fingerprint = _line_fingerprint(
             project,
             analysis,
@@ -3371,6 +3390,20 @@ def _plot_profile_all_times(
             x_limit,
             y_limit,
             extra={"times": [frame.time.isoformat() for frame in times]},
+        )
+        output_path = _line_path(
+            layout,
+            project.series,
+            simulation.label,
+            region_name,
+            km_set_name,
+            variable,
+            "profile_all_times",
+            statistic,
+            comparison,
+            None,
+            display_zone,
+            _variant_folders("l", limit_index, len(limit_pairs)),
         )
         if _reuse_figure(
             output_path,
@@ -3539,7 +3572,8 @@ def _plot_space_time(
             statistic,
             comparison,
             None,
-            component_index,
+            _figure_zone(project, layout, simulation, comparison),
+            _variant_folders("c", component_index, len(components)),
         )
         fingerprint = _line_fingerprint(
             project,
@@ -3715,7 +3749,10 @@ def _plot_time_series(
             statistic,
             comparison,
             None,
-            location_index,
+            _figure_zone(project, layout, simulation, comparison),
+            _variant_folders(
+                "loc", location_index, len(analysis.time_series_locations_km)
+            ),
         )
         fingerprint = _line_fingerprint(
             project,
@@ -3961,6 +3998,39 @@ def _paired_limits(
     )
 
 
+def _figure_zone(
+    project: ProjectConfig,
+    layout: OutputLayout,
+    simulation: SimulationConfig,
+    comparison: str,
+) -> tzinfo:
+    compares_simulations = (
+        comparison in _DIFFERENCE_COMPARISONS or simulation.label == "all_simulations"
+    )
+    own_offset = TimeAxis.from_cache(layout.cache / "times.nc").source_utc_offset
+    reference_offset = own_offset
+    if compares_simulations:
+        reference_layout = OutputLayout.for_simulation(
+            _reference_simulation(project), project.output
+        )
+        reference_offset = TimeAxis.from_cache(
+            reference_layout.cache / "times.nc"
+        ).source_utc_offset
+    return figure_timezone(
+        own_offset=own_offset,
+        reference_offset=reference_offset,
+        explicit_time_zone=(
+            None if project.time_zone is None else str(project.time_zone)
+        ),
+        compares_simulations=compares_simulations,
+    )
+
+
+def _variant_folders(prefix: str, index: int, count: int) -> tuple[str, ...]:
+    """Return the folder of one figure among several, and none when there is one."""
+    return (f"{prefix}{index + 1:02d}",) if count > 1 else ()
+
+
 def _line_path(
     layout: OutputLayout,
     series: str,
@@ -3972,28 +4042,28 @@ def _line_path(
     statistic: str,
     comparison: str,
     time: datetime | None,
-    limit_index: int,
+    zone: tzinfo,
+    variant_folders: tuple[str, ...] = (),
 ) -> Path:
-    time_text = format_hydrodynamic_timestamp(time) if time is not None else "all_times"
     prefix: tuple[str, ...] = (quote(series, safe="-_."),)
-    if subject == "all_simulations":
+    if subject == "all_simulations" or comparison in _DIFFERENCE_COMPARISONS:
         prefix += (quote(subject, safe="-_."),)
-    filename = f"{time_text}_l{limit_index + 1:02d}.png"
-    return build_quantity_output_path(
+    return figure_file_path(
         layout,
-        OutputArea.FIGURES,
-        variable,
         prefix=(
             *prefix,
             "river_km_statistics",
             quote(region_name, safe="-_."),
             quote(km_set_name, safe="-_."),
         ),
-        suffix=(
+        variable=variable,
+        folders=(
             quote(comparison, safe="-_."),
             quote(f"{view_name}_{statistic}", safe="-_."),
+            *variant_folders,
         ),
-        filename=filename,
+        time=time,
+        zone=zone,
     )
 
 

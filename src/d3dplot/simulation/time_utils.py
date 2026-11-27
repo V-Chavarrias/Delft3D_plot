@@ -172,3 +172,21 @@ def offset_text(zone: timezone) -> str:
     hours, remainder = divmod(abs(seconds), 3600)
     minutes = remainder // 60
     return f"{sign}{hours:02d}:{minutes:02d}"
+
+
+def figure_timezone(
+    *,
+    own_offset: str,
+    reference_offset: str,
+    explicit_time_zone: str | None,
+    compares_simulations: bool,
+) -> timezone:
+    """Return the zone for one figure's titles and file names.
+
+    A figure of one simulation uses that simulation's offset. A figure that compares
+    simulations uses the explicit project ``time_zone`` if set, otherwise the
+    reference simulation's offset.
+    """
+    if not compares_simulations:
+        return timezone_from_offset(own_offset)
+    return timezone_from_offset(explicit_time_zone or reference_offset)

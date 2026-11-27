@@ -212,3 +212,89 @@ def test_v_out_041_rejects_output_root_that_is_not_writable(
     assert config is not None
     assert [issue.code for issue in report.errors] == ["V-OUT-041"]
     assert "not writable" in report.errors[0].message
+
+
+def _section_profile_data(**figure: Any) -> dict[str, Any]:
+    data = _minimal_data()
+    data["analyses"] = [
+        {
+            "analysis": "profile",
+            "variables": ["water_level"],
+            "lines": [{"name": "section", "file": "section.pli"}],
+            "views": ["section"],
+            "vertical": "all",
+            "fractions": [1],
+        }
+    ]
+    if figure:
+        data["figure"] = figure
+    return data
+
+
+@pytest.mark.unit
+def test_empty_limit_row_lists_are_rejected_at_load() -> None:
+    config, report = validate_config(_section_profile_data(y_limits=[]))
+    assert config is None
+    assert [issue.code for issue in report.errors] == ["V-CFG-001"]
+    assert "use null for automatic limits" in report.errors[0].message
+
+    config, report = validate_config(
+        _section_profile_data(color_limits={"water_level": {"value": []}})
+    )
+    assert config is None
+    assert [issue.code for issue in report.errors] == ["V-CFG-001"]
+
+
+@pytest.mark.unit
+def test_v_cfg_005_flags_section_rows_that_do_not_pair() -> None:
+    config, report = validate_config(
+        _section_profile_data(y_limits=[[0, 1], [1, 2]], color_limits=[[0, 1]] * 3)
+    )
+
+    assert config is not None
+    assert [issue.code for issue in report.errors] == ["V-CFG-005"]
+    assert report.errors[0].location == "analyses[0].figure"
+    assert "2 row(s) and color_limits has 3 row(s)" in report.errors[0].message
+
+
+@pytest.mark.unit
+def test_v_cfg_005_accepts_one_row_broadcast_and_matching_counts() -> None:
+    for figure in (
+        {"y_limits": [[0, 1]], "color_limits": [[0, 1]] * 3},
+        {"y_limits": [[0, 1], [1, 2]], "color_limits": [[0, 1], None]},
+    ):
+        config, report = validate_config(_section_profile_data(**figure))
+        assert config is not None
+        assert report.is_valid, figure
+
+
+@pytest.mark.unit
+def test_v_cfg_006_warns_when_dictionary_limits_miss_an_analysis_entry() -> None:
+    data = _minimal_data()
+    data["analyses"] = [
+        {
+            "analysis": "profile",
+            "variables": ["water_level", "bed_level"],
+            "lines": [{"name": "section", "file": "section.pli"}],
+            "views": ["profile"],
+            "comparisons": ["value", "difference_time"],
+        }
+    ]
+    data["figure"] = {"y_limits": {"water_level": {"value": [[0, 1]]}}}
+
+    config, report = validate_config(data)
+
+    assert config is not None
+    assert report.is_valid
+    assert [issue.code for issue in report.warnings] == ["V-CFG-006"]
+    assert report.warnings[0].location == "analyses[0].figure.y_limits"
+    assert "water_level (difference_time), bed_level" in report.warnings[0].message
+
+    data["figure"] = {
+        "y_limits": {
+            "water_level": {"value": [[0, 1]], "difference_time": [[0, 1]]},
+            "bed_level": {"value": [[0, 1]], "difference_time": [[0, 1]]},
+        }
+    }
+    _, complete_report = validate_config(data)
+    assert complete_report.issues == ()

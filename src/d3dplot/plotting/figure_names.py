@@ -9,7 +9,7 @@ Axis labels carry their unit in square brackets, for example ``Bed level [m]``.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import datetime, tzinfo
 from pathlib import Path
 
 from d3dplot.labels.builder import LabelKind, Language, label
@@ -25,9 +25,18 @@ def figure_file_path(
     variable: str,
     folders: Sequence[str | Path],
     time: datetime | None,
+    zone: tzinfo,
+    filename_suffix: str = "",
 ) -> Path:
-    """Return the path of one figure; ``time=None`` names a figure over all times."""
-    filename = "all_times.png" if time is None else f"{format_timestamp_text(time)}.png"
+    """Return the path of one figure; ``time=None`` names a figure over all times.
+
+    The time is written in ``zone``, the same zone as the figure's title.
+    """
+    if time is None:
+        filename = "all_times.png"
+    else:
+        stamp = format_timestamp_text(time.astimezone(zone))
+        filename = f"{stamp}{filename_suffix}.png"
     return build_quantity_output_path(
         layout,
         OutputArea.FIGURES,
@@ -36,6 +45,15 @@ def figure_file_path(
         suffix=folders,
         filename=filename,
     )
+
+
+def difference_subject(source_label: str, reference_label: str) -> str:
+    """Return the folder label of a simulation difference, ``<source>_vs_<reference>``.
+
+    Simulation differences are written to the reference simulation's tree under
+    this label, so every analysis places them in the same folder.
+    """
+    return f"{source_label}_vs_{reference_label}"
 
 
 def axis_label(
@@ -56,4 +74,4 @@ def axis_label(
     ).text
 
 
-__all__ = ["axis_label", "figure_file_path"]
+__all__ = ["axis_label", "difference_subject", "figure_file_path"]

@@ -104,16 +104,24 @@ visible grid-face indices as int32, with the extent bounds and fingerprint in
 global attributes. Cross-grid comparisons may cache an xugrid centroid
 regridder at `cache/geometry/regrid_<hash>.nc`.
 
-Profile images are stored below `figures/<series>/profile_<n>/<simulation>/<variable>/<line>/`,
-with the optional selection folder (for example `layer-2`), the comparison folder
-(`value`, `difference_time`, `difference_simulation`) and the time as the filename, for
-example `value/20020101T080255.366337.png`. Section figures use `<line>/section/` and
-space-time figures `<line>/space_time/all_times.png`.
+Profile images are stored below `figures/<series>/profile/<simulation>/<variable>/<line>/`,
+so every profile analysis writes into the same `profile` folder and the variable separates them.
+Within that, the optional selection folder (for example `layer-2`), the comparison folder
+(`value`, `difference_time`, `difference_simulation`), an optional limit-set folder
+`l<n>/` when several `y_limits` rows are given, and the time as the filename, for
+example `value/20020101T080255.366337.png`. Two profile analyses that would write the same
+variable, line, selection and view folders are rejected. Section figures use
+`<line>/[<selection>/]section/<comparison>/[l<n>/]` and space-time figures
+`<line>/space_time/all_times.png`. Map1d figures follow the same rule: the `all_times` and
+`space_time` views are `all_times.png`, not named after the first time. Simulation
+differences of profile and map1d are written under the reference simulation's output root,
+with `<source>_vs_<reference>` in the simulation folder, as map2d does.
 
-Map images are stored below `figures/<series>/map2d/<comparison>/<subject>/<variable>/`
+Map images are stored below `figures/<series>/map2d/<variable>/<subject>/<comparison>/`
 in a colour-limit folder `c<k>/` (D113), with the hydrodynamic time and extent index
-(`e<k>`) in the filename, for example `c1/20210101T000000.000000_e1.png`. Map movies are
-`c<k>/movie_e<k>.mp4` in the variable folder. Variable, comparison, plot type and
+(`e<k>`) in the filename, for example
+`bed_level/Hirano_vs_HANNEKE/difference_simulation/c1/20210101T000000.000000_e1.png`.
+Map movies are `c<k>/movie_e<k>.mp4` in the same folder. Variable, comparison, plot type and
 colour limits are folders, not filename parts. PNG metadata records the tool version, project/analysis configuration
 hash, figure fingerprint, and task key. Figure fingerprints include the
 processed cache fingerprints, inspected grid, extent, effective figure/map

@@ -91,6 +91,7 @@ def test_map2d_figure_and_movie_paths_use_canonical_names(
         variable,
         "value",
         timestamp,
+        UTC,
         0,
         0,
     )
@@ -105,10 +106,12 @@ def test_map2d_figure_and_movie_paths_use_canonical_names(
     )
 
     assert figure_path.parent.name == "c1"
-    assert figure_path.parent.parent.name == canonical_name
+    assert figure_path.parents[1].name == "value"
+    assert figure_path.parents[2].name == "simulation"
+    assert figure_path.parents[3].name == canonical_name
     assert figure_path.name == "20210101T000000.000000_e1.png"
     assert movie_path.parent.name == "c1"
-    assert movie_path.parent.parent.name == canonical_name
+    assert movie_path.parents[3].name == canonical_name
     assert movie_path.name == "movie_e1.mp4"
 
 

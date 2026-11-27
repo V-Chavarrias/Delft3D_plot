@@ -52,6 +52,8 @@ class SectionView:
         y_label: str,
         title: str,
         limits: tuple[float | None, float | None] | None = None,
+        y_limits: tuple[float | None, float | None] | None = None,
+        grid: bool = False,
     ) -> SectionView:
         starts, stops, edges, data = _validated(x_start, x_stop, interfaces, values)
         figure = plt.figure()
@@ -67,7 +69,10 @@ class SectionView:
         axes.set_ylabel(y_label)
         axes.set_title(title)
         axes.set_xlim(float(np.min(starts)), float(np.max(stops)))
-        axes.set_ylim(*_vertical_range(edges))
+        axes.set_ylim(*_axis_range(edges, y_limits))
+        if grid:
+            axes.grid(True, which="major")
+            axes.set_axisbelow(True)
         collection.set_clim(*_resolved_limits(data, limits))
         figure.tight_layout()
         return cls(
@@ -87,6 +92,7 @@ class SectionView:
         *,
         title: str | None = None,
         limits: tuple[float | None, float | None] | None = None,
+        y_limits: tuple[float | None, float | None] | None = None,
     ) -> None:
         """Replace the interfaces and values of the drawn section."""
         edges, data = _validated_update(
@@ -95,7 +101,7 @@ class SectionView:
         self.collection.set_verts(_polygons(self.x_start, self.x_stop, edges))
         self.collection.set_array(np.ma.masked_invalid(data).ravel())
         self.collection.set_clim(*_resolved_limits(data, limits))
-        self.axes.set_ylim(*_vertical_range(edges))
+        self.axes.set_ylim(*_axis_range(edges, y_limits))
         if title is not None:
             self.axes.set_title(title)
 
@@ -157,6 +163,18 @@ def _polygons(starts: _Array, stops: _Array, edges: _Array) -> _Array:
         axis=-2,
     )
     return corners.reshape(-1, 4, 2)
+
+
+def _axis_range(
+    edges: _Array,
+    limits: tuple[float | None, float | None] | None,
+) -> tuple[float, float]:
+    """Return the elevation range; a None bound keeps the automatic bound."""
+    low, high = _vertical_range(edges)
+    if limits is None:
+        return low, high
+    lower, upper = limits
+    return (low if lower is None else lower, high if upper is None else upper)
 
 
 def _vertical_range(edges: _Array) -> tuple[float, float]:
