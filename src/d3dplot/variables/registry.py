@@ -260,7 +260,12 @@ VARIABLE_SPECS: Final[tuple[VariableSpec, ...]] = (
     ),
     _raw_spec(
         "bed_level",
-        ("mesh2d_mor_bl", "mesh2d_flowelem_bl", "mesh1d_flowelem_bl"),
+        (
+            "mesh2d_mor_bl",
+            "mesh2d_flowelem_bl",
+            "mesh1d_mor_bl",
+            "mesh1d_flowelem_bl",
+        ),
         aliases=("bl", "DPS", "etab"),
         units="m",
         label_key="bed_elevation",

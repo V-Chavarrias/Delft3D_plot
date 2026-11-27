@@ -47,6 +47,7 @@ from d3dplot.config.project import ProjectConfig, SimulationConfig
 from d3dplot.config.selections import LayersSelection
 from d3dplot.execution.cache import decide_cache, read_cache_fingerprints
 from d3dplot.labels import label
+from d3dplot.plotting.colormaps import resolve_colormap
 from d3dplot.plotting.figure_names import difference_subject, figure_file_path
 from d3dplot.plotting.finalize import (
     FigureContext,
@@ -1389,7 +1390,7 @@ def _plot_diagnostics(
                     values,
                     map_config=analysis.map,
                     figure_config=figure_config,
-                    colormap=_map_colormap(analysis, "rkm"),
+                    colormap=resolve_colormap("value", analysis.map.colormap, "rkm"),
                     colorbar_label=label(
                         "rkm",
                         project.language,
@@ -1522,7 +1523,9 @@ def _plot_diagnostics(
                     values,
                     map_config=analysis.map,
                     figure_config=figure_config,
-                    colormap=_map_colormap(analysis, "segment_membership"),
+                    colormap=resolve_colormap(
+                        "value", analysis.map.colormap, "segment_membership"
+                    ),
                     colorbar_label=_diagnostic_label("segment_membership", project),
                     initial_limits=(0.0, 1.0),
                     decorations=decorations,
@@ -1709,20 +1712,6 @@ def _reuse_diagnostic(
             report(f"WARNING: {decision.warning}")
         return True
     return False
-
-
-def _map_colormap(analysis: RiverKmStatisticsConfig, variable: str) -> str:
-    configured = analysis.map.colormap
-    if isinstance(configured, str):
-        return configured
-    return next(
-        (
-            value
-            for key, value in configured.items()
-            if key.casefold() == variable.casefold()
-        ),
-        "viridis",
-    )
 
 
 def _map_limits(
@@ -3608,7 +3597,7 @@ def _plot_space_time(
             time_edges,
             matrix,
             figure_config=figure_config,
-            colormap=_map_colormap(analysis, variable),
+            colormap=resolve_colormap(comparison, analysis.map.colormap, variable),
             colorbar_label=_variable_axis_label(
                 variable,
                 project,

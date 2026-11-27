@@ -37,7 +37,7 @@ class Map1DProcessError(ValueError):
     """A map1d grid or quantity cannot be processed."""
 
 
-_MAP1D_CACHE_ALGORITHM_VERSION = "1"
+_MAP1D_CACHE_ALGORITHM_VERSION = "2"
 
 
 @dataclass(frozen=True, slots=True)
@@ -419,21 +419,15 @@ def write_map1d_cache(
     time: datetime,
     fingerprint: str,
 ) -> None:
-    """Write one atomic, fingerprinted map1d time slice."""
+    """Write one atomic, fingerprinted map1d time slice (geometry is per chain)."""
     data = np.asarray(values, dtype=np.float64)
     if data.ndim != 1 or data.size != chain.indices.size:
         raise Map1DProcessError("map1d cache values must match the chain coordinates.")
     with atomic_path(path, guard) as temporary:
         with netCDF4.Dataset(temporary, mode="w", format="NETCDF4") as dataset:
             dataset.createDimension("point", data.size)
-            for name, array in (
-                ("offset_m", chain.offsets_m),
-                ("x", chain.x),
-                ("y", chain.y),
-                ("values", data),
-            ):
-                variable_object = dataset.createVariable(name, "f8", ("point",))
-                variable_object[:] = array
+            values_variable = dataset.createVariable("values", "f8", ("point",))
+            values_variable[:] = data
             dataset.setncattr("d3dplot_fingerprint", fingerprint)
             dataset.setncattr("variable", variable)
             dataset.setncattr("chain", chain.name)
@@ -462,6 +456,131 @@ def read_map1d_cache(
     if values.shape != (expected_size,):
         raise Map1DProcessError(f"map1d cache has invalid point count: {path}.")
     return values
+
+
+def map1d_geometry_fingerprint(
+    *,
+    input_fingerprint: str,
+    chain_name: str,
+    branch_ids: tuple[str, ...],
+    location: str,
+) -> str:
+    """Identify one chain's coordinates, which depend only on the map and selection."""
+    return fingerprint_artifact(
+        kind="map1d_geometry",
+        schema_version=CACHE_SCHEMA_VERSION,
+        tool_version="d3dplot",
+        algorithm_version=_MAP1D_CACHE_ALGORITHM_VERSION,
+        parameters={
+            "chain": chain_name,
+            "branch_ids": list(branch_ids),
+            "location": location,
+        },
+        inputs=[input_fingerprint],
+    )
+
+
+def map1d_geometry_cache_path(layout: OutputLayout, chain_name: str) -> Path:
+    """Return the guarded geometry-cache path of one chain (one file per chain)."""
+    return layout.cache_geometry / f"map1d_chain_{chain_name}.nc"
+
+
+def write_map1d_geometry_cache(
+    path: Path,
+    guard: OutputWriteGuard,
+    chain: Map1DChain,
+    *,
+    fingerprint: str,
+) -> None:
+    """Write one atomic, fingerprinted chain geometry (indices, offsets, x, y)."""
+    with atomic_path(path, guard) as temporary:
+        with netCDF4.Dataset(temporary, mode="w", format="NETCDF4") as dataset:
+            dataset.createDimension("point", chain.indices.size)
+            index_variable = dataset.createVariable("index", "i8", ("point",))
+            index_variable[:] = chain.indices
+            for name, array in (
+                ("offset_m", chain.offsets_m),
+                ("x", chain.x),
+                ("y", chain.y),
+            ):
+                variable_object = dataset.createVariable(name, "f8", ("point",))
+                variable_object[:] = array
+            dataset.setncattr("d3dplot_fingerprint", fingerprint)
+            dataset.setncattr("chain", chain.name)
+            dataset.setncattr("location", chain.location)
+
+
+def read_map1d_geometry_cache(
+    path: Path,
+    *,
+    expected_fingerprint: str,
+    name: str,
+    branch_ids: tuple[str, ...],
+    location: str,
+) -> Map1DChain:
+    """Read and verify one persisted chain geometry."""
+    try:
+        with netCDF4.Dataset(path, mode="r") as dataset:
+            if dataset.getncattr("d3dplot_fingerprint") != expected_fingerprint:
+                raise Map1DProcessError(f"map1d geometry fingerprint changed: {path}.")
+            indices = np.asarray(dataset.variables["index"][:], dtype=np.int64)
+            offsets = np.asarray(dataset.variables["offset_m"][:], dtype=np.float64)
+            x_values = np.asarray(dataset.variables["x"][:], dtype=np.float64)
+            y_values = np.asarray(dataset.variables["y"][:], dtype=np.float64)
+    except Map1DProcessError:
+        raise
+    except (KeyError, OSError, RuntimeError, TypeError, ValueError) as error:
+        raise Map1DProcessError(
+            f"Could not read map1d geometry {path}: {error}"
+        ) from error
+    shapes = {indices.shape, offsets.shape, x_values.shape, y_values.shape}
+    if len(shapes) != 1 or indices.ndim != 1:
+        raise Map1DProcessError(f"map1d geometry has inconsistent shapes: {path}.")
+    return Map1DChain(
+        name=name,
+        branch_ids=branch_ids,
+        indices=indices,
+        offsets_m=offsets,
+        x=x_values,
+        y=y_values,
+        location=location,
+    )
+
+
+def cached_map1d_chain(
+    grid: Map1DGrid,
+    layout: OutputLayout,
+    guard: OutputWriteGuard,
+    *,
+    input_fingerprint: str,
+    name: str,
+    branches: Sequence[str],
+    location: str,
+    reuse: bool,
+) -> Map1DChain:
+    """Return one chain from the geometry cache, building and storing it on a miss."""
+    requested = tuple(branches)
+    fingerprint = map1d_geometry_fingerprint(
+        input_fingerprint=input_fingerprint,
+        chain_name=name,
+        branch_ids=requested,
+        location=location,
+    )
+    path = map1d_geometry_cache_path(layout, name)
+    if reuse and path.is_file():
+        try:
+            return read_map1d_geometry_cache(
+                path,
+                expected_fingerprint=fingerprint,
+                name=name,
+                branch_ids=requested,
+                location=location,
+            )
+        except Map1DProcessError:
+            pass
+    chain = grid.chain(name, requested, location=location)
+    write_map1d_geometry_cache(path, guard, chain, fingerprint=fingerprint)
+    return chain
 
 
 def _decode_strings(values: Any) -> tuple[str, ...]:

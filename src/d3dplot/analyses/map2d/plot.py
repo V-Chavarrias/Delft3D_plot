@@ -38,7 +38,12 @@ from d3dplot.measurements.map2d import (
     prepare_map_measurement,
     scale_map_measurement,
 )
-from d3dplot.plotting.figure_names import difference_subject, figure_file_path
+from d3dplot.plotting.colormaps import resolve_colormap
+from d3dplot.plotting.figure_names import (
+    comparison_label_kind,
+    difference_subject,
+    figure_file_path,
+)
 from d3dplot.plotting.finalize import (
     FigureContext,
     FigureHookError,
@@ -443,11 +448,7 @@ def plot_map2d_group(
             if scale != 1.0:
                 map_values = map_values * scale
             time_text = format_time_label(display_time, figure_config.time_format)
-            label_kind = (
-                "percentage"
-                if comparison == "difference_simulation_relative"
-                else ("difference" if comparison != "value" else "value")
-            )
+            label_kind = comparison_label_kind(comparison)
             quantity_label = label(
                 spec.label_key,
                 project.language,
@@ -1315,35 +1316,12 @@ def _mask_values_outside_range(
     return masked, int(np.count_nonzero(outside))
 
 
-_DEFAULT_DIFFERENCE_COLORMAPS: dict[str, str] = {
-    "difference_time": "RdYlBu",
-    "difference_simulation": "RdYlGn",
-    "difference_simulation_time": "RdYlGn",
-}
-
-
 def _colormap_for(
     analysis: Map2DConfig,
     variable: str,
     comparison: Comparison,
 ) -> str:
-    configured = analysis.map.colormap
-    default_difference = _DEFAULT_DIFFERENCE_COLORMAPS.get(comparison)
-    if (
-        default_difference is not None
-        and "colormap" not in analysis.map.model_fields_set
-    ):
-        return default_difference
-    if isinstance(configured, str):
-        return configured
-    return next(
-        (
-            colormap
-            for name, colormap in configured.items()
-            if name.casefold() == variable.casefold()
-        ),
-        "viridis",
-    )
+    return resolve_colormap(comparison, analysis.map.colormap, variable)
 
 
 def _model_crs(grid: Any, configured_crs: str | None) -> str | None:

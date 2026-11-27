@@ -216,10 +216,13 @@ The default figure style is 10 pt DejaVu Sans, 16 × 10 cm at 150 dpi. Map
 titles use `yyyy-mm-dd HH:MM` by default; set `figure.time_format` (or an
 analysis-level `figure.time_format`) to change it. The format accepts
 `yyyy`, `mm`, `dd`, `HH`, `MM`, and `ss` tokens, or Python `strftime`
-directives. Maps use the `viridis` colormap for values, `RdYlBu` for
-time-difference plots, and `RdYlGn` for differences between simulations
-(`difference_simulation` and `difference_simulation_time`), with `auto`
-rendering and `auto` aspect. Set
+directives. Every figure picks its colormap from one convention
+(`plotting/colormaps.py`): `turbo` for values, `RdYlBu` for time-difference
+plots, and `RdYlGn` for differences between simulations
+(`difference_simulation`, `difference_simulation_time` and
+`difference_simulation_relative`). Set `map.colormap` to override it; a
+variable-keyed mapping uses the convention for variables without an entry.
+Maps use `auto` rendering and `auto` aspect. Set
 `velocity_vectors: scaled` or `normalized` on a value map to draw velocity
 arrows from the cached `mesh2d_ucx` and `mesh2d_ucy` components. Scaled arrows
 keep one fixed reference scale per view, set by the first frame's maximum

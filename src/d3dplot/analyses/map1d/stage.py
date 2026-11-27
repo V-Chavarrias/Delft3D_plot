@@ -26,6 +26,7 @@ from d3dplot.analyses.map1d.process import (
     Map1DChain,
     Map1DGrid,
     Map1DProcessError,
+    cached_map1d_chain,
     map1d_cache_fingerprint,
     map1d_cache_path,
     map1d_input_fingerprint,
@@ -41,7 +42,13 @@ from d3dplot.analyses.river_km_statistics.measurements import (
 )
 from d3dplot.config.figure import FigureConfig
 from d3dplot.config.project import ProjectConfig, SimulationConfig
-from d3dplot.plotting.figure_names import difference_subject, figure_file_path
+from d3dplot.plotting.colormaps import resolve_colormap
+from d3dplot.plotting.figure_names import (
+    axis_label,
+    comparison_label_kind,
+    difference_subject,
+    figure_file_path,
+)
 from d3dplot.plotting.finalize import FigureContext, finalize_figure
 from d3dplot.plotting.time import format_time_label
 from d3dplot.plotting.writers import get_figure_writer
@@ -205,7 +212,16 @@ def _plot_analysis(
         location = _location_for_variable(map_path, variable)
         for chain, chain_name, chain_title in zip(
             (
-                grid.chain(name, branches, location=location)
+                cached_map1d_chain(
+                    grid,
+                    layout,
+                    guard,
+                    input_fingerprint=input_fingerprint,
+                    name=name,
+                    branches=branches,
+                    location=location,
+                    reuse=project.effective_reprocess(analysis) != "always",
+                )
                 for name, branches in zip(
                     analysis.branch_names,
                     analysis.branches,
@@ -217,7 +233,7 @@ def _plot_analysis(
             strict=True,
         ):
             x_values = None
-            x_label = "Distance (m)"
+            x_label = "Distance [m]"
             if analysis.river_km is not None and render_figures:
                 x_values = read_map1d_river_km_coordinates(
                     chain,
@@ -453,6 +469,13 @@ def _render_map1d_views(
     outputs: list[Path],
     reused: list[Path],
 ) -> None:
+    value_label = axis_label(
+        get_variable_spec(variable).label_key,
+        project.language,
+        datum=project.labels.vertical_datum,
+        extra_dictionaries=project.labels.extra_dictionaries,
+        kind=comparison_label_kind(comparison),
+    )
     for view_name in view_names:
         if view_name == "profile":
             for time, row in zip(selected_times, compared, strict=True):
@@ -481,6 +504,7 @@ def _render_map1d_views(
                     figure_config=project.effective_figure(analysis),
                     title=f"{chain_title} - {time_label}",
                     x_label=x_label,
+                    y_label=value_label,
                     x_limits=x_limits,
                     y_limits=y_limits,
                     x_values=x_values,
@@ -533,6 +557,7 @@ def _render_map1d_views(
                 figure_config=project.effective_figure(analysis),
                 title=chain_title,
                 x_label=x_label,
+                y_label=value_label,
                 x_limits=x_limits,
                 y_limits=y_limits,
                 x_values=x_values,
@@ -573,9 +598,10 @@ def _render_map1d_views(
                 compared,
                 selected_times,
                 figure_config=project.effective_figure(analysis),
+                colormap=resolve_colormap(comparison),
+                colorbar_label=value_label,
                 title=chain_title,
                 x_label=x_label,
-                y_label="Date/time",
                 limits=y_limits,
                 x_values=x_values,
             )

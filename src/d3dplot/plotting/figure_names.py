@@ -74,4 +74,18 @@ def axis_label(
     ).text
 
 
-__all__ = ["axis_label", "difference_subject", "figure_file_path"]
+def comparison_label_kind(comparison: str) -> LabelKind:
+    """Return the label form of a value or comparison, used by every analysis."""
+    if comparison == "value":
+        return LabelKind.VALUE
+    if comparison == "difference_simulation_relative":
+        return LabelKind.PERCENTAGE
+    return LabelKind.DIFFERENCE
+
+
+__all__ = [
+    "axis_label",
+    "comparison_label_kind",
+    "difference_subject",
+    "figure_file_path",
+]

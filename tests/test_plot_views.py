@@ -12,6 +12,7 @@ from matplotlib import dates as mdates
 from matplotlib.figure import Figure
 
 from d3dplot.config.figure import FigureConfig
+from d3dplot.plotting.colormaps import resolve_colormap
 from d3dplot.plotting.views.extents import valid_face_nodes
 from d3dplot.plotting.views.line import LineView
 from d3dplot.plotting.views.space_time import SpaceTimeView
@@ -184,6 +185,16 @@ def test_space_time_profile_image_baseline() -> Figure:
     view.axes.yaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d", tz=UTC))
     view.figure.tight_layout()
     return view.figure
+
+
+@pytest.mark.unit
+def test_resolve_colormap_honours_explicit_configuration_then_convention() -> None:
+    assert resolve_colormap("value", "viridis", "bed_level") == "viridis"
+    assert resolve_colormap("value", {"Bed_Level": "magma"}, "bed_level") == "magma"
+    assert resolve_colormap("difference_time", {"other": "magma"}, "bed_level") == (
+        "RdYlBu"
+    )
+    assert resolve_colormap("difference_simulation_relative") == "RdYlGn"
 
 
 def test_plot_views_reject_incompatible_shapes() -> None:

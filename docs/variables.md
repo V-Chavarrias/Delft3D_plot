@@ -9,7 +9,7 @@ Registered computation callbacks run through the shared quantity engine.
 
 | Canonical | Kind | Aliases | NetCDF candidates | Location | Extra dimensions | Units | Label key | Inputs | Optional inputs | Alternatives | Requirements | Selection | Version |
 |-----------|------|---------|-------------------|----------|------------------|-------|-----------|--------|----------------|-------------|--------------|-----------|---------|
-| `bed_level` | raw | `bl`, `DPS`, `etab` | `mesh2d_mor_bl`, `mesh2d_flowelem_bl`, `mesh1d_flowelem_bl` | face | - | `m` | `bed_elevation` | - | - | - | - | - | - |
+| `bed_level` | raw | `bl`, `DPS`, `etab` | `mesh2d_mor_bl`, `mesh2d_flowelem_bl`, `mesh1d_mor_bl`, `mesh1d_flowelem_bl` | face | - | `m` | `bed_elevation` | - | - | - | - | - | - |
 | `bed_load_transport_magnitude` | derived | `sb` | - | face | `nSedTot` | `m^2/s` | `bedload_sediment_transport` | `mesh2d_sbcx`, `mesh2d_sbcy` | - | - | - | output | 1 |
 | `bed_shear_stress` | raw | `taub` | `mesh2d_taus` | face | - | `Pa` | `bed_shear_stress` | - | - | - | - | - | - |
 | `cell_area` | raw | `ba` | `mesh2d_flowelem_ba` | face | - | `m^2` | `cell_area` | - | - | - | - | - | - |

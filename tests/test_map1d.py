@@ -19,9 +19,12 @@ from d3dplot.analyses.map1d.plot import (
 from d3dplot.analyses.map1d.process import (
     Map1DGrid,
     Map1DMapSession,
+    Map1DProcessError,
+    cached_map1d_chain,
     map1d_cache_fingerprint,
     map1d_cache_path,
     read_map1d_cache,
+    read_map1d_geometry_cache,
     read_map1d_quantity_series,
     read_map1d_river_km_coordinates,
     write_map1d_cache,
@@ -109,6 +112,29 @@ def test_map1d_map_session_reads_alias_quantity_at_time(tmp_path: Path) -> None:
         )
 
     np.testing.assert_allclose(result.values, [6, 8, 10])
+
+
+@pytest.mark.unit
+def test_map1d_bed_level_reads_morphological_bed_over_static_bed(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "map1d_map.nc"
+    _write_map1d_map(path)
+    with netCDF4.Dataset(path, mode="a") as dataset:
+        morphological_bed = dataset.createVariable(
+            "mesh1d_mor_bl", "f8", ("time", "node")
+        )
+        morphological_bed[:] = [[100, 101, 102, 103, 104], [90, 91, 92, 93, 94]]
+
+    with netCDF4.Dataset(path, mode="r") as dataset:
+        session = Map1DMapSession(
+            dataset,
+            time_index=1,
+            indices=np.asarray([0, 2, 4], dtype=np.int64),
+        )
+        result = session.read(get_variable_spec("bed_level"), local_index=1)
+
+    np.testing.assert_allclose(result.values, [90, 92, 94])
 
 
 @pytest.mark.unit
@@ -329,7 +355,12 @@ def test_map1d_plot_views_use_shared_templates(tmp_path: Path) -> None:
         chain, values, times, figure_config=style, title="h"
     )
     space_time = create_space_time_view(
-        chain, values, times, figure_config=style, title="h"
+        chain,
+        values,
+        times,
+        figure_config=style,
+        colormap="turbo",
+        title="h",
     )
 
     profile.update(chain.offsets_m, values[1], title="updated")
@@ -409,3 +440,40 @@ def test_map1d_cache_round_trip_is_guarded(tmp_path: Path) -> None:
     )
 
     np.testing.assert_allclose(values, [1.0, 2.0, 3.0])
+
+
+def test_map1d_geometry_cache_is_reused_and_guarded(tmp_path: Path) -> None:
+    path = tmp_path / "map1d_map.nc"
+    _write_map1d_map(path)
+    grid = Map1DGrid.from_map(path)
+    layout = OutputLayout(tmp_path / "output")
+    guard = initialize_output_root(layout, tool_version="test", forbidden_roots=())
+    cache_kwargs = {
+        "input_fingerprint": "input",
+        "name": "a",
+        "branches": ["A"],
+        "location": "node",
+    }
+    built = cached_map1d_chain(grid, layout, guard, reuse=True, **cache_kwargs)
+    cache_files = list(layout.cache_geometry.glob("map1d_chain_*.nc"))
+    assert [path.name for path in cache_files] == ["map1d_chain_a.nc"]
+
+    reused = cached_map1d_chain(grid, layout, guard, reuse=True, **cache_kwargs)
+
+    np.testing.assert_array_equal(reused.indices, built.indices)
+    np.testing.assert_allclose(reused.offsets_m, built.offsets_m)
+    np.testing.assert_allclose(reused.x, built.x)
+    np.testing.assert_allclose(reused.y, built.y)
+    rebuilt_kwargs = {**cache_kwargs, "input_fingerprint": "changed"}
+    cached_map1d_chain(grid, layout, guard, reuse=True, **rebuilt_kwargs)
+    assert [path.name for path in layout.cache_geometry.glob("map1d_chain_*.nc")] == [
+        "map1d_chain_a.nc"
+    ]
+    with pytest.raises(Map1DProcessError):
+        read_map1d_geometry_cache(
+            cache_files[0],
+            expected_fingerprint="other",
+            name="a",
+            branch_ids=("A",),
+            location="node",
+        )

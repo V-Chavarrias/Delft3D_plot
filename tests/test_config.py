@@ -126,7 +126,7 @@ def test_defaults_and_global_figure_inheritance() -> None:
     assert default_config.figure.font_family == "DejaVu Sans"
     assert default_config.figure.size_cm == (16.0, 10.0)
     assert default_config.figure.dpi == 150
-    assert default_analysis.map.colormap == "viridis"
+    assert default_analysis.map.colormap is None
     assert default_analysis.map.render == "auto"
     assert default_analysis.map.aspect == "auto"
     assert (

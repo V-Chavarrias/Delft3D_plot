@@ -398,10 +398,11 @@ def test_time_difference_appearance_uses_label_key_and_invalidates_cached_colorm
 @pytest.mark.parametrize(
     ("comparison", "expected"),
     [
-        ("value", "viridis"),
+        ("value", "turbo"),
         ("difference_time", "RdYlBu"),
         ("difference_simulation", "RdYlGn"),
         ("difference_simulation_time", "RdYlGn"),
+        ("difference_simulation_relative", "RdYlGn"),
     ],
 )
 def test_default_colormap_depends_on_comparison(

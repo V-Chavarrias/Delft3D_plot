@@ -27,5 +27,6 @@ Do not create a new figure function when a view can be composed. If a view lacks
 
 ## Options and labels
 - Use the shared map settings block (`map:` → `MapViewConfig`) and the existing names: `color_limits`, `colormap`, `extents`, `extents_along_river_km`, `river_km_labels`, `land_boundaries`, `background_tiles`, `aspect`, `render`, `x_limits`, `y_limits`, `display`, `hooks`, `figure.font_size`, `figure.size_cm`, `figure.dpi`, `figure.formats`.
+- Pick colormaps only through `plotting.colormaps.resolve_colormap(comparison, configured, variable)`: `turbo` for values, `RdYlBu` for time differences, `RdYlGn` for differences between simulations. Never hard-code a colormap name in an analysis.
 - Axis/legend/colour-bar texts come from `labels.label(...)` (en/nl/es dictionaries), never hard-coded strings.
 - Output paths contain the subject (`<simulation>`, `<sim>_vs_<ref>`, `all_simulations`) so no two tasks write the same file.

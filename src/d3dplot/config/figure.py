@@ -79,9 +79,12 @@ class MapViewConfig(ConfigModel):
         default="fixed",
         description="Use fixed limits or calculate them relative to a date.",
     )
-    colormap: str | dict[str, str] = Field(
-        default="viridis",
-        description="Matplotlib colormap name, optionally keyed by variable.",
+    colormap: str | dict[str, str] | None = Field(
+        default=None,
+        description=(
+            "Matplotlib colormap name, optionally keyed by variable; null picks "
+            "the convention colormap for the comparison (plotting/colormaps.py)."
+        ),
     )
     render: Literal["polygons", "raster", "auto"] = Field(
         default="auto",

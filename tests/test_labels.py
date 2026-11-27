@@ -12,6 +12,7 @@ import pytest
 from d3dplot.config import LabelsConfig
 from d3dplot.labels import Label, LabelKind, label
 from d3dplot.labels.builder import _load_label_tables
+from d3dplot.plotting.figure_names import axis_label, comparison_label_kind
 
 
 @pytest.mark.unit
@@ -75,6 +76,27 @@ def test_label_kinds_use_templates_and_unit_rules(
     assert result.text == expected_text
     assert result.quantity == "elevation"
     assert result.unit == expected_unit
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("comparison", "expected"),
+    [
+        ("value", "bed elevation [m+NAP]"),
+        ("difference_time", "difference in bed elevation [m]"),
+        ("difference_simulation", "difference in bed elevation [m]"),
+        ("difference_simulation_relative", "difference in bed elevation [%]"),
+    ],
+)
+def test_axis_label_follows_the_comparison_kind(comparison: str, expected: str) -> None:
+    text = axis_label(
+        "bed_elevation",
+        "en",
+        datum="+NAP",
+        kind=comparison_label_kind(comparison),
+    )
+
+    assert text == expected
 
 
 @pytest.mark.unit

@@ -77,6 +77,16 @@ Fingerprints use BLAKE2b over deterministic, sorted-key JSON:
   and an optional hydrodynamic time. Nested parameters are canonicalized
   recursively, so key ordering does not affect the result.
 
+## Map1d caches
+
+Chain geometry is cached once per chain at `cache/geometry/map1d_chain_<chain>.nc`.
+It holds `index`, `offset_m`, `x` and `y` along the chain, with the fingerprint in the
+global attributes. A changed chain or map input rebuilds the same file, so there is one
+file per chain. Processed values
+are cached per time at `cache/data/map1d/<variable>/<chain>/<yyyymmddTHHMMSS.ffffff>.nc`
+and hold only `values` and the fingerprint. Both are fingerprinted from the map
+input (path and MDU), so a changed map or MDU rebuilds them.
+
 ## Map2d data cache
 
 Processed map values are stored at

@@ -38,8 +38,10 @@ from d3dplot.config.selections import (
 from d3dplot.config.selections import VerticalSelection as VerticalConfig
 from d3dplot.execution.cache import CacheFingerprintReadError, read_cache_fingerprints
 from d3dplot.paths import resolve_path_preserving_drive
+from d3dplot.plotting.colormaps import resolve_colormap
 from d3dplot.plotting.figure_names import (
     axis_label,
+    comparison_label_kind,
     difference_subject,
     figure_file_path,
 )
@@ -83,8 +85,6 @@ def _has_bed_layers(variable: str) -> bool:
     """Return whether a variable is stored per sediment bed layer."""
     return "nBedLayers" in get_variable_spec(variable).extra_dims
 
-
-_SECTION_COLORMAP = "turbo"
 
 # Keyed by (line name, selection index, time index of the simulation).
 ProfileValues: TypeAlias = dict[tuple[str, int, int], np.ndarray]
@@ -500,7 +500,7 @@ class _ProfileRun:
         title = self._time_label(entry, comparison)
         y_label = self._label(
             get_variable_spec(selection.variable).label_key,
-            kind="value" if comparison == "value" else "difference",
+            kind=comparison_label_kind(comparison),
         )
         rows = _limit_rows(
             self._style.y_limits,
@@ -614,7 +614,7 @@ class _ProfileRun:
         title = self._time_label(entry, comparison)
         colorbar_label = self._label(
             get_variable_spec(selection.variable).label_key,
-            kind="value" if comparison == "value" else "difference",
+            kind=comparison_label_kind(comparison),
         )
         figure_limits = _paired_limits(y_rows, colour_rows)
         for row, (y_limits, colour_limits) in enumerate(figure_limits):
@@ -635,7 +635,7 @@ class _ProfileRun:
                     crossings.distance_stop_m,
                     interfaces,
                     data,
-                    colormap=_SECTION_COLORMAP,
+                    colormap=resolve_colormap(comparison),
                     colorbar_label=colorbar_label,
                     x_label="Distance along line [m]",
                     y_label=self._label("elevation"),
@@ -689,7 +689,7 @@ class _ProfileRun:
                 _centre_edges(time_centres),
                 data,
                 figure_config=self._style,
-                colormap="viridis",
+                colormap=resolve_colormap("value"),
                 colorbar_label=self._label(
                     get_variable_spec(selection.variable).label_key
                 ),
