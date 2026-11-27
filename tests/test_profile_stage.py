@@ -13,6 +13,7 @@ import pytest
 
 from d3dplot import __version__
 from d3dplot.analyses.profile import process as profile_process
+from d3dplot.analyses.profile import stage as profile_stage
 from d3dplot.analyses.profile.config import ProfileConfig
 from d3dplot.analyses.profile.stage import (
     ProfileStageError,
@@ -394,3 +395,68 @@ def test_profile_differences_compare_times_and_the_reference_simulation(
         Path(path).is_relative_to(reference_root) and "r002_vs_r001" in path
         for path in difference_simulation
     )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("views", "accepted"),
+    [(["profile"], True), (["section"], True), (["space_time"], False)],
+)
+def test_profile_movie_needs_a_profile_or_section_view(
+    views: list[str], accepted: bool
+) -> None:
+    options = {
+        "variables": ["water_level"],
+        "views": views,
+        "movie": {"total_duration_s": 4.0},
+    }
+    if accepted:
+        assert _profile_config(**options).movie is not None
+    else:
+        with pytest.raises(ValueError, match="needs the 'profile' or 'section' view"):
+            _profile_config(**options)
+
+
+@pytest.mark.integration
+def test_profile_movie_encodes_each_figure_folder_and_reuses_it(
+    synthetic_case: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pli_path = _synthetic_centreline_pli(tmp_path)
+    project = _project(
+        synthetic_case,
+        tmp_path / "output",
+        pli_path,
+        {"views": ["profile"], "replot": "never", "movie": {"total_duration_s": 4.0}},
+    )
+    run_project(project, executor="serial")
+    encoded: dict[Path, tuple[tuple[Path, ...], float]] = {}
+    fingerprints: dict[Path, str] = {}
+
+    def record_movie(
+        frames: tuple[Path, ...],
+        output_path: Path,
+        duration_s: float,
+        fingerprint: str,
+        guard: object,
+    ) -> bool:
+        if fingerprints.get(output_path) == fingerprint:
+            return True
+        fingerprints[output_path] = fingerprint
+        encoded[output_path] = (tuple(frames), duration_s)
+        return False
+
+    monkeypatch.setattr(profile_stage, "write_mp4", record_movie)
+    first = _plot_profiles(project)
+    second = _plot_profiles(project)
+
+    assert first.movie_paths
+    assert set(first.movie_paths) == set(encoded)
+    for movie_path in first.movie_paths:
+        frames, duration_s = encoded[movie_path]
+        assert movie_path.name == "movie.mp4"
+        assert set(frames) == set(movie_path.parent.glob("*.png"))
+        assert duration_s == pytest.approx(4.0 / len(frames))
+    assert second.movie_paths == ()
+    assert set(second.reused_movie_paths) == set(first.movie_paths)

@@ -106,6 +106,13 @@ view only and has no effect on `section`. `figure.y_limits` (a list, or a dictio
 variable and comparison) sets the vertical axis of each profile figure. A list with
 several rows draws one figure per row, in its own `l<n>/` folder.
 
+Set `movie: {total_duration_s: 40}` (or `duration_s`, mutually exclusive, as for `map2d`)
+on a `profile` analysis to write one `movie.mp4` in each figure folder. Each folder holds
+one variable, line, selection, comparison and limit set, and its frames follow the
+selected times, with reused figures included. A `movie` block needs the `profile` or
+`section` view; `space_time` figures are not included. Movies start at the first plotted
+time, so the initial time is skipped unless `figure.show_initial` is `true`.
+
 A `section` view (`views: [section]`, with `vertical: all`) draws the layers as coloured
 bands along the line. Sediment variables use the bed layers, other variables the water
 column. `figure.color_limits` sets the colour scale per variable and comparison, and
@@ -135,6 +142,59 @@ Limit rows are checked when the configuration is loaded:
 `labels.vertical_datum` controls the datum shown for reference elevations, and
 `labels.extra_dictionaries` lists additional translation CSVs. See
 [Labels](./labels.md) for their format and the label-building API.
+
+## HIS station time series
+
+A `his` analysis plots values at observation stations from Flow FM `*_his.nc` files
+(found in the MDU `OutputDir`) and from Delft3D 4 `trih` files (the case's `.mdf`
+gives the time origin). Example:
+
+```yaml
+analyses:
+  - analysis: his
+    variables: [water_level, velocity_magnitude]
+    stations: [1, "Station_A"]
+    comparisons: [value, difference_simulation]
+    views: [line]
+```
+
+- `stations` takes one-based indices or exact station names. Booleans are rejected.
+- `variables` names are `water_level`, `water_depth`, `salinity` and `velocity_magnitude`
+  for FM, and those plus `bed_level` for trih. A trih constituent is named as in
+  `NAMCON` (matched case-insensitively). Multi-layer variables are rejected.
+- `comparisons`: `value` draws each simulation's series in its own folder.
+  `difference_simulation` subtracts the reference simulation (`reference_simulation`)
+  and is written to the reference's folder; it needs a reference. `difference_time` is
+  not available for HIS.
+- `times` supports `at: all` only, and `time_matching: reference` (the default).
+  Differences interpolate each compared series linearly onto the reference times.
+  Masked samples are bridged, and times outside the compared series are left out.
+- `times.tolerance` is unset by default, which means no distance limit. A configured
+  value is the largest allowed distance from a reference time to the nearest valid
+  compared sample.
+- `views` (default `[line]`):
+  - `line`: `his/<variable>/<station>/<comparison>/all_times.png`, one line per simulation.
+  - `all_stations`: one figure per simulation and variable, one line per station.
+  - `convergence`: the standard deviation of each station's raw values over the last
+    `convergence_time` (default `1 h`) before each simulation's final time. It is
+    written once per variable and layer in the reference simulation's folder, so it
+    needs `reference_simulation`.
+  - `x_t`: a river-km by time colour figure per simulation, variable and layer, in
+    that simulation's folder. Each station's river km is taken from the nearest point
+    in `river_km_file`, and the placement distance is logged to the `.dia`. Colour
+    limits are automatic.
+- `vertical`: `all` (default) or `layers: [...]`, one-based from the bottom of the
+  stored layer axis. Each layer is written to its own `layer-<n>` folder.
+- `filter: godin` applies the Godin tidal filter (24 h, 24 h, 25 h running means)
+  and draws the filtered lines over the raw ones. It needs about 70 h of hourly data,
+  so shorter series give no filtered output, and a `.dia` message says so.
+- `measurements` overlays measured station series in black on the value line figures
+  and the `all_stations` figures. It takes a CSV `catalogue` (columns `station`, `variable`,
+  `file`, `factor` and optional `layer`) and an optional `time_zone` for naive times.
+- `river_km_file` is required for the `x_t` view.
+
+Figures are cached: each (station, variable, simulation, layer) series is stored under
+`cache/data/his/<variable>/`, so later figures reuse it.
 
 ## Execution and sharding
 

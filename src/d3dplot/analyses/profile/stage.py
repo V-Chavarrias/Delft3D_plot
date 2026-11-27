@@ -6,6 +6,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, tzinfo
+from hashlib import blake2b
 from itertools import groupby
 from pathlib import Path
 from typing import Any, TypeAlias
@@ -17,6 +18,7 @@ from matplotlib.figure import Figure
 from pyproj import CRS
 from pyproj.exceptions import CRSError
 
+from d3dplot import __version__
 from d3dplot.analyses.profile.config import ProfileConfig, ProfileLineConfig
 from d3dplot.analyses.profile.limits import LimitRow, limit_rows, paired_limits
 from d3dplot.analyses.profile.process import (
@@ -46,6 +48,7 @@ from d3dplot.plotting.figure_names import (
     figure_file_path,
 )
 from d3dplot.plotting.finalize import FigureContext, close_figure, finalize_figure
+from d3dplot.plotting.movies import MovieWriterError, write_mp4
 from d3dplot.plotting.time import format_time_label
 from d3dplot.plotting.views.line import LineView
 from d3dplot.plotting.views.section import SectionView
@@ -61,6 +64,7 @@ from d3dplot.store import (
     CACHE_SCHEMA_VERSION,
     OutputLayout,
     OutputWriteGuard,
+    canonical_json,
     fingerprint_artifact,
     fingerprint_small_input,
 )
@@ -79,6 +83,8 @@ from d3dplot.variables.registry import UnknownVariableError, get_variable_spec
 DiagnosticSink = Callable[[str], None]
 
 _PROFILE_INPUT_ALGORITHM_VERSION = "1"
+_PROFILE_MOVIE_ALGORITHM_VERSION = "1"
+_MOVIE_FILE_NAME = "movie.mp4"
 
 
 def _has_bed_layers(variable: str) -> bool:
@@ -110,10 +116,43 @@ class ProfileReference:
 
 @dataclass(frozen=True, slots=True)
 class ProfileStageResult:
-    """Figures written and reused by the PRF stage for one simulation."""
+    """Figures and movies written and reused by the PRF stage for one simulation."""
 
     output_paths: tuple[Path, ...] = ()
     reused_paths: tuple[Path, ...] = ()
+    movie_paths: tuple[Path, ...] = ()
+    reused_movie_paths: tuple[Path, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class _MovieFrame:
+    time: datetime
+    path: Path
+    input_fingerprint: str
+
+
+@dataclass(slots=True)
+class _MovieGroup:
+    """Frames of one movie, all in one figure folder (one line, selection and view)."""
+
+    name: str
+    guard: OutputWriteGuard
+    frames: list[_MovieFrame]
+
+
+def _movie_config_hash(project: ProjectConfig, analysis: ProfileConfig) -> str:
+    """Return a hash of the settings that shape a movie's frames.
+
+    Figure fingerprints do not cover the style, so a movie is also keyed by the
+    whole configuration to avoid reusing a movie after a style change.
+    """
+    payload = canonical_json(
+        {
+            "project": project.model_dump(mode="json"),
+            "analysis": analysis.model_dump(mode="json"),
+        }
+    )
+    return blake2b(payload.encode(), digest_size=16).hexdigest()
 
 
 def profile_selections(analysis: ProfileConfig) -> tuple[ProfileSelection, ...]:
@@ -332,9 +371,17 @@ class _ProfileRun:
         self._space_time_lines: dict[tuple[str, int], ProfileLine] = {}
         self._outputs: list[Path] = []
         self._reused: list[Path] = []
+        self._movie_groups: dict[Path, _MovieGroup] = {}
+        self._movies: list[Path] = []
+        self._reused_movies: list[Path] = []
 
     def result(self) -> ProfileStageResult:
-        return ProfileStageResult(tuple(self._outputs), tuple(self._reused))
+        return ProfileStageResult(
+            tuple(self._outputs),
+            tuple(self._reused),
+            tuple(self._movies),
+            tuple(self._reused_movies),
+        )
 
     def close(self) -> None:
         for line_view in self._line_views.values():
@@ -388,6 +435,7 @@ class _ProfileRun:
                         )
         if self._render:
             self._finish_space_time()
+            self._encode_movies()
 
     def _process_line_time(
         self,
@@ -513,6 +561,17 @@ class _ProfileRun:
             path = self._figure_path(
                 line, index, selection, entry.time, tail, comparison
             )
+            self._record_frame(
+                path,
+                entry,
+                input_fingerprint,
+                view_name="profile",
+                variable=selection.variable,
+                line=line,
+                index=index,
+                comparison=comparison,
+                tail=tail,
+            )
             if self._reuse(path):
                 continue
             key = (line.name, index, comparison, row)
@@ -624,6 +683,17 @@ class _ProfileRun:
             path = self._figure_path(
                 line, index, selection, entry.time, tail, comparison
             )
+            self._record_frame(
+                path,
+                entry,
+                input_fingerprint,
+                view_name="section",
+                variable=selection.variable,
+                line=line,
+                index=index,
+                comparison=comparison,
+                tail=tail,
+            )
             if self._reuse(path):
                 continue
             key = (line.name, index, comparison, row)
@@ -712,6 +782,82 @@ class _ProfileRun:
                 self._combined_input_fingerprint(),
                 close=True,
             )
+
+    def _record_frame(
+        self,
+        path: Path,
+        entry: TimeEntry,
+        input_fingerprint: str,
+        *,
+        view_name: str,
+        variable: str,
+        line: ProfileLine,
+        index: int,
+        comparison: str,
+        tail: Sequence[str],
+    ) -> None:
+        """Add a plotted figure to the movie of its figure folder, if movies are on.
+
+        Frames are grouped by folder, so each line, selection, comparison and
+        row limit gets its own movie next to its figures.
+        """
+        if self._analysis.movie is None:
+            return
+        group = self._movie_groups.get(path.parent)
+        if group is None:
+            group = _MovieGroup(
+                name=f"{view_name}|{variable}|{line.name}|{index}|{'/'.join(tail)}",
+                guard=self._figure_target(comparison)[1],
+                frames=[],
+            )
+            self._movie_groups[path.parent] = group
+        group.frames.append(_MovieFrame(entry.time, path, input_fingerprint))
+
+    def _encode_movies(self) -> None:
+        movie = self._analysis.movie
+        if movie is None:
+            return
+        config_hash = _movie_config_hash(self._project, self._analysis)
+        for folder, group in self._movie_groups.items():
+            frames = sorted(group.frames, key=lambda frame: frame.time)
+            duration_s = movie.frame_duration_s(len(frames))
+            fingerprint = fingerprint_artifact(
+                kind="profile_movie",
+                schema_version=CACHE_SCHEMA_VERSION,
+                tool_version=__version__,
+                algorithm_version=_PROFILE_MOVIE_ALGORITHM_VERSION,
+                parameters={
+                    "group": group.name,
+                    "simulation": self._simulation_label,
+                    "duration_s": duration_s,
+                    "config": config_hash,
+                },
+                inputs=tuple(
+                    f"{frame.time.isoformat()}|{frame.path.name}|{frame.input_fingerprint}"
+                    for frame in frames
+                ),
+            )
+            movie_path = folder / _MOVIE_FILE_NAME
+            try:
+                was_reused = write_mp4(
+                    tuple(frame.path for frame in frames),
+                    movie_path,
+                    duration_s,
+                    fingerprint,
+                    group.guard,
+                )
+            except MovieWriterError as error:
+                raise ProfileStageError(f"{error.code}: {error}") from error
+            if was_reused:
+                self._reused_movies.append(movie_path)
+                self._note(f"Reused movie {movie_path}.")
+            else:
+                self._movies.append(movie_path)
+                self._note(f"Saved movie {movie_path}.")
+
+    def _note(self, message: str) -> None:
+        if self._diagnostic is not None:
+            self._diagnostic(message)
 
     def _finish(
         self,

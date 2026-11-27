@@ -228,6 +228,7 @@ def test_map1d_configuration_validates_branch_metadata() -> None:
 @pytest.mark.unit
 def test_builtin_analysis_registry_is_stable() -> None:
     assert builtin_analysis_names() == (
+        "his",
         "map1d",
         "map2d",
         "profile",

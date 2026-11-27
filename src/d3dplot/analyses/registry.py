@@ -10,6 +10,7 @@ from types import MappingProxyType
 from typing import Literal, TypeAlias, get_args, get_origin
 
 from d3dplot.analyses.base import AnalysisPlugin
+from d3dplot.analyses.his.config import HisConfig
 from d3dplot.analyses.map1d.config import Map1DConfig
 from d3dplot.analyses.map2d.config import Map2DConfig
 from d3dplot.analyses.profile.config import ProfileConfig
@@ -21,6 +22,7 @@ AnalysisConfigType: TypeAlias = type[AnalysisConfigBase]
 _BUILTIN_ANALYSES: Mapping[str, AnalysisConfigType] = MappingProxyType(
     {
         "map1d": Map1DConfig,
+        "his": HisConfig,
         "map2d": Map2DConfig,
         "profile": ProfileConfig,
         "river_km_statistics": RiverKmStatisticsConfig,

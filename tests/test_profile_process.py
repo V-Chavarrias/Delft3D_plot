@@ -102,13 +102,24 @@ def layout(guard: OutputWriteGuard) -> OutputLayout:
 
 
 @pytest.mark.unit
-def test_selection_label_separates_layers_and_is_stable() -> None:
-    all_layers = ProfileSelection(variable="mesh2d_ucx")
-    top_layer = ProfileSelection(variable="mesh2d_ucx", layers=(2,))
+def test_cache_folder_is_the_readable_selection_or_all_for_the_whole_column(
+    layout: OutputLayout,
+) -> None:
+    whole = profile_cache_path(
+        layout,
+        selection=ProfileSelection(variable="mesh2d_ucx"),
+        line_name="a",
+        time=_TIMES[0],
+    )
+    top_layer = profile_cache_path(
+        layout,
+        selection=ProfileSelection(variable="mesh2d_ucx", layers=(2,)),
+        line_name="a",
+        time=_TIMES[0],
+    )
 
-    assert all_layers.label() == ProfileSelection(variable="mesh2d_ucx").label()
-    assert all_layers.label() != top_layer.label()
-    assert len(all_layers.label()) == 12
+    assert whole.parent.name == "all"
+    assert top_layer.parent.name == "layer-2"
 
 
 @pytest.mark.unit

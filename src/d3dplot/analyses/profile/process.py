@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -68,11 +67,6 @@ class ProfileSelection:
             "fractions": None if self.fractions is None else list(self.fractions),
             "sum_fractions": self.sum_fractions,
         }
-
-    def label(self) -> str:
-        """Return a short stable label that separates selections in file names."""
-        text = json.dumps(self.parameters(), sort_keys=True).encode()
-        return hashlib.sha256(text).hexdigest()[:12]
 
     def folder_label(self) -> str | None:
         """Return a readable figure folder name, or None for the whole column."""
@@ -257,7 +251,7 @@ def profile_cache_path(
         OutputArea.CACHE_DATA,
         get_variable_spec(selection.variable).name,
         prefix=("profile",),
-        suffix=(line_name, selection.label()),
+        suffix=(line_name, selection.folder_label() or "all"),
         filename=f"{filename}.nc",
     )
 

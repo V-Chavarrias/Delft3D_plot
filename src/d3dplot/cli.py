@@ -18,6 +18,7 @@ import typer
 import yaml
 
 from d3dplot import __version__
+from d3dplot.analyses.his.stage import plot_his_stage
 from d3dplot.analyses.map1d.stage import plot_map1d_stage
 from d3dplot.analyses.map2d.plot import Map2DPlotError
 from d3dplot.analyses.registry import builtin_analysis_names
@@ -1317,31 +1318,62 @@ def _run_plot_stage(
                     diagnostic_log.info(
                         "Finished PRF plotting stage: "
                         f"written={len(profile_result.output_paths)}; "
-                        f"reused={len(profile_result.reused_paths)}."
+                        f"reused={len(profile_result.reused_paths)}; "
+                        f"movies={len(profile_result.movie_paths)}; "
+                        f"reused_movies={len(profile_result.reused_movie_paths)}."
+                    )
+                if diagnostic_log is not None:
+                    diagnostic_log.info("Starting HIS plotting stage.")
+                his_result = plot_his_stage(
+                    replayable_config,
+                    analysis_name=analysis_name,
+                    simulation_label=simulation_label,
+                )
+                if diagnostic_log is not None:
+                    for message in his_result.messages:
+                        diagnostic_log.info(message)
+                    diagnostic_log.info(
+                        "Finished HIS plotting stage: "
+                        f"written={len(his_result.output_paths)}; "
+                        f"reused={len(his_result.reused_paths)}."
                     )
             else:
                 river_km_result = None
                 map1d_result = None
                 profile_result = None
+                his_result = None
             result = PlotStageResult(
                 output_paths=(
                     map_result.output_paths
                     + (() if river_km_result is None else river_km_result.output_paths)
                     + (() if map1d_result is None else map1d_result.output_paths)
                     + (() if profile_result is None else profile_result.output_paths)
+                    + (() if his_result is None else his_result.output_paths)
                 ),
                 reused_paths=(
                     map_result.reused_paths
                     + (() if river_km_result is None else river_km_result.reused_paths)
                     + (() if map1d_result is None else map1d_result.reused_paths)
                     + (() if profile_result is None else profile_result.reused_paths)
+                    + (() if his_result is None else his_result.reused_paths)
                 ),
-                movie_paths=map_result.movie_paths,
-                reused_movie_paths=map_result.reused_movie_paths,
+                movie_paths=(
+                    map_result.movie_paths
+                    + (() if profile_result is None else profile_result.movie_paths)
+                ),
+                reused_movie_paths=(
+                    map_result.reused_movie_paths
+                    + (
+                        ()
+                        if profile_result is None
+                        else profile_result.reused_movie_paths
+                    )
+                ),
                 messages=(
                     map_result.messages
                     + (() if river_km_result is None else river_km_result.messages)
                     + (() if map1d_result is None else map1d_result.messages)
+                    + (() if his_result is None else his_result.messages)
                 ),
             )
             if diagnostic_log is not None:
@@ -1449,7 +1481,7 @@ def init(
             "--analyses",
             help=(
                 "Comma-separated built-in analyses: map1d, map2d, "
-                "river_km_statistics, profile."
+                "river_km_statistics, profile, his."
             ),
         ),
     ] = "map2d",
@@ -2081,6 +2113,8 @@ def _starter_config(
                     "file": "path/to/line.pli",
                 }
             ]
+        elif name == "his":
+            analysis["stations"] = [1]
         analyses.append(analysis)
     return ProjectConfig.model_validate(
         {"simulations": simulations, "analyses": analyses}

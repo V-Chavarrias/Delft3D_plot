@@ -927,13 +927,15 @@ def _read_frame(frame: Map2DPlotFrame, variable: str) -> tuple[_FloatArray, str]
             "V-PLOT-002",
             f"Map2d cache has no valid fingerprint: {frame.path}.",
         )
+    expected_variable = get_variable_spec(variable).name
     if (
         not isinstance(cache_variable, str)
-        or cache_variable.casefold() != variable.casefold()
+        or cache_variable.casefold() != expected_variable.casefold()
     ):
         raise Map2DPlotError(
             "V-PLOT-002",
-            f"Map2d cache variable {cache_variable!r} does not match {variable!r}.",
+            f"Map2d cache variable {cache_variable!r} does not match "
+            f"{expected_variable!r}.",
         )
     return values, fingerprint
 

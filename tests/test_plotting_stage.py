@@ -21,7 +21,7 @@ from d3dplot import __version__
 from d3dplot.analyses.map2d.plot import Map2DPlotError
 from d3dplot.cli import app
 from d3dplot.config import load_config
-from d3dplot.plotting.stage import read_replot_metadata
+from d3dplot.plotting.stage import _map2d_cache_directory, read_replot_metadata
 from d3dplot.simulation.time_utils import format_timestamp_text
 from d3dplot.store import (
     CACHE_SCHEMA_VERSION,
@@ -112,6 +112,18 @@ def test_replot_rejects_png_without_d3dplot_provenance(tmp_path: Path) -> None:
     with pytest.raises(Map2DPlotError) as error:
         read_replot_metadata(figure)
     assert error.value.code == "V-PLOT-005"
+
+
+@pytest.mark.unit
+def test_map2d_plot_reads_the_canonical_variable_folder_for_an_alias(
+    tmp_path: Path,
+) -> None:
+    layout = OutputLayout(tmp_path / "output")
+
+    alias_directory = _map2d_cache_directory(layout, "wd", "all")
+
+    assert alias_directory == _map2d_cache_directory(layout, "water_depth", "all")
+    assert alias_directory == layout.cache_data / "map2d" / "water_depth" / "all"
 
 
 def _prepared_project(

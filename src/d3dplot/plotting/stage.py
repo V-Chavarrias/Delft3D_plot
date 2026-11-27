@@ -9,7 +9,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from numbers import Integral
 from pathlib import Path
-from urllib.parse import quote
 
 import netCDF4
 from PIL import Image, UnidentifiedImageError
@@ -34,6 +33,7 @@ from d3dplot.store import (
     initialize_output_root,
 )
 from d3dplot.store.layout import OUTPUT_MARKER_NAME
+from d3dplot.store.paths import OutputArea, build_quantity_output_directory
 from d3dplot.variables.context import QuantityRequest
 from d3dplot.variables.registry import get_variable_spec
 
@@ -553,8 +553,13 @@ def _read_cache_metadata(
 
 
 def _map2d_cache_directory(layout: OutputLayout, variable: str, selection: str) -> Path:
-    variable_directory = quote(variable.casefold(), safe="-_.")
-    return layout.cache_data / "map2d" / variable_directory / selection
+    return build_quantity_output_directory(
+        layout,
+        OutputArea.CACHE_DATA,
+        variable,
+        prefix=("map2d",),
+        suffix=(selection,),
+    )
 
 
 def _selection(analysis: Map2DConfig, variable: str) -> str:

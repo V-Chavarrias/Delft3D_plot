@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Literal
 
 from d3dplot import __version__
+from d3dplot.analyses.his.config import HisConfig
+from d3dplot.analyses.his.stage import HisStageError, process_his_stage
 from d3dplot.analyses.map1d.config import Map1DConfig
 from d3dplot.analyses.map1d.process import Map1DProcessError
 from d3dplot.analyses.map1d.stage import process_map1d_stage
@@ -496,6 +498,8 @@ def _process_profile_analyses(
     render_figures: bool,
     reference_sources: Mapping[int, _ReferenceSource] | None = None,
     own_is_reference: bool = False,
+    movie_paths: list[str] | None = None,
+    reused_movie_paths: list[str] | None = None,
 ) -> bool:
     """Process PRF analyses for one simulation; return True if any analysis failed."""
     guard = initialize_output_root(
@@ -564,20 +568,28 @@ def _process_profile_analyses(
             continue
         output_paths.extend(str(path) for path in result.output_paths)
         reused_paths.extend(str(path) for path in result.reused_paths)
+        if movie_paths is not None:
+            movie_paths.extend(str(path) for path in result.movie_paths)
+        if reused_movie_paths is not None:
+            reused_movie_paths.extend(str(path) for path in result.reused_movie_paths)
         diagnostics.info(
             f"PRF processing finished: {analysis_key}; "
             f"figures={len(result.output_paths)}; "
-            f"reused={len(result.reused_paths)}."
+            f"reused={len(result.reused_paths)}; "
+            f"movies={len(result.movie_paths)}; "
+            f"reused_movies={len(result.reused_movie_paths)}."
         )
     return failed
 
 
 @dataclass(frozen=True, slots=True)
 class ProfilePlotResult:
-    """Figures written or reused by the PRF plot stage."""
+    """Figures and movies written or reused by the PRF plot stage."""
 
     output_paths: tuple[Path, ...]
     reused_paths: tuple[Path, ...]
+    movie_paths: tuple[Path, ...] = ()
+    reused_movie_paths: tuple[Path, ...] = ()
 
 
 def plot_profile_analyses(
@@ -600,6 +612,8 @@ def plot_profile_analyses(
         raise ValueError("PRF plotting requires a diagnostics log.")
     output_paths: list[str] = []
     reused_paths: list[str] = []
+    movie_paths: list[str] = []
+    reused_movie_paths: list[str] = []
     reference_sources = _profile_reference_sources(project, analyses, diagnostics)
     reference_config = (
         _resolve_reference_simulation(project) if reference_sources else None
@@ -630,11 +644,15 @@ def plot_profile_analyses(
             render_figures=True,
             reference_sources=reference_sources,
             own_is_reference=simulation_config is reference_config,
+            movie_paths=movie_paths,
+            reused_movie_paths=reused_movie_paths,
         ):
             raise ValueError("PRF plotting failed; see the diagnostics log.")
     return ProfilePlotResult(
         tuple(Path(path) for path in output_paths),
         tuple(Path(path) for path in reused_paths),
+        tuple(Path(path) for path in movie_paths),
+        tuple(Path(path) for path in reused_movie_paths),
     )
 
 
@@ -686,10 +704,20 @@ def run_project(
         for index, analysis in selected_analyses
         if isinstance(analysis, ProfileConfig)
     )
+    his_analyses = tuple(
+        (index, analysis)
+        for index, analysis in selected_analyses
+        if isinstance(analysis, HisConfig)
+    )
     if effective_shard is not None and map1d_analyses:
         raise ProjectStageUnavailable(
             "map1d quantity processing does not support task sharding; "
             "remove map1d from the sharded project or run without --shard."
+        )
+    if effective_shard is not None and his_analyses:
+        raise ProjectStageUnavailable(
+            "HIS processing does not support task sharding; "
+            "remove his from the sharded project or run without --shard."
         )
     if effective_shard is not None and profile_analyses:
         raise ProjectStageUnavailable(
@@ -755,6 +783,36 @@ def run_project(
                         f"map1d processing finished: "
                         f"built={len(map1d_result.cache_paths)}; "
                         f"reused={len(map1d_result.reused_cache_paths)}."
+                    )
+
+            if his_analyses:
+                try:
+                    his_result = process_his_stage(
+                        project,
+                        analysis_name=analysis_name,
+                        simulation_label=simulation_config.label,
+                    )
+                except (
+                    HisStageError,
+                    OSError,
+                    OutputWriteError,
+                    ValueError,
+                ) as error:
+                    diagnostics.error(
+                        f"HIS processing failed for {simulation_config.label}: {error}"
+                    )
+                    simulation_failed = True
+                else:
+                    output_paths.extend(str(path) for path in his_result.cache_paths)
+                    reused_paths.extend(
+                        str(path) for path in his_result.reused_cache_paths
+                    )
+                    for message in his_result.messages:
+                        diagnostics.info(message)
+                    diagnostics.info(
+                        f"HIS processing finished: "
+                        f"built={len(his_result.cache_paths)}; "
+                        f"reused={len(his_result.reused_cache_paths)}."
                     )
 
             if not map_analyses and not profile_analyses:

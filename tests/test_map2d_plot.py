@@ -28,6 +28,7 @@ from d3dplot.analyses.map2d.plot import (
     _figure_path,
     _mask_values_outside_range,
     _movie_path,
+    _read_frame,
     _velocity_components,
     _velocity_reference_speed,
     _velocity_scale,
@@ -479,6 +480,24 @@ def test_plot_map2d_masks_values_outside_mask_range_and_reports_count(
 
 
 @pytest.mark.unit
+def test_map2d_cache_reader_accepts_an_alias_of_the_stored_variable(
+    tmp_path: Path,
+) -> None:
+    layout = OutputLayout(tmp_path / "output")
+    guard = initialize_output_root(layout, tool_version=__version__, forbidden_roots=())
+    path = _write_frame(layout, guard, 0, (1.0, 2.0), variable="water_depth")
+    frame = Map2DPlotFrame(
+        match_key="time-0",
+        time=datetime(2021, 1, 1, tzinfo=UTC),
+        path=path,
+        vector_paths=None,
+    )
+
+    values, _ = _read_frame(frame, "wd")
+
+    np.testing.assert_array_equal(values, np.array([1.0, 2.0]))
+
+
 def test_velocity_helpers_keep_reference_speed_at_arrow_length() -> None:
     assert _velocity_reference_speed(
         np.array([3.0, np.nan]), np.array([4.0, 0.0])

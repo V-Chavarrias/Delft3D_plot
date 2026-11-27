@@ -11,6 +11,7 @@ from pydantic import Field, field_validator, model_validator
 
 from d3dplot.config.analysis import AnalysisConfigBase
 from d3dplot.config.base import ConfigModel
+from d3dplot.config.movies import MovieConfig
 
 ProfileView: TypeAlias = Literal["profile", "space_time", "section"]
 
@@ -100,6 +101,14 @@ class ProfileConfig(AnalysisConfigBase):
             "or vertical sections for layer-resolved quantities."
         ),
     )
+    movie: MovieConfig | None = Field(
+        default=None,
+        description=(
+            "Optional movie output settings. One movie is written per line, "
+            "selection, comparison and view from the per-time 'profile' and "
+            "'section' figures."
+        ),
+    )
 
     @model_validator(mode="after")
     def validate_lines(self) -> ProfileConfig:
@@ -133,6 +142,11 @@ class ProfileConfig(AnalysisConfigBase):
             )
         if "section" in self.views and self.vertical != "all":
             raise ValueError("The 'section' view requires vertical: all.")
+        if self.movie is not None and not {"profile", "section"} & set(self.views):
+            raise ValueError(
+                "A movie needs the 'profile' or 'section' view; the 'space_time' "
+                "view has one figure per line and is not animated."
+            )
         single_fraction_views = {"space_time", "section"} & set(self.views)
         if (
             single_fraction_views
